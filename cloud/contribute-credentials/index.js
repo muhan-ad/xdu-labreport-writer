@@ -22,7 +22,9 @@ function cosSignPutUrl(key) {
   const signKey = crypto.createHmac('sha1', SECRET_KEY).update(keyTime).digest('hex');
 
   const method = 'put';
-  const pathname = '/' + key.split('/').map(encodeURIComponent).join('/');
+  // COS verifies the signature against the RAW key path (UTF-8), while the URL itself must be percent-encoded
+  const rawPathname = '/' + key;
+  const encodedPathname = '/' + key.split('/').map(encodeURIComponent).join('/');
   const params = {
     'q-sign-algorithm': 'sha1',
     'q-ak': SECRET_ID,
@@ -35,7 +37,7 @@ function cosSignPutUrl(key) {
   const headerKeys = Object.keys(headers).sort();
   const httpParams = paramKeys.map(function (k) { return k + '=' + encodeURIComponent(params[k]); }).join('&');
   const httpHeaders = headerKeys.map(function (k) { return k + '=' + encodeURIComponent(headers[k]); }).join('&');
-  const httpString = method + '\n' + pathname + '\n' + httpParams + '\n' + httpHeaders + '\n';
+  const httpString = method + '\n' + rawPathname + '\n' + httpParams + '\n' + httpHeaders + '\n';
   const httpStringHash = crypto.createHash('sha1').update(httpString).digest('hex');
   const stringToSign = 'sha1\n' + keyTime + '\n' + httpStringHash + '\n';
   const signature = crypto.createHmac('sha1', signKey).update(stringToSign).digest('hex');
@@ -49,7 +51,7 @@ function cosSignPutUrl(key) {
     'q-url-param-list=' + paramKeys.join(';'),
     'q-signature=' + signature,
   ].join('&');
-  return 'https://' + host + pathname + '?' + qs;
+  return 'https://' + host + encodedPathname + '?' + qs;
 }
 
 exports.main_handler = async function (event) {

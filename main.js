@@ -1327,7 +1327,8 @@ ipcMain.handle('contribute-upload', async (_, payload) => {
     }
     const buf = Buffer.isBuffer(rawData) ? rawData : Buffer.from(rawData);
     if (buf.length > 20 * 1024 * 1024) return { ok: false, error: '单个文件不能超过 20MB' };
-    const contentType = String((payload && payload.contentType) || 'application/octet-stream');
+    // 预签名固定以 application/octet-stream 参与签名，PUT 头必须与签名完全一致，否则 COS 返回 403
+    const contentType = 'application/octet-stream';
     const resp = await new Promise((resolve, reject) => {
       const r = https.request(u, {
         method: 'PUT',
