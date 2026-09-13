@@ -1,73 +1,89 @@
 'use strict';
 
-// ═══════════════════════════════════════════════
-// 贡献数据上传凭证函数（COS 预签名 PUT）
-// 密钥只存在于本函数的环境变量中，永不进入客户端应用
-// ═══════════════════════════════════════════════
+// Contribution upload credential function (COS presigned PUT, zero dependencies).
+// Secrets live only in this function's environment variables, never in the client app.
 
-const COS = require('cos-nodejs-sdk-v5');
+const crypto = require('crypto');
 
-const BUCKET = process.env.BUCKET || '';          // 如 labreport-1485394950-1250000000
+const BUCKET = process.env.BUCKET || '';
 const REGION = process.env.REGION || 'ap-guangzhou';
-const SECRET_ID = process.env.SECRET_ID || '';
-const SECRET_KEY = process.env.SECRET_KEY || '';
-const EXPIRES = 600;                              // 预签名有效期 10 分钟
+// Accept both SECRET_ID/SECRET_KEY and the console-prefilled Secret_Id/Secret_Key spellings
+const SECRET_ID = process.env.SECRET_ID || process.env.Secret_Id || '';
+const SECRET_KEY = process.env.SECRET_KEY || process.env.Secret_Key || '';
+const EXPIRES = 600;
 
-// 只允许贡献区两层目录结构：contributions/<variants|reports>/<实验名>/<文件名>
-const KEY_RE = /^contributions\/(variants|reports)\/[^/]+\/[^/]+$/;
+// Allowed key shape: contributions/<variants|reports>/<exp>/<timestamp>/<file>
+const KEY_RE = /^contributions\/(variants|reports)\/[^/]+\/[^/]+\/[^/]+$/;
 
-function getPutUrl(key) {
-  return new Promise((resolve, reject) => {
-    const cos = new COS({ SecretId: SECRET_ID, SecretKey: SECRET_KEY });
-    cos.getObjectUrl({
-      Bucket: BUCKET,
-      Region: REGION,
-      Key: key,
-      Method: 'PUT',
-      Expires: EXPIRES,
-      Sign: true,
-    }, (err, data) => {
-      if (err) return reject(err);
-      resolve(data.Url);
-    });
-  });
+function cosSignPutUrl(key) {
+  const host = BUCKET + '.cos.' + REGION + '.myqcloud.com';
+  const now = Math.floor(Date.now() / 1000);
+  const keyTime = now + ';' + (now + EXPIRES);
+  const signKey = crypto.createHmac('sha1', SECRET_KEY).update(keyTime).digest('hex');
+
+  const method = 'put';
+  const pathname = '/' + key.split('/').map(encodeURIComponent).join('/');
+  const params = {
+    'q-sign-algorithm': 'sha1',
+    'q-ak': SECRET_ID,
+    'q-sign-time': keyTime,
+    'q-key-time': keyTime,
+  };
+  const headers = { 'content-type': 'application/octet-stream', 'host': host };
+
+  const paramKeys = Object.keys(params).sort();
+  const headerKeys = Object.keys(headers).sort();
+  const httpParams = paramKeys.map(function (k) { return k + '=' + encodeURIComponent(params[k]); }).join('&');
+  const httpHeaders = headerKeys.map(function (k) { return k + '=' + encodeURIComponent(headers[k]); }).join('&');
+  const httpString = method + '\n' + pathname + '\n' + httpParams + '\n' + httpHeaders + '\n';
+  const httpStringHash = crypto.createHash('sha1').update(httpString).digest('hex');
+  const stringToSign = 'sha1\n' + keyTime + '\n' + httpStringHash + '\n';
+  const signature = crypto.createHmac('sha1', signKey).update(stringToSign).digest('hex');
+
+  const qs = [
+    'q-sign-algorithm=sha1',
+    'q-ak=' + encodeURIComponent(SECRET_ID),
+    'q-sign-time=' + encodeURIComponent(keyTime),
+    'q-key-time=' + encodeURIComponent(keyTime),
+    'q-header-list=' + headerKeys.join(';'),
+    'q-url-param-list=' + paramKeys.join(';'),
+    'q-signature=' + signature,
+  ].join('&');
+  return 'https://' + host + pathname + '?' + qs;
 }
 
-exports.main_handler = async (event) => {
+exports.main_handler = async function (event) {
   const headers = {
     'Content-Type': 'application/json; charset=utf-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   };
-  const reply = (statusCode, obj) => ({ statusCode, headers, body: JSON.stringify(obj) });
+  const reply = function (statusCode, obj) { return { statusCode: statusCode, headers: headers, body: JSON.stringify(obj) }; };
   try {
     if (event && event.httpMethod === 'OPTIONS') return reply(200, { ok: true });
     if (!BUCKET || !SECRET_ID || !SECRET_KEY) {
-      return reply(500, { ok: false, error: '函数环境变量未配置' });
+      return reply(500, { ok: false, error: 'env not configured' });
     }
     let keys = [];
     try {
       const body = JSON.parse((event && typeof event.body === 'string') ? event.body : '{}');
       keys = Array.isArray(body.keys) ? body.keys : [];
     } catch (e) {
-      return reply(400, { ok: false, error: '请求体必须是 JSON' });
+      return reply(400, { ok: false, error: 'body must be JSON' });
     }
     if (!keys.length || keys.length > 20) {
-      return reply(400, { ok: false, error: 'keys 数量应为 1-20' });
+      return reply(400, { ok: false, error: 'keys count must be 1-20' });
     }
     const valid = [];
     for (const k of keys) {
       if (typeof k !== 'string' || !KEY_RE.test(k)) {
-        return reply(400, { ok: false, error: '非法路径：' + String(k).slice(0, 120) });
+        return reply(400, { ok: false, error: 'invalid key: ' + String(k).slice(0, 120) });
       }
       valid.push(k);
     }
-    const items = [];
-    for (const k of valid) {
-      items.push({ key: k, putUrl: await getPutUrl(k) });
-    }
-    return reply(200, { ok: true, items, expires: EXPIRES });
+    const items = valid.map(function (k) { return { key: k, putUrl: cosSignPutUrl(k) }; });
+    return reply(200, { ok: true, items: items, expires: EXPIRES });
   } catch (err) {
     return reply(500, { ok: false, error: err.message });
   }

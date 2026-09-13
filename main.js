@@ -1253,8 +1253,8 @@ ipcMain.handle('open-external', async (_, rawUrl) => {
 // ═══════════════════════════════════════════════
 // 贡献数据上传（COS 直传：凭证云函数返回预签名 PUT 地址，密钥不进应用）
 // ═══════════════════════════════════════════════
-// 凭证云函数 URL（部署后替换；为空表示未启用，应用侧会给出明确提示）
-const CONTRIBUTE_FN_URL = '';
+// 凭证云函数 URL（腾讯云 SCF 函数 URL，POST {keys:[...]} 返回预签名 PUT 地址；密钥不进应用）
+const CONTRIBUTE_FN_URL = 'https://1485394950-jr8mommpp1.ap-guangzhou.tencentscf.com';
 
 // 请求上传凭证：云函数校验 key 前缀（contributions/variants|reports）并返回预签名 PUT 地址
 ipcMain.handle('contribute-get-credentials', async (_, payload) => {
@@ -1265,7 +1265,7 @@ ipcMain.handle('contribute-get-credentials', async (_, payload) => {
     if (!keys.length || keys.length > 20) return { ok: false, error: '文件数量无效' };
     for (const k of keys) {
       if (typeof k !== 'string') return { ok: false, error: '文件名格式无效' };
-      const m = String(k).match(/^contributions\/(variants|reports)\/([^/]+)\/([^/]+)$/);
+      const m = String(k).match(/^contributions\/(variants|reports)\/[^/]+\/[^/]+\/[^/]+$/);
       if (!m) return { ok: false, error: '贡献路径无效：' + String(k).slice(0, 120) };
     }
     const u = assertPublicUrl(fnUrl);
