@@ -1586,15 +1586,8 @@ function bindEvents() {
   $('btnFillDefaultData').onclick = fillDefaultData;
   $('btnCheckUpdate').onclick = checkForUpdate;
   $('btnCheckDataUpdate').onclick = checkDataUpdate;
-  $('btnUpdateLater').onclick = () => {
-    if (updateDownloading) window.labAPI.cancelUpdateDownload();
-    closeModal('updateModal');
-  };
-  $('btnCloseUpdateModal').onclick = () => {
-    if (updateDownloading) window.labAPI.cancelUpdateDownload();
-    closeModal('updateModal');
-  };
-  $('btnUpdateDownload').onclick = downloadUpdate;
+  $('btnUpdateLater').onclick = () => closeModal('updateModal');
+  $('btnCloseUpdateModal').onclick = () => closeModal('updateModal');
   // 通用确认弹窗
   $('btnConfirmOk').onclick = () => settleConfirm(true);
   $('btnConfirmCancel').onclick = () => settleConfirm(false);
@@ -1870,8 +1863,6 @@ async function checkDataUpdate() {
   }
 }
 
-let updateDownloading = false;   // 更新下载中（防重复）
-
 async function checkForUpdate() {
   const btn = $('btnCheckUpdate');
   btn.disabled = true;
@@ -1885,8 +1876,6 @@ async function checkForUpdate() {
     updateInfo = r;
     if (r.hasUpdate) {
       openUpdateModal(r);
-      // 发现新版本后自动开始下载
-      if (r.downloadUrl) setTimeout(() => downloadUpdate(), 400);
     } else {
       showToast('success', '检查更新', `目前已是最新版本 v${r.current}`, 4000);
     }
@@ -1898,49 +1887,29 @@ async function checkForUpdate() {
   }
 }
 
+// 仅提示新版本：渲染下载入口链接（浏览器打开），不自动下载
 function openUpdateModal(r) {
   $('updateModalTitle').textContent = `发现新版本 v${r.latest}`;
   $('updateMeta').textContent = `当前版本 v${r.current} → 最新版本 v${r.latest}`;
   $('updateNotes').textContent = r.notes || '（本次更新未填写说明）';
-  const btn = $('btnUpdateDownload');
-  btn.disabled = !r.downloadUrl;
-  btn.textContent = r.downloadUrl ? '立即下载' : '暂无安装包';
-  $('updateProgressWrap').style.display = 'none';
-  openModal('updateModal');
-}
-
-async function downloadUpdate() {
-  if (!updateInfo || !updateInfo.downloadUrl || updateDownloading) return;
-  updateDownloading = true;
-  const btn = $('btnUpdateDownload');
-  const later = $('btnUpdateLater');
-  btn.disabled = true;
-  later.disabled = true;
-  $('updateProgressWrap').style.display = 'block';
-  $('updateProgressFill').style.width = '0%';
-  $('updateProgressText').textContent = '正在连接下载服务器…';
-  window.labAPI.onUpdateProgress(({ percent }) => {
-    $('updateProgressFill').style.width = percent + '%';
-    $('updateProgressText').textContent = `下载中 ${percent}%`;
+  const wrap = $('updateDownloadsWrap');
+  const downloads = Array.isArray(r.downloads) ? r.downloads : [];
+  wrap.innerHTML = downloads.length
+    ? '<div class="update-downloads">' + downloads.map(d =>
+        `<div class="update-download-link">`
+        + `<span><span class="update-download-name">${escapeHtml(d.name)}</span>`
+        + (d.hint ? ` <span class="update-download-hint">${escapeHtml(d.hint)}</span>` : '') + `</span>`
+        + `<button class="btn btn-sm btn-primary cv-open-link" data-url="${escapeHtml(d.url)}">下载</button>`
+        + `</div>`
+      ).join('') + '</div>'
+    : '<div class="form-hint">暂无可用下载链接，请稍后再试</div>';
+  wrap.querySelectorAll('.cv-open-link').forEach(b => {
+    b.onclick = async () => {
+      const res = await window.labAPI.openExternal(b.dataset.url);
+      if (!res.ok) showToast('error', '无法打开链接', res.error, 5000);
+    };
   });
-  try {
-    const r = await window.labAPI.downloadUpdate({ url: updateInfo.downloadUrl, name: updateInfo.downloadName });
-    if (r.ok) {
-      $('updateProgressText').textContent = '下载完成';
-      showToast('success', '更新下载完成', '即将打开安装程序，请安装到当前版本相同位置', 5000);
-      window.labAPI.openFile(r.filePath);
-      closeModal('updateModal');
-    } else {
-      $('updateProgressText').textContent = '下载失败：' + r.error;
-      showToast('error', '下载失败', r.error, 5000);
-    }
-  } catch (err) {
-    $('updateProgressText').textContent = '下载异常：' + err.message;
-  } finally {
-    updateDownloading = false;
-    btn.disabled = false;
-    later.disabled = false;
-  }
+  openModal('updateModal');
 }
 
 // ── 意见反馈（复用贡献上传通道，落盘 COS contributions/feedbacks/，管理应用清单对比审核）──

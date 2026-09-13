@@ -34,15 +34,10 @@ contextBridge.exposeInMainWorld('labAPI', {
   readDocxBuffer: (filePath) => ipcRenderer.invoke('read-docx-buffer', filePath),
   // 内置音频（彩蛋播放）
   readAudioFile: () => ipcRenderer.invoke('read-audio-file'),
-  // 检查更新（应用内自动下载更新）
+  // 检查更新（仅版本校对 + 浏览器打开下载链接）
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   checkForUpdate: (cfg) => ipcRenderer.invoke('check-for-update', cfg),
-  downloadUpdate: (payload) => ipcRenderer.invoke('download-update', payload),
-  cancelUpdateDownload: () => ipcRenderer.send('cancel-update-download'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
-  onUpdateProgress: (callback) => {
-    ipcRenderer.on('update-download-progress', (_, data) => callback(data));
-  },
   // 贡献数据上传（COS 直传）
   contributeGetCredentials: (payload) => ipcRenderer.invoke('contribute-get-credentials', payload),
   contributeUpload: (payload) => ipcRenderer.invoke('contribute-upload', payload),
