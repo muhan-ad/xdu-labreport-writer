@@ -664,11 +664,15 @@
       <div class="modal-body">
         <p class="update-meta" id="updateMeta"></p>
         <div class="update-notes" id="updateNotes"></div>
-        <div id="updateDownloadsWrap"></div>
-        <p class="update-warning">⚠ 请将下载的新版本安装到与当前版本相同的位置，否则电脑上会出现两个版本的应用。</p>
+        <div class="update-progress" id="updateProgressWrap" style="display:none">
+          <div class="progress-bar"><div class="progress-fill" id="updateProgressFill"></div></div>
+          <p class="update-progress-text" id="updateProgressText">准备下载…</p>
+        </div>
+        <p class="update-warning">⚠ 请将新版本安装到与当前版本相同的位置，否则电脑上会出现两个版本的应用。</p>
       </div>
       <div class="modal-footer">
         <button class="btn btn-ghost" id="btnUpdateLater">稍后再说</button>
+        <button class="btn btn-primary" id="btnUpdateDownload">立即下载</button>
       </div>
     </div>
   </div>

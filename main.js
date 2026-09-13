@@ -1223,6 +1223,19 @@ ipcMain.handle('check-for-update', async (_, cfg) => {
         } catch (e) { /* 忽略非法旧地址 */ }
       }
     }
+    // 安装包直链（老字段 url/fileName）：应用内自动更新使用
+    const dlUrl = String(mf.url || '').trim();
+    let safeDlUrl = '';
+    let dlName = 'labreport-setup.exe';
+    if (dlUrl) {
+      try {
+        const du = assertPublicUrl(dlUrl);
+        if (await checkPublicDns(du.hostname)) {
+          safeDlUrl = du.href;
+          dlName = String(mf.fileName || 'labreport-setup.exe');
+        }
+      } catch (e) { /* 无直链则仅提示 */ }
+    }
     return {
       ok: true,
       hasUpdate,
@@ -1230,6 +1243,8 @@ ipcMain.handle('check-for-update', async (_, cfg) => {
       latest,
       notes: String(mf.notes || '').trim(),
       downloads,
+      downloadUrl: safeDlUrl,
+      downloadName: dlName,
     };
   } catch (err) {
     return { ok: false, error: err.message, hasUpdate: false };
@@ -1248,6 +1263,69 @@ ipcMain.handle('open-external', async (_, rawUrl) => {
   } catch (err) {
     return { ok: false, error: err.message };
   }
+});
+
+// 取消下载：销毁当前更新下载请求
+let activeUpdateReq = null;
+ipcMain.on('cancel-update-download', () => {
+  if (activeUpdateReq) {
+    try { activeUpdateReq.destroy(); } catch (e) { /* 忽略 */ }
+    activeUpdateReq = null;
+  }
+});
+
+// 下载更新安装包到系统「下载」目录（进度经 'update-download-progress' 回传）
+ipcMain.handle('download-update', async (event, payload) => {
+  const rawUrl = String((payload && payload.url) || '');
+  let url;
+  try {
+    const u = assertPublicUrl(rawUrl);
+    if (!(await checkPublicDns(u.hostname))) throw new Error('下载地址无法解析或指向本地地址');
+    url = u.href;
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+  const fileName = path.basename(String((payload && payload.name) || 'update.exe'));
+  if (!fileName || fileName.includes('..') || /[\\/]/.test(fileName)) {
+    return { ok: false, error: '非法的文件名' };
+  }
+  const dlRoot = path.resolve(app.getPath('downloads'));
+  const dest = path.resolve(dlRoot, fileName);
+  if (!dest.startsWith(dlRoot + path.sep)) {
+    return { ok: false, error: '非法的文件路径' };
+  }
+  const sendProgress = (percent) => {
+    try { event.sender.send('update-download-progress', { percent }); } catch (e) { /* 窗口可能已关闭 */ }
+  };
+  return new Promise((resolve) => {
+    const req = https.get(url, {
+      headers: { 'User-Agent': 'labreport-writer-updater' },
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume();
+        activeUpdateReq = null;
+        return resolve({ ok: false, error: '下载地址发生了重定向，请稍后重试' });
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        activeUpdateReq = null;
+        return resolve({ ok: false, error: `下载失败 HTTP ${res.statusCode}` });
+      }
+      const total = parseInt(res.headers['content-length'] || '0', 10) || 0;
+      let received = 0;
+      const out = fs.createWriteStream(dest);
+      res.pipe(out);
+      res.on('data', (chunk) => {
+        received += chunk.length;
+        if (total) sendProgress(Math.min(99, Math.round(received * 100 / total)));
+      });
+      out.on('finish', () => { activeUpdateReq = null; sendProgress(100); resolve({ ok: true, filePath: dest }); });
+      out.on('error', (e) => { activeUpdateReq = null; res.destroy(); resolve({ ok: false, error: e.message }); });
+      res.on('error', (e) => { activeUpdateReq = null; out.destroy(); resolve({ ok: false, error: e.message }); });
+    });
+    req.on('error', (e) => { activeUpdateReq = null; resolve({ ok: false, error: e.message }); });
+    activeUpdateReq = req;
+  });
 });
 
 // ═══════════════════════════════════════════════
