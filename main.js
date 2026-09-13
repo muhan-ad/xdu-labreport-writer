@@ -1265,7 +1265,8 @@ ipcMain.handle('contribute-get-credentials', async (_, payload) => {
     if (!keys.length || keys.length > 20) return { ok: false, error: '文件数量无效' };
     for (const k of keys) {
       if (typeof k !== 'string') return { ok: false, error: '文件名格式无效' };
-      const m = String(k).match(/^contributions\/(variants|reports)\/[^/]+\/[^/]+\/[^/]+$/);
+      // variants/reports 为 5 段（类型/实验/时间戳/文件）；feedbacks 为 4 段（类型/时间戳/文件）
+      const m = String(k).match(/^contributions\/(?:(?:variants|reports)\/[^/]+\/[^/]+\/[^/]+|feedbacks\/[^/]+\/[^/]+)$/);
       if (!m) return { ok: false, error: '贡献路径无效：' + String(k).slice(0, 120) };
     }
     const u = assertPublicUrl(fnUrl);

@@ -1578,6 +1578,8 @@ function bindEvents() {
   $('btnNavHelp').onclick = () => switchSettingsPane('help');
   $('btnNavDanger').onclick = () => switchSettingsPane('danger');
   $('btnNavUpdate').onclick = () => { switchSettingsPane('update'); loadUpdatePane(); };
+  $('btnNavFeedback').onclick = () => switchSettingsPane('feedback');
+  $('btnSubmitFeedback').onclick = submitFeedback;
   $('btnNavDevelop').onclick = () => { switchSettingsPane('develop'); loadDevelopPane(); };
   $('rdDevMode').onclick = () => setDevMode(true);
   $('rdNormalMode').onclick = () => setDevMode(false);
@@ -1767,6 +1769,8 @@ function switchSettingsPane(name) {
   $('paneDevelop').classList.toggle('active', name === 'develop');
   $('btnNavUpdate').classList.toggle('active', name === 'update');
   $('paneUpdate').classList.toggle('active', name === 'update');
+  $('btnNavFeedback').classList.toggle('active', name === 'feedback');
+  $('paneFeedback').classList.toggle('active', name === 'feedback');
 }
 
 // ── 检查更新（对象存储清单，国内高速）──
@@ -1906,6 +1910,48 @@ function openUpdateModal(r) {
     };
   });
   openModal('updateModal');
+}
+
+// ── 意见反馈（复用贡献上传通道，落盘 COS contributions/feedbacks/，管理应用清单对比审核）──
+async function submitFeedback() {
+  const text = $('feedbackText').value.trim();
+  if (text.length < 5) { showToast('warning', '内容太短', '请填写至少 5 个字的反馈内容'); return; }
+  const statusEl = $('feedbackStatus');
+  const btn = $('btnSubmitFeedback');
+  btn.disabled = true;
+  statusEl.textContent = '正在提交…';
+  try {
+    const ts = cvTs();
+    const key = `contributions/feedbacks/${ts}/feedback.json`;
+    const payload = {
+      kind: 'feedback',
+      text,
+      ts,
+      appVersion: (await window.labAPI.getAppVersion()) || '',
+      exp: currentExp ? currentExp.id : '',
+    };
+    const data = new TextEncoder().encode(JSON.stringify(payload, null, 1));
+    const c = await window.labAPI.contributeGetCredentials({ keys: [key] });
+    if (!c.ok || !Array.isArray(c.items) || !c.items.length) {
+      statusEl.textContent = '';
+      showToast('error', '提交失败', (c && c.error) || '服务异常', 5000);
+      return;
+    }
+    const r = await window.labAPI.contributeUpload({ putUrl: c.items[0].putUrl, data });
+    if (!r.ok) {
+      statusEl.textContent = '';
+      showToast('error', '提交失败', r.error, 5000);
+      return;
+    }
+    statusEl.textContent = '✓ 已提交，感谢您的反馈！';
+    $('feedbackText').value = '';
+    showToast('success', '反馈已提交', '感谢您的建议，开发者会定期查看', 4000);
+  } catch (err) {
+    statusEl.textContent = '';
+    showToast('error', '提交异常', err.message, 5000);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ── 贡献数据（变体 / 实验报告，COS 直传）──

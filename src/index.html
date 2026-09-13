@@ -457,6 +457,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-9-9"/><polyline points="21 3 21 9 15 9"/><polyline points="21 12 21 15 21 21"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
             检查更新
           </button>
+          <button class="settings-nav-item" id="btnNavFeedback">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="13" y2="13"/></svg>
+            意见反馈
+          </button>
           <button class="settings-nav-item" id="btnNavDevelop">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 9l-3 3 3 3"/><path d="M16 9l3 3-3 3"/><line x1="12" y1="5" x2="12" y2="19"/></svg>
             开发者调试
@@ -613,6 +617,19 @@
               </div>
               <div class="skill-actions">
                 <button class="btn btn-primary btn-block" id="btnCheckDataUpdate" type="button">检查实验数据更新</button>
+              </div>
+            </div>
+          </div>
+          <!-- 意见反馈页 -->
+          <div class="settings-pane" id="paneFeedback">
+            <div class="settings-section">
+              <h4>意见反馈</h4>
+              <div class="form-group">
+                <textarea id="feedbackText" rows="6" placeholder="对功能、体验、实验数据、变体等方面的建议与问题反馈（不少于 5 个字）"></textarea>
+              </div>
+              <div class="form-hint" id="feedbackStatus"></div>
+              <div class="skill-actions">
+                <button class="btn btn-sm btn-primary" id="btnSubmitFeedback" type="button">提交反馈</button>
               </div>
             </div>
           </div>
