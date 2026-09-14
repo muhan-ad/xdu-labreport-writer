@@ -239,8 +239,19 @@ function renderList(keyword = '') {
 }
 
 // ── 选中实验 ──
-function selectExperiment(exp) {
+async function selectExperiment(exp) {
+  // 切换实验前若有未保存修改：保存并切换 / 取消则保留修改不切换（不静默丢弃）
+  if (currentExp && currentExp.id !== exp.id && isDataModified) {
+    const save = await appConfirm('当前实验有未保存的修改。\n点击「确定」保存并切换；点击「取消」不切换（修改保留）。');
+    if (save) {
+      const okSave = await saveFormData();
+      if (!okSave) return;   // 保存失败不切换
+    } else {
+      return;   // 取消切换
+    }
+  }
   currentExp = exp;
+  lastPolishResults = [];   // 切换实验清空上一实验的润色结果，防跨实验导入
   $('emptyState').style.display = 'none';
   $('detailPanel').style.display = 'block';
   $('batchPanel').style.display = 'none';
@@ -758,6 +769,16 @@ async function saveFormData() {
   if (result.ok) {
     currentData = data;
     isDataModified = false;
+    // 首次保存会把实验迁移到用户数据目录，同步当前实验与列表项的真实路径
+    if (result.path) {
+      currentExp.path = result.path;
+      if (result.dataFile) currentExp.dataFile = result.dataFile;
+      const listExp = experiments.find(e => e.id === currentExp.id);
+      if (listExp) {
+        listExp.path = result.path;
+        if (result.dataFile) listExp.dataFile = result.dataFile;
+      }
+    }
     $('btnSaveData').disabled = true;
     notifyDataModified();
     showToast('success', '数据已保存', getDisplayName(currentExp));
@@ -1202,6 +1223,7 @@ async function runAiPolish() {
     showToast('warning', '未配置 API Key', '请在设置中配置 API Key 后再使用');
     return;
   }
+  const srcExpId = currentExp.id;   // 记录润色来源实验，防跨实验导入
 
   const style = document.querySelector('input[name="aiStyle"]:checked')?.value || 'rigorous';
   const scopeVals = [...document.querySelectorAll('#aiScopeGroup input[type="checkbox"]:checked')].map(i => i.value);
@@ -1292,6 +1314,7 @@ async function runAiPolish() {
       }
     }
 
+    results.forEach(r => { r.expId = srcExpId; });   // 绑定来源实验，导入时校验
     lastPolishResults = results;
     renderAiResults();
     const okCount = results.filter(r => r.polished).length;
@@ -1357,6 +1380,10 @@ function renderAiResults() {
       impBtn.textContent = '导入此章节';
       impBtn.onclick = () => {
         if (!currentExp) return;
+        if (r.expId && r.expId !== currentExp.id) {
+          showToast('warning', '无法导入', `该结果来自实验「${r.expId}」，请先切回该实验再导入`);
+          return;
+        }
         setPolishOverride(currentExp.id, r.section, r.polished);
         updateOverrideBar();
         showToast('info', '已导入', `「${r.section}」将在下次生成报告时生效`);
@@ -2341,7 +2368,8 @@ async function deleteAllReports() {
 // ── 导入润色结果并重新生成报告（导入本轮全部可导入章节）──
 async function importPolishAndRegenerate() {
   if (!currentExp) return;
-  const ok = (lastPolishResults || []).filter(r => r.section && r.polished && r.polished.trim());
+  const ok = (lastPolishResults || []).filter(r => r.section && r.polished && r.polished.trim()
+    && (!r.expId || r.expId === currentExp.id));   // 仅导入当前实验的结果，防跨实验注入
   if (!ok.length) {
     showToast('warning', '无法导入', '本次结果中没有可导入的章节（仅"可导入"章节支持注入重生成）');
     return;
@@ -2423,6 +2451,14 @@ function saveAppSettings() {
 // ── 运行生成报告 ──
 async function runGenerate() {
   if (!currentExp || isGenerating) return;
+  // 生成前若有未保存修改先保存，保证报告使用当前界面值；保存失败则中止不启动 Word
+  if (isDataModified) {
+    const saved = await saveFormData();
+    if (!saved) {
+      showToast('error', '生成已中止', '表单保存失败，请先检查输入后重试');
+      return;
+    }
+  }
   isGenerating = true;
   let genOk = false;
 

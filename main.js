@@ -383,7 +383,7 @@ ipcMain.handle('write-data', (_, expPath, data) => {
   try {
     const p = ensureUserCopy(expPath);
     fs.writeFileSync(path.join(p, 'data.json'), JSON.stringify(data, null, 2), 'utf-8');
-    return { ok: true, path: p };
+    return { ok: true, path: p, dataFile: path.join(p, 'data.json') };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -1006,6 +1006,20 @@ function copyDir(src, dest, boundRoot) {
   }
 }
 
+// 跨根复制：源按 srcRoot 校验、目标按 destRoot 校验（更新包 staging → 用户数据目录）
+function copyDirAcross(src, srcRoot, dest, destRoot) {
+  ensureInside(src, srcRoot);
+  ensureInside(dest, destRoot);
+  fs.mkdirSync(dest, { recursive: true });
+  for (const name of fs.readdirSync(src)) {
+    const s = ensureInside(path.join(src, name), srcRoot);
+    const d = ensureInside(path.join(dest, name), destRoot);
+    const st = fs.statSync(s);
+    if (st.isDirectory()) copyDirAcross(s, srcRoot, d, destRoot);
+    else fs.copyFileSync(s, d);
+  }
+}
+
 // 递归合并数据包目录到 userData：data.json 永不覆盖；variants.json 用户改过则保留
 // skipDocs=true 时跳过 .docx（供 ensureUserCopy 使用，避免安装目录残留报告覆盖用户报告）
 function mergeDataTree(stagingDir, udRoot, builtinRoot, warnings, skipDocs) {
@@ -1017,14 +1031,23 @@ function mergeDataTree(stagingDir, udRoot, builtinRoot, warnings, skipDocs) {
     const dst = ensureInside(path.join(udRoot, entry), udRoot);
     if (st.isDirectory()) {
       if (entry === 'common') {
-        // common 整目录覆盖（公共库，用户不改）
-        fs.rmSync(dst, { recursive: true, force: true });
-        copyDir(src, dst, udRoot);
+        // common 整目录覆盖（公共库，用户不改）：先复制到 .tmp 再原子替换，
+        // 复制失败时旧 common 不被破坏（源在 staging、目标在 udRoot，需跨根校验）
+        const tmp = ensureInside(dst + '.tmp', udRoot);
+        try {
+          fs.rmSync(tmp, { recursive: true, force: true });
+          copyDirAcross(src, stagingDir, tmp, udRoot);
+          fs.rmSync(dst, { recursive: true, force: true });
+          fs.renameSync(tmp, dst);
+        } catch (e) {
+          fs.rmSync(tmp, { recursive: true, force: true });
+          warnings.push('common 公共库更新失败，已保留旧版本：' + e.message);
+        }
         continue;
       }
       // 实验目录：先合并文件
       fs.mkdirSync(dst, { recursive: true });
-      mergeDataTree(src, dst, path.join(builtinRoot, entry), warnings);
+      mergeDataTree(src, dst, path.join(builtinRoot, entry), warnings, skipDocs);
       // data.json 保障：userData 无而安装目录有时，复制安装目录的用户数据
       const bd = ensureInside(path.join(builtinRoot, entry, 'data.json'), EXPERIMENTS_DIR);
       const dd = ensureInside(path.join(dst, 'data.json'), udRoot);
@@ -1079,7 +1102,7 @@ ipcMain.handle('apply-data-package', async (_, payload) => {
     const stagingRoot = fs.existsSync(path.join(staging, '实验脚本'))
       ? path.join(staging, '实验脚本')
       : staging;
-    mergeDataTree(stagingRoot, udRoot, EXPERIMENTS_DIR, warnings);
+    mergeDataTree(stagingRoot, udRoot, EXPERIMENTS_DIR, warnings, true);
     ensureInside(mfPath, path.join(app.getPath('userData'), '实验数据'));
     fs.writeFileSync(mfPath, JSON.stringify({
       dataVersion: version,
@@ -1403,6 +1426,8 @@ ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish)
   // 记录本次生成启动前的 WINWORD 进程（取消时差集清理，绝不影响用户手动打开的 Word）
   activeWordPidsBefore = new Set(await listWinwordPids());
   activeCancelled = false;
+  // 记录生成启动时间：用于判定 docx 是否为本次产物（防止旧报告被误判为成功）
+  const startTs = Date.now();
 
   return new Promise((resolve) => {
     const logs = [];
@@ -1458,15 +1483,19 @@ ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish)
         } catch (e) { /* 缓存失败不影响生成结果 */ }
       }
       // 扫描生成的 docx（跳过 Word 属主文件与生成中/残留的临时报告）
+      // 仅认本次任务新建/更新的文件（mtime >= startTs），避免把旧报告误判为本次成功
       let reportFile = null;
+      let newestMtime = 0;
       const files = fs.readdirSync(expPath);
       for (const f of files) {
         if (f.endsWith('.docx') && !f.startsWith('~$') && !f.includes('.~saving')) {
-          reportFile = path.join(expPath, f);
-          break;
+          const full = path.join(expPath, f);
+          let mt = 0;
+          try { mt = fs.statSync(full).mtimeMs; } catch (e) { continue; }
+          if (mt >= startTs && mt > newestMtime) { newestMtime = mt; reportFile = full; }
         }
       }
-      // 退出码 0 但未产出 docx：视为失败（多数情况是测量数据未填写完整，generate.py 打印缺失列表后静默退出）
+      // 退出码 0 但未产出新 docx：视为失败（多数情况是测量数据未填写完整，generate.py 打印缺失列表后静默退出）
       const ok = code === 0 && !!reportFile;
       resolve({
         ok,

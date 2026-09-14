@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('labAPI', {
   applyDataPackage: (payload) => ipcRenderer.invoke('apply-data-package', payload),
   cancelDataDownload: () => ipcRenderer.send('cancel-data-download'),
   onDataProgress: (callback) => {
+    ipcRenderer.removeAllListeners('data-update-progress');   // 防多次注册累积
     ipcRenderer.on('data-update-progress', (_, data) => callback(data));
   },
   // AI 对话（requestId 支持取消）

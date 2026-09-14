@@ -102,7 +102,8 @@ def main():
         print(f"{flag}{d:<30}{str(miss):>4} {str(vinfo):>8}  {('; '.join(iss)) if iss else 'OK'}")
     print("-" * 90)
     print(f"共 {len(rows)} 个实验，异常 {bad} 个")
+    return bad   # 非零退出码供 CI/发布脚本判定失败
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -70,7 +70,9 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "实验报告编写"
+      "shortcutName": "实验报告编写",
+      "installerIcon": "src/icon.ico",
+      "uninstallerIcon": "src/icon.ico"
     }
   }
 }

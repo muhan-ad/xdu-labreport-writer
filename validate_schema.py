@@ -15,6 +15,7 @@
     python validate_schema.py            # 校验所有已迁移（有 schema.json）的实验
 """
 import json
+import math
 import os
 
 PROJECT_ROOT = os.path.realpath(os.path.dirname(os.path.abspath(__file__)))
@@ -29,7 +30,8 @@ def _load_json(path):
 
 
 def _is_num(v):
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
+    return (isinstance(v, (int, float)) and not isinstance(v, bool)
+            and math.isfinite(v))   # 拒 NaN/Inf
 
 
 def validate(schema, data):
@@ -51,7 +53,8 @@ def validate(schema, data):
                     missing.append({"key": key, "label": label})
                     continue
                 if typ == "matrix" and (not isinstance(v, list)
-                        or any(x is None for row in v for x in row)):
+                        or any((not isinstance(row, list)) or any(x is None for x in row)
+                               for row in v)):
                     missing.append({"key": key, "label": label})
                     continue
 
@@ -85,7 +88,7 @@ def validate(schema, data):
                     elif any(x is not None and not _is_num(x)
                              for r in v if isinstance(r, list) for x in r):
                         invalid.append({"key": key, "label": label, "reason": "含非数值"})
-    return {"ok": True, "missing": missing, "invalid": invalid}
+    return {"ok": (not missing and not invalid), "missing": missing, "invalid": invalid}
 
 
 def main():
