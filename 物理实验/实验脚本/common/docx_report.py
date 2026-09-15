@@ -6,8 +6,9 @@
 要求：Windows + Microsoft Word 2016 或更高版本。
 
 注意：BuildUp() 支持 \\frac、\\sqrt、\\sum、^、_、希腊字母、
-\\overline 等 UnicodeMath 命令。\\mathrm 和 \\text 不被支持，
-需在 add_math() 中转为双引号文本模式。
+\\overline、\\mathrm{...}、\\text{...} 等 UnicodeMath 命令。
+\\mathrm/\\text 在 add_math() 中转为双引号文本模式，目的是获得正体文本
+（直接构建会按变量排成斜体），并非不被支持。
 """
 
 import os
@@ -174,6 +175,32 @@ def split_rich_blocks(text: str) -> list[tuple[str, str]]:
         if b.strip():
             ops.append(("para", b))
     return ops
+
+
+# ── BuildUp 自检辅助：数学字母数字区 U+1D400–U+1D7FF 归一回 ASCII ──
+# 13 个字母块（Bold/Italic/…/Monospace），每块 58 码位：0-25 A-Z、26-51 a-z、52-57 0-5
+_MATH_ALPHA_BLOCKS = (0x1D400, 0x1D434, 0x1D468, 0x1D49C, 0x1D4D0,
+                      0x1D504, 0x1D538, 0x1D56C, 0x1D5A0, 0x1D5D4,
+                      0x1D608, 0x1D63C, 0x1D670)
+
+def _math_alpha_to_ascii(s: str) -> str:
+    """把数学斜体/粗体等字母数字转回 ASCII（未识别的字符原样保留）。"""
+    out = []
+    for ch in s:
+        o = ord(ch)
+        a = None
+        for base in _MATH_ALPHA_BLOCKS:
+            d = o - base
+            if 0 <= d < 58:
+                if d < 26:
+                    a = chr(65 + d)
+                elif d < 52:
+                    a = chr(97 + d - 26)
+                else:
+                    a = chr(48 + d - 52)
+                break
+        out.append(a if a is not None else ch)
+    return ''.join(out)
 
 
 
@@ -389,9 +416,11 @@ class DocxReportWriter:
         self._doc.OMaths.Add(self._sel.Range)
         idx = self._doc.OMaths.Count
         om = self._doc.OMaths(idx)
-        # 注意：不要读取 om.Range.Text（Python 3.14 GBK 编码问题）
+        # om.Range.Text 读回的是数学斜体命令名（\frac → \𝑓𝑟𝑎𝑐）且 \r 为分隔符，
+        # 仅用于构建自检（_assert_buildup_ok 内归一化后判定残留），勿直接回写
         om.Range.Text = formula
         om.BuildUp()
+        self._assert_buildup_ok(om, formula)
 
         # 光标移出公式区域
         self._sel.Collapse(Direction=wdCollapseEnd)
@@ -437,10 +466,29 @@ class DocxReportWriter:
         om = self._doc.OMaths(idx)
         om.Range.Text = formula
         om.BuildUp()
+        self._assert_buildup_ok(om, formula)
 
         # 光标移出公式，停留在同一段落内
         self._sel.Collapse(Direction=wdCollapseEnd)
         self._goto_end()
+
+    @staticmethod
+    def _assert_buildup_ok(om, formula: str):
+        """BuildUp() 失败自检：不认的命令会使整条公式降级为线性文本并
+        静默写入文档，生成器事后无从察觉。此处在构建后立即断言，任何
+        转换缺陷当场抛错并带公式原文。
+
+        Word 公式对象里几个反直觉事实（实测）：
+          - om.Range.Text 把命令名返回成数学斜体字母（\frac 读作 \𝑓𝑟𝑎𝑐，
+            U+1D400–U+1D7FF 数学字母数字区），判定前必须先归一回 ASCII；
+          - \r 用作公式内部元素分隔符，读取后须清掉；
+          - BuildUp() 会改变 doc.OMaths 集合，遍历集合同时按索引修改会
+            下标漂移、改到错误的公式；需先收集目标下标再降序处理。
+        """
+        left = _math_alpha_to_ascii(om.Range.Text).replace('\r', '')
+        if '\\' in left:
+            raise RuntimeError('公式未被 Word BuildUp 解析，残留：%r；原文：%r'
+                               % (left, formula))
 
     @staticmethod
     def _preprocess_latex(formula: str) -> str:
@@ -476,9 +524,17 @@ class DocxReportWriter:
         # 7. 括号尺寸命令 \\Big \\big \\Bigg 等 → 去掉（UnicodeMath 不识别，
         #    残留会导致整条公式 BuildUp 失败）
         formula = re.sub(r"\\(?:Big|big|Bigg|bigg)[lrm]?(?![A-Za-z])", "", formula)
-        # 8. 绝对值竖线：裸 |...| 在含 \frac / 下标 / 上标时 Word BuildUp 会失败
-        #    （\frac 以 ⍁ U+2341、\left/\right 以 ├ ┤ 字面残留，渲染为方框），
-        #    统一改为 \\left|...\\right|（原生支持、必能构建）；简单 |x| 不动
+        # 7.5 LaTeX 竖线定界符命令 \\lvert \\rvert \\vert \\Vert \\lVert \\rVert
+        #     → 普通竖线（UnicodeMath 不识别这些命令，残留会导致整条公式
+        #     BuildUp 失败，公式以线性文本静默残留——曾实际发生在声速（空气）语料）
+        formula = (formula.replace(r'\lvert', r'\left|')
+                          .replace(r'\rvert', r'\right|')
+                          .replace(r'\lVert', r'\left\|')
+                          .replace(r'\rVert', r'\right\|')
+                          .replace(r'\Vert', r'\|')
+                          .replace(r'\vert', '|'))
+# 8. 绝对值竖线：实测裸 |...|（含 \frac/上下标的组合）Word BuildUp 也能正常构建，
+#    此步是无害的风格统一（与正文中的 \left|...\right| 保持一致），保留以防回归
         formula = re.sub(r"(?<!\\left)\|([^|]*(?:\\frac|[_^])[^|]*)\|",
                          r"\\left|\1\\right|", formula)
         # 9. \\overline{...} — BuildUp 原生支持，保留不动
@@ -507,6 +563,7 @@ class DocxReportWriter:
                     om = self._doc.OMaths(idx)
                     om.Range.Text = formula
                     om.BuildUp()
+                    self._assert_buildup_ok(om, formula)
                     # 把光标移出公式区域：选中公式末尾 → 右移一个字符
                     om.Range.Select()
                     self._sel.Collapse(Direction=wdCollapseEnd)
