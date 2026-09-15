@@ -215,6 +215,58 @@ function loadDevelopPane() {
   $('rdNormalMode').checked = !dev;
 }
 
+// ── 变体管理：实验级章节开关（设置-开发者调试）──
+async function loadSecCfgExpList() {
+  const sel = $('secCfgExpSel');
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = '';
+  for (const e of experiments) {
+    const opt = document.createElement('option');
+    opt.value = e.path;
+    opt.textContent = getDisplayName(e);
+    sel.appendChild(opt);
+  }
+  const exp = experiments.find(e => e.path === prev) || experiments[0];
+  if (exp) { sel.value = exp.path; await loadSecCfgForExp(exp); }
+}
+
+async function loadSecCfgForExp(exp) {
+  const box = $('secCfgList');
+  if (!box) return;
+  box.innerHTML = '';
+  const lr = await window.labAPI.loadVariants(exp.path);
+  const sections = (lr && lr.ok && lr.variants) ? Object.keys(lr.variants) : [];
+  if (!sections.length) {
+    box.innerHTML = '<div class="form-hint">该实验没有变体章节（无需配置）</div>';
+    return;
+  }
+  const rr = await window.labAPI.readSectionsConfig(exp.path);
+  const disabled = new Set((rr && rr.ok) ? rr.disabled : []);
+  for (const s of sections) {
+    const label = document.createElement('label');
+    label.className = 'checkbox-label';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !disabled.has(s);
+    cb.dataset.section = s;
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(' ' + s));
+    box.appendChild(label);
+  }
+}
+
+async function saveSecCfg() {
+  const sel = $('secCfgExpSel');
+  const exp = experiments.find(e => e.path === sel.value);
+  if (!exp) return;
+  const disabled = Array.from($('secCfgList').querySelectorAll('input[type=checkbox]:not(:checked)'))
+    .map(cb => cb.dataset.section);
+  const r = await window.labAPI.writeSectionsConfig(exp.path, disabled);
+  if (r && r.ok) showToast('success', '已保存', `${getDisplayName(exp)} 章节开关已保存，下次生成报告时生效`);
+  else showToast('error', '保存失败', (r && r.error) || '未知错误', 5000);
+}
+
 // ── 导出诊断日志（设置-开发者调试；主进程统一脱敏）──
 async function exportDiagnostics() {
   const btn = $('btnExportDiagnostics');
@@ -1728,9 +1780,14 @@ function bindEvents() {
   $('btnExportDiagnostics').onclick = exportDiagnostics;
   const noticeReminder = document.querySelector('.notice-reminder');
   if (noticeReminder) noticeReminder.onclick = () => { openModal('settingsModal'); switchSettingsPane('notice'); };
-  $('btnNavDevelop').onclick = () => { switchSettingsPane('develop'); loadDevelopPane(); };
+  $('btnNavDevelop').onclick = () => { switchSettingsPane('develop'); loadDevelopPane(); loadSecCfgExpList(); };
   $('rdDevMode').onclick = () => setDevMode(true);
   $('rdNormalMode').onclick = () => setDevMode(false);
+  $('secCfgExpSel').onchange = () => {
+    const exp = experiments.find(e => e.path === $('secCfgExpSel').value);
+    if (exp) loadSecCfgForExp(exp);
+  };
+  $('btnSaveSecCfg').onclick = saveSecCfg;
   $('btnFillDefaultData').onclick = fillDefaultData;
   $('btnCheckUpdate').onclick = checkForUpdate;
   $('btnCheckDataUpdate').onclick = checkDataUpdate;
@@ -2058,6 +2115,7 @@ async function checkDataUpdate() {
     renderList();
     updateEmptyStats();
     loadDataInfo();
+    loadSecCfgExpList();   // 数据包可能新增了实验，刷新变体管理下拉
     if (ap.warnings && ap.warnings.length) {
       const w = ap.warnings.join('；') + (addedExps.length ? `；本次新增实验：${addedExps.join('、')}` : '');
       showToast('info', '数据更新完成', w, 6000);

@@ -1475,7 +1475,7 @@ handle('run-generate', async (_, expPath, studentInfo, variants, polish) => {
     if (studentInfo.class) env.LAB_STUDENT_CLASS = studentInfo.class;
     if (studentInfo.date) env.LAB_STUDENT_DATE = studentInfo.date;
   }
-  const jobInput = JSON.stringify({ variants: variants || {}, polish: polish || {} });
+  const jobInput = JSON.stringify({ variants: variants || {}, polish: polish || {}, disabledSections: readSectionsConfig(expPath).disabled });
   if (Buffer.byteLength(jobInput) > 512 * 1024) throw Error('润色与变体内容过长，请减少后重试');
   job.inputFile = path.join(expPath, '.job-' + crypto.randomUUID() + '.json');
   atomic.writeFile(job.inputFile, jobInput, 'utf8', false);
@@ -1723,6 +1723,42 @@ handle('save-variants', async (_, expPath, variants) => {
     }
     const p = ensureUserCopy(expPath);
     atomic.writeFile(security.inside(path.join(p, 'variants.json'), p), JSON.stringify(variants, null, 1), 'utf-8');
+    return { ok: true, path: p };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// ── 变体管理：实验级章节开关（sections-config.json，独立于表单数据）──
+// 某些实验不需要「实验原理/实验方法」等章节：禁用后生成报告不再输出该章节结构。
+const SECTION_NAMES = ['实验原理', '实验方法', '误差分析', '结论'];
+
+function readSectionsConfig(expPath) {
+  const p = security.inside(path.join(expPath, 'sections-config.json'), expPath);
+  if (!fs.existsSync(p)) return { disabled: [] };
+  const cfg = atomic.readJson(p);
+  return { disabled: Array.isArray(cfg && cfg.disabled) ? cfg.disabled : [] };
+}
+
+handle('read-sections-config', async (_, expPath) => {
+  try {
+    expPath = experimentPath(expPath);
+    return { ok: true, ...readSectionsConfig(expPath) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+handle('write-sections-config', async (_, expPath, disabled) => {
+  try {
+    if (!Array.isArray(disabled)) return { ok: false, error: '章节开关数据无效' };
+    const p = ensureUserCopy(expPath);
+    const clean = [];
+    for (const s of disabled) {
+      if (typeof s === 'string' && SECTION_NAMES.includes(s) && !clean.includes(s)) clean.push(s);
+    }
+    atomic.writeFile(security.inside(path.join(p, 'sections-config.json'), p),
+      JSON.stringify({ disabled: clean }, null, 1), 'utf-8');
     return { ok: true, path: p };
   } catch (err) {
     return { ok: false, error: err.message };

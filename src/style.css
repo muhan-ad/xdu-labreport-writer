@@ -2606,3 +2606,23 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 
 .update-download-link { flex-wrap: wrap; gap: 8px; }
 .update-share-url { flex: 1 1 200px; min-width: 0; padding: 6px 8px; border: 1px solid #d8dce3; border-radius: 6px; }
+
+/* ── 变体管理（开发者调试）：章节开关列表 ── */
+.sections-config-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-hover);
+}
+.sections-config-list .checkbox-label {
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.sections-config-list input[type="checkbox"] { accent-color: var(--accent); }

@@ -50,6 +50,19 @@ def get_variant_choices():
         return None
 
 
+def get_disabled_sections():
+    """读取 LAB_JOB_INPUT.disabledSections（或旧环境变量 LAB_DISABLED_SECTIONS）中被禁用的
+    变体章节名列表（如 ["实验原理"]）。未提供返回空集合，即全部章节启用。"""
+    raw = _job_value("disabledSections", "LAB_DISABLED_SECTIONS")
+    if not raw:
+        return set()
+    try:
+        d = json.loads(raw)
+        return {str(s) for s in d} if isinstance(d, list) else set()
+    except Exception:
+        return set()
+
+
 def render_variant(text: str, data: dict) -> str:
     """将 %%DATA:<key>:<format>%% 占位符替换为计算结果中的数值。"""
 
@@ -186,8 +199,11 @@ def compose(script_dir: str, data: dict) -> dict:
     """
     variants = load_variants(script_dir) or {}
     choices = get_variant_choices()
+    disabled = get_disabled_sections()
     out = {}
     for section, texts in variants.items():
+        if section in disabled:
+            continue   # 该实验此章节被禁用（应用"变体管理"），报告中不再出现
         idx = -1
         if choices and section in choices:
             try:
@@ -197,6 +213,8 @@ def compose(script_dir: str, data: dict) -> dict:
         if 0 <= idx < len(texts):
             out[section] = render_variant(texts[idx], data)
     for section, md in (get_polish_overrides() or {}).items():
+        if section in disabled:
+            continue   # 润色覆盖同样受章节开关约束
         if not isinstance(md, str) or not md.strip():
             continue
         out[section] = render_variant(normalize_polish_md(md), data)

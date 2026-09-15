@@ -62,6 +62,9 @@ contextBridge.exposeInMainWorld('labAPI', {
   // 变体组合
   loadVariants: (expPath) => ipcRenderer.invoke('load-variants', expPath),
   saveVariants: (expPath, variants) => ipcRenderer.invoke('save-variants', expPath, variants),
+  // 变体管理：实验级章节开关
+  readSectionsConfig: (expPath) => ipcRenderer.invoke('read-sections-config', expPath),
+  writeSectionsConfig: (expPath, disabled) => ipcRenderer.invoke('write-sections-config', expPath, disabled),
   // 用户自建变体库
   listCustomVariants: () => ipcRenderer.invoke('list-custom-variants'),
   readCustomVariants: (expId) => ipcRenderer.invoke('read-custom-variants', expId),
