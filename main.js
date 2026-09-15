@@ -1731,7 +1731,8 @@ handle('save-variants', async (_, expPath, variants) => {
 
 // ── 变体管理：实验级章节开关（sections-config.json，独立于表单数据）──
 // 某些实验不需要「实验原理/实验方法」等章节：禁用后生成报告不再输出该章节结构。
-const SECTION_NAMES = ['实验原理', '实验方法', '误差分析', '结论'];
+// 章节键复用自建变体库的白名单（含「实验结论」兼容电表实验的键名差异），单一来源防漂移。
+const SECTION_NAMES = CUSTOM_SECTION_NAMES;
 
 function readSectionsConfig(expPath) {
   const p = security.inside(path.join(expPath, 'sections-config.json'), expPath);
