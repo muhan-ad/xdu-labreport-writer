@@ -4,29 +4,23 @@ const path = require('path');
 const fs = require('fs');
 const { spawn, spawnSync, execFile } = require('child_process');
 const mammoth = require('mammoth');
+const resourceStore = require('./src/main/resource-store');
+const { cleanupScript } = require('./src/main/word-process');
+const diagnostics = require('./src/main/diagnostics');
+
+// 生成日志缓冲（导出诊断用）：最近 3 次，每次 60KB
+const generationLogBuffer = [];
+function pushGenerationLog(entry) {
+  const e = { time: new Date().toLocaleString('zh-CN', { hour12: false }), ...entry };
+  if (typeof e.logs === 'string' && e.logs.length > 60 * 1024) e.logs = e.logs.slice(-60 * 1024);
+  generationLogBuffer.push(e);
+  if (generationLogBuffer.length > 3) generationLogBuffer.shift();
+}
 
 // ── 生成状态（支持取消）──
 let activePython = null;            // 当前正在生成的 python 子进程
-let activeCancelled = false;        // 本次生成是否被用户取消
-let activeWordPidsBefore = new Set(); // 生成启动前已有的 WINWORD PID（取消时只清理本次新增）
-
-// 枚举当前 WINWORD.EXE 进程 PID（tasklist，数字列不受编码影响）
-function listWinwordPids() {
-  return new Promise((resolve) => {
-    execFile('tasklist', ['/FI', 'IMAGENAME eq WINWORD.EXE', '/FO', 'CSV', '/NH'],
-      { encoding: 'latin1' }, (err, stdout) => {
-        if (err || !stdout) return resolve([]);
-        const pids = [];
-        stdout.trim().split(/\r?\n/).forEach(line => {
-          const parts = line.replace(/"/g, '').split(',');
-          if (parts.length >= 2 && /^\d+$/.test(parts[1].trim())) {
-            pids.push(parseInt(parts[1].trim(), 10));
-          }
-        });
-        resolve(pids);
-      });
-  });
-}
+let generationBusy = false;
+let resourceUpdating = false;
 
 // ── GPU 硬件加速：已恢复启用。此前为省 ~100-160MB 内存而禁用，但软件渲染下
 //    CSS 模糊、模态切换、列表/设置滚动会严重掉帧卡顿，流畅优先，故恢复。──
@@ -112,14 +106,43 @@ let mainWindow = null;
 let isDataDirty = false;
 let allowClose = false;
 
-// ── 轻量日志落盘（排查用）──
-const LOG_FILE = path.join(PROJECT_ROOT, 'app.log');
+// ── 轻量日志落盘（排查用）：userData/logs/app.log，>1MB 时保留末尾 512KB ──
+let logFilePath = null;
+function getLogFile() {
+  if (logFilePath) return logFilePath;
+  try {
+    logFilePath = path.join(app.getPath('userData'), 'logs', 'app.log');
+    fs.mkdirSync(path.dirname(logFilePath), { recursive: true });
+  } catch (e) {
+    logFilePath = path.join(PROJECT_ROOT, 'app.log');   // 兜底回安装目录
+  }
+  return logFilePath;
+}
 function log(msg) {
   try {
+    const file = getLogFile();
     const line = `[${new Date().toLocaleString('zh-CN', { hour12: false })}] ${msg}\n`;
-    fs.appendFileSync(LOG_FILE, line, 'utf-8');
+    if (fs.existsSync(file)) {
+      const st = fs.statSync(file);
+      if (st.size > 1024 * 1024) {
+        const tail = fs.readFileSync(file, 'utf-8').slice(-512 * 1024);
+        fs.writeFileSync(file, tail, 'utf-8');
+      }
+    }
+    fs.appendFileSync(file, line, 'utf-8');
   } catch (e) { /* 日志失败不影响主功能 */ }
 }
+
+// ── 全局异常捕获：只记录，不接管进程生命周期 ──
+process.on('uncaughtException', (err) => {
+  try { log(`[fatal] uncaughtException: ${String(err && err.stack || err).slice(0, 500)}`); } catch (e) { /* 忽略 */ }
+});
+process.on('unhandledRejection', (reason) => {
+  try { log(`[fatal] unhandledRejection: ${String(reason && reason.stack || reason).slice(0, 500)}`); } catch (e) { /* 忽略 */ }
+});
+app.on('render-process-gone', (event, webContents, details) => {
+  try { log(`[fatal] render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`); } catch (e) { /* 忽略 */ }
+});
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -127,7 +150,7 @@ function createWindow() {
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    title: '实验报告自动编写',
+    title: '实验搭子',
     frame: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -253,46 +276,39 @@ function copyDirTo(src, dest, srcRoot, destRoot) {
   }
 }
 
-let lastCommonSyncAt = 0;   // common 公共库上次同步时间（节流）
+let builtinFingerprint = null;
+
+function syncInstalledResources() {
+  if (resourceUpdating || generationBusy) return;
+  if (!fs.existsSync(EXPERIMENTS_DIR)) return;
+  if (!builtinFingerprint) builtinFingerprint = resourceStore.resourceVersion(EXPERIMENTS_DIR);
+  const { udRoot } = getDataRoots();
+  resourceStore.syncBuiltin(EXPERIMENTS_DIR, udRoot, builtinFingerprint, app.getVersion());
+}
 
 // 用户数据隔离：写操作前若实验目录仍在安装目录（builtin），先镜像/同步到 userData 并返回新路径。
 // - userData 无该实验：整目录镜像（含 data.json/variants.json 出厂值）
 // - 已有副本：按热更新合并语义刷新（data.json 与用户改过的 variants.json 永不覆盖、报告 docx 不动）
-// - 每次同步公共库 common（generate.py 依赖 from common import *，必须与安装目录同版本）
+// - 安装资源指纹变化时迁移公共库和现有实验，保持用户数据与自建内容
 function ensureUserCopy(expPath) {
-  try {
+    if (resourceUpdating) throw new Error('实验资源更新中，请稍后重试');
+    syncInstalledResources();
     const p = path.resolve(expPath);
     const builtinRoot = path.resolve(EXPERIMENTS_DIR);
     const { udRoot } = getDataRoots();
     const udRootRes = path.resolve(udRoot);
     if (!fs.existsSync(builtinRoot)) return p;
     if (p.startsWith(udRootRes + path.sep)) return p;          // 已在 userData
-    if (!p.startsWith(builtinRoot + path.sep)) return p;      // 非安装目录内的路径原样返回
+    if (!p.startsWith(builtinRoot + path.sep)) throw new Error('无效的实验目录');
     const name = path.relative(builtinRoot, p).split(path.sep).shift();
     if (!name || name === 'common' || name.startsWith('.')) return p;
     const src = ensureInside(path.join(builtinRoot, name), builtinRoot);
     if (!fs.existsSync(src)) return p;
     const dst = ensureInside(path.join(udRootRes, name), udRootRes);
-    // 同步公共库 common（generate.py 依赖 from common import *；10 分钟节流，进程重启即强制同步，
-    // 保证重装新版本后 common 与 generate.py 匹配）
-    const builtinCommon = ensureInside(path.join(builtinRoot, 'common'), builtinRoot);
-    const udCommon = ensureInside(path.join(udRootRes, 'common'), udRootRes);
-    if (fs.existsSync(builtinCommon) && Date.now() - lastCommonSyncAt > 10 * 60 * 1000) {
-      fs.rmSync(udCommon, { recursive: true, force: true });
-      copyDirTo(builtinCommon, udCommon, builtinRoot, udRootRes);
-      lastCommonSyncAt = Date.now();
-    }
     if (!fs.existsSync(dst)) {
-      fs.mkdirSync(dst, { recursive: true });
-      copyDirTo(src, dst, builtinRoot, udRootRes);
-    } else {
-      const warnings = [];
-      mergeDataTree(src, dst, src, warnings, true);
+      resourceStore.replaceTree(dst, candidate => copyDirTo(src, candidate, builtinRoot, candidate));
     }
     return dst;
-  } catch (e) {
-    return path.resolve(expPath);   // 迁移失败退化为原路径，保持可写
-  }
 }
 
 function scanDirEntry(d, source) {
@@ -320,6 +336,7 @@ function scanDirEntry(d, source) {
 
 // ── IPC: 扫描实验列表 ──
 ipcMain.handle('scan-experiments', () => {
+  syncInstalledResources();
   const { roots } = getDataRoots();
   const results = [];
   const seen = new Set();
@@ -852,6 +869,8 @@ const DATA_BUILTIN_VERSION = '1.0.0';
 
 function readLocalDataManifest() {
   try {
+    const state = resourceStore.readState(getDataRoots().udRoot);
+    if (Object.hasOwn(state, 'manifest')) return state.manifest;
     return JSON.parse(fs.readFileSync(getDataRoots().mfPath, 'utf-8'));
   } catch (e) {
     return null;
@@ -880,6 +899,7 @@ ipcMain.handle('get-data-info', () => {
 
 // ── IPC: 检查实验数据更新（远端 data-manifest.json）
 ipcMain.handle('check-data-update', async () => {
+  const t0 = Date.now();
   try {
     const u = assertPublicUrl(DATA_MANIFEST_URL);
     if (!(await checkPublicDns(u.hostname))) throw new Error('更新地址无法解析或指向本地地址');
@@ -889,6 +909,7 @@ ipcMain.handle('check-data-update', async () => {
     } catch (e) {
       // 云端尚未发布任何数据包（404）：视为已是最新，而非报错
       if (/HTTP 404/.test(e.message)) {
+        log(`data-update | 远端无清单(404) | ${Date.now() - t0}ms`);
         const local = readLocalDataManifest();
         return {
           ok: true,
@@ -904,6 +925,7 @@ ipcMain.handle('check-data-update', async () => {
     const local = readLocalDataManifest();
     const localVer = local ? String(local.dataVersion).replace(/^v/i, '') : DATA_BUILTIN_VERSION;
     const hasUpdate = !!(remote && compareVersions(remote, localVer) > 0);
+    log(`data-update | 检查完成 | 本地=${localVer} 远端=${remote || '无'} 可更新=${hasUpdate} | ${Date.now() - t0}ms`);
     return {
       ok: true,
       hasUpdate,
@@ -913,6 +935,7 @@ ipcMain.handle('check-data-update', async () => {
       url: String(mf.url || '').trim(),
     };
   } catch (err) {
+    log(`data-update | 检查失败 | ${err.message} | ${Date.now() - t0}ms`);
     return { ok: false, error: err.message, hasUpdate: false };
   }
 });
@@ -932,6 +955,7 @@ ipcMain.handle('download-data-package', async (event, payload) => {
   const dataRoot = path.join(app.getPath('userData'), '实验数据');
   fs.mkdirSync(dataRoot, { recursive: true });
   const dest = ensureInside(path.join(dataRoot, '_package.zip'), dataRoot);
+  log('data-package | 开始下载');
   const sendProgress = (percent) => {
     try { event.sender.send('data-update-progress', { percent }); } catch (e) { /* 忽略 */ }
   };
@@ -940,6 +964,7 @@ ipcMain.handle('download-data-package', async (event, payload) => {
       if (res.statusCode !== 200) {
         res.resume();
         activeDataReq = null;
+        log(`data-package | 下载失败 HTTP ${res.statusCode}`);
         return resolve({ ok: false, error: `下载失败 HTTP ${res.statusCode}` });
       }
       const total = parseInt(res.headers['content-length'] || '0', 10) || 0;
@@ -950,11 +975,26 @@ ipcMain.handle('download-data-package', async (event, payload) => {
         received += chunk.length;
         if (total) sendProgress(Math.min(95, Math.round(received * 100 / total)));
       });
-      out.on('finish', () => { activeDataReq = null; sendProgress(100); resolve({ ok: true, filePath: dest }); });
-      out.on('error', (e) => { activeDataReq = null; res.destroy(); resolve({ ok: false, error: e.message }); });
-      res.on('error', (e) => { activeDataReq = null; out.destroy(); resolve({ ok: false, error: e.message }); });
+      out.on('finish', () => {
+        activeDataReq = null;
+        sendProgress(100);
+        log(`data-package | 下载完成 ${received} 字节`);
+        resolve({ ok: true, filePath: dest });
+      });
+      out.on('error', (e) => {
+        activeDataReq = null;
+        res.destroy();
+        log(`data-package | 下载写出失败 ${e.message}`);
+        resolve({ ok: false, error: e.message });
+      });
+      res.on('error', (e) => {
+        activeDataReq = null;
+        out.destroy();
+        log(`data-package | 下载传输失败 ${e.message}`);
+        resolve({ ok: false, error: e.message });
+      });
     });
-    req.on('error', (e) => { activeDataReq = null; resolve({ ok: false, error: e.message }); });
+    req.on('error', (e) => { activeDataReq = null; log(`data-package | 请求失败 ${e.message}`); resolve({ ok: false, error: e.message }); });
     activeDataReq = req;
   });
 });
@@ -1031,18 +1071,9 @@ function mergeDataTree(stagingDir, udRoot, builtinRoot, warnings, skipDocs) {
     const dst = ensureInside(path.join(udRoot, entry), udRoot);
     if (st.isDirectory()) {
       if (entry === 'common') {
-        // common 整目录覆盖（公共库，用户不改）：先复制到 .tmp 再原子替换，
-        // 复制失败时旧 common 不被破坏（源在 staging、目标在 udRoot，需跨根校验）
-        const tmp = ensureInside(dst + '.tmp', udRoot);
-        try {
-          fs.rmSync(tmp, { recursive: true, force: true });
-          copyDirAcross(src, stagingDir, tmp, udRoot);
-          fs.rmSync(dst, { recursive: true, force: true });
-          fs.renameSync(tmp, dst);
-        } catch (e) {
-          fs.rmSync(tmp, { recursive: true, force: true });
-          warnings.push('common 公共库更新失败，已保留旧版本：' + e.message);
-        }
+        // This merge runs only against the transaction's candidate tree.
+        fs.rmSync(dst, { recursive: true, force: true });
+        copyDirAcross(src, stagingDir, dst, udRoot);
         continue;
       }
       // 实验目录：先合并文件
@@ -1084,10 +1115,15 @@ function mergeDataTree(stagingDir, udRoot, builtinRoot, warnings, skipDocs) {
 
 // ── IPC: 应用数据包（解压 + 合并到 userData + 写 manifest）
 ipcMain.handle('apply-data-package', async (_, payload) => {
+  if (generationBusy || resourceUpdating) return { ok: false, error: '报告生成或资源更新中，请稍后重试' };
+  syncInstalledResources();
+  resourceUpdating = true;
+  const t0 = Date.now();
   try {
     const zipPath = String((payload && payload.filePath) || '');
     const version = String((payload && payload.version) || '').trim();
     const notes = String((payload && payload.notes) || '').trim();
+    log(`data-package | 开始应用 v${version}`);
     if (!/\.zip$/i.test(path.basename(zipPath))) return { ok: false, error: '数据包应为 zip 文件' };
     const dataRoot = path.join(app.getPath('userData'), '实验数据');
     if (!ensureInside(zipPath, dataRoot)) return { ok: false, error: '无效的数据包路径' };
@@ -1102,19 +1138,23 @@ ipcMain.handle('apply-data-package', async (_, payload) => {
     const stagingRoot = fs.existsSync(path.join(staging, '实验脚本'))
       ? path.join(staging, '实验脚本')
       : staging;
-    mergeDataTree(stagingRoot, udRoot, EXPERIMENTS_DIR, warnings, true);
-    ensureInside(mfPath, path.join(app.getPath('userData'), '实验数据'));
-    fs.writeFileSync(mfPath, JSON.stringify({
-      dataVersion: version,
-      notes,
-      updatedAt: new Date().toISOString(),
-    }, null, 2), 'utf-8');
+    const backupPath = resourceStore.replaceTree(udRoot, candidate => {
+      mergeDataTree(stagingRoot, candidate, EXPERIMENTS_DIR, warnings, true);
+      const state = resourceStore.readState(candidate);
+      resourceStore.writeState(candidate, { ...state, manifest: {
+        dataVersion: version, notes, updatedAt: new Date().toISOString(),
+      } });
+    });
     // 清理
     fs.rmSync(staging, { recursive: true, force: true });
     try { fs.unlinkSync(zipPath); } catch (e) { /* 忽略 */ }
-    return { ok: true, warnings };
+    log(`data-package | 应用完成 v${version} | ${Date.now() - t0}ms`);
+    return { ok: true, warnings, backupPath };
   } catch (err) {
+    log(`data-package | 应用失败 | ${err.message}`);
     return { ok: false, error: err.message };
+  } finally {
+    resourceUpdating = false;
   }
 });
 
@@ -1223,6 +1263,7 @@ ipcMain.handle('check-for-update', async (_, cfg) => {
     const mf = await httpsGetJson(u.href);
     const latest = String(mf.version || '').replace(/^v/i, '');
     const hasUpdate = !!(latest && compareVersions(latest, current) > 0);
+    log(`updates | 检查完成 | 当前=v${current} 最新=v${latest || '?'} 可更新=${hasUpdate}`);
     const downloads = [];
     for (const d of (Array.isArray(mf.downloads) ? mf.downloads : [])) {
       const name = String(d.name || '').trim();
@@ -1281,11 +1322,13 @@ const CONTRIBUTE_FN_URL = 'https://1485394950-jr8mommpp1.ap-guangzhou.tencentscf
 
 // 请求上传凭证：云函数校验 key 前缀（contributions/variants|reports）并返回预签名 PUT 地址
 ipcMain.handle('contribute-get-credentials', async (_, payload) => {
+  const t0 = Date.now();
   try {
     const fnUrl = String((payload && payload.fnUrl) || CONTRIBUTE_FN_URL || '').trim();
     if (!fnUrl) return { ok: false, error: '贡献上传服务未配置（请联系开发者部署凭证云函数）' };
     const keys = Array.isArray((payload && payload.keys) || []) ? payload.keys : [];
     if (!keys.length || keys.length > 20) return { ok: false, error: '文件数量无效' };
+    log(`contribute | 请求凭证 ${keys.length} 个`);
     for (const k of keys) {
       if (typeof k !== 'string') return { ok: false, error: '文件名格式无效' };
       // variants/reports 为 5 段（类型/实验/时间戳/文件）；feedbacks 为 4 段（类型/时间戳/文件）
@@ -1330,15 +1373,21 @@ ipcMain.handle('contribute-get-credentials', async (_, payload) => {
         out.push({ key: String(it.key || ''), putUrl: pu.href });
       } catch (e) { /* 跳过非法凭证 */ }
     }
-    if (!out.length) return { ok: false, error: '凭证服务未返回有效上传地址' };
+    if (!out.length) {
+      log(`contribute | 凭证返回空 | ${Date.now() - t0}ms`);
+      return { ok: false, error: '凭证服务未返回有效上传地址' };
+    }
+    log(`contribute | 凭证就绪 ${out.length} 个 | ${Date.now() - t0}ms`);
     return { ok: true, items: out };
   } catch (err) {
+    log(`contribute | 凭证请求异常 | ${err.message}`);
     return { ok: false, error: err.message };
   }
 });
 
 // 直传单个文件到预签名 PUT 地址（仅公网 https；单文件上限 20MB）
 ipcMain.handle('contribute-upload', async (_, payload) => {
+  const t0 = Date.now();
   try {
     const rawUrl = String((payload && payload.putUrl) || '');
     const u = assertPublicUrl(rawUrl);
@@ -1372,10 +1421,13 @@ ipcMain.handle('contribute-upload', async (_, payload) => {
       r.end();
     });
     if (resp.status !== 200 && resp.status !== 204) {
+      log(`contribute | 上传失败 HTTP ${resp.status} ${buf.length} 字节 | ${Date.now() - t0}ms`);
       return { ok: false, error: `上传失败 HTTP ${resp.status}` };
     }
+    log(`contribute | 上传完成 ${buf.length} 字节 | ${Date.now() - t0}ms`);
     return { ok: true };
   } catch (err) {
+    log(`contribute | 上传异常 | ${err.message}`);
     return { ok: false, error: err.message };
   }
 });
@@ -1389,14 +1441,74 @@ ipcMain.handle('open-file', (_, filePath) => {
   return { ok: false, error: '文件不存在' };
 });
 
+// ── IPC: 导出诊断日志（设置-开发者调试；单 .txt，统一脱敏）──
+ipcMain.handle('export-diagnostics', async (_, payload) => {
+  try {
+    const p = payload || {};
+    let runLog = '';
+    try {
+      if (fs.existsSync(getLogFile())) runLog = fs.readFileSync(getLogFile(), 'utf-8') || '';
+    } catch (e) { /* 读失败按无日志处理 */ }
+    const { udRoot } = getDataRoots();
+    const manifest = readLocalDataManifest();
+    const sources = {
+      appVersion: app.getVersion(),
+      packaged: app.isPackaged,
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      node: process.versions.node,
+      platform: process.platform,
+      arch: process.arch,
+      locales: app.getLocale(),
+      dataVersion: manifest ? manifest.dataVersion : null,
+      builtinVersion: DATA_BUILTIN_VERSION,
+      updateInfo: p.updateInfo || null,
+      config: p.config || null,
+      student: p.student || null,
+      expCount: p.expCount,
+      queueState: p.queueState,
+      queueSize: p.queueSize,
+      renderErrors: Array.isArray(p.renderErrors) ? p.renderErrors : [],
+      runLog,
+      generationLogs: generationLogBuffer,
+    };
+    const doc = diagnostics.buildDiagnostics(sources);
+    const knownRoots = [EXPERIMENTS_DIR, udRoot, app.getPath('userData'), PROJECT_ROOT];
+    const out = diagnostics.sanitize(doc, knownRoots);
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: '导出诊断日志',
+      defaultPath: path.join(app.getPath('documents'), `诊断日志_${ts}.txt`),
+      filters: [{ name: '文本文件', extensions: ['txt'] }],
+    });
+    if (canceled || !filePath) return { ok: true, canceled: true };
+    fs.writeFileSync(filePath, out, 'utf-8');
+    log(`diagnostics | 已导出 ${path.basename(filePath)} | ${Buffer.byteLength(out)} 字节`);
+    return { ok: true, canceled: false, path: filePath, size: Buffer.byteLength(out) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // ── IPC: 运行 generate.py 生成报告 ──
 // variants.compose 向 stdout 打印的章节原文标记（供应用侧按章节润色/导入重生成）
 const SECTIONS_MARKER = '.LAB_SECTIONS_JSON:';
 ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish) => {
+  if (generationBusy || resourceUpdating) return { ok: false, error: '已有任务正在运行，请稍后重试' };
+  syncInstalledResources();
+  generationBusy = true;
+  const job = { cancelled: false, wordHandles: new Map(), cleanup: null };
+  const genT0 = Date.now();
+  const genExpName = path.basename(String(expPath || ''));
+  log(`generate | 开始 | 实验=${genExpName}`);
+  try {
   // 生成报告属写操作：迁移/复用 userData 副本，报告与章节缓存不再落入安装目录
   expPath = ensureUserCopy(expPath);
   const generatePy = path.join(expPath, 'generate.py');
   if (!fs.existsSync(generatePy)) {
+    log(`generate | 失败 | generate.py 不存在 | 实验=${genExpName}`);
     return { ok: false, error: 'generate.py 不存在', logs: [] };
   }
 
@@ -1423,13 +1535,10 @@ ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish)
 
   // 解析真实可用的 python.exe 直接 spawn（优先 Store Python，排除沙箱路径，不依赖 cmd.exe）
   const pythonExe = resolvePythonExe() || 'python';
-  // 记录本次生成启动前的 WINWORD 进程（取消时差集清理，绝不影响用户手动打开的 Word）
-  activeWordPidsBefore = new Set(await listWinwordPids());
-  activeCancelled = false;
   // 记录生成启动时间：用于判定 docx 是否为本次产物（防止旧报告被误判为成功）
   const startTs = Date.now();
 
-  return new Promise((resolve) => {
+  return await new Promise((resolve) => {
     const logs = [];
     let capturedSections = null;   // compose() 打印的章节原文缓存
     let stdoutCarry = '';          // 跨 chunk 的行缓冲（标记行可能分块到达）
@@ -1439,6 +1548,9 @@ ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish)
       env,
     });
     activePython = python;
+    python.job = job;
+    python.stdout.setEncoding('utf8');
+    python.stderr.setEncoding('utf8');
 
     python.stdout.on('data', (data) => {
       // 按行处理：截出章节缓存标记行（不进入展示日志），其余原样转发
@@ -1446,7 +1558,10 @@ ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish)
       stdoutCarry = lines.pop();
       const keep = [];
       for (const ln of lines) {
-        if (ln.startsWith(SECTIONS_MARKER)) {
+        const wordMatch = /^\.LAB_WORD_INSTANCE:(\d+):(\d+)$/.exec(ln);
+        if (wordMatch) {
+          job.wordHandles.set(Number(wordMatch[1]), Number(wordMatch[2]));
+        } else if (ln.startsWith(SECTIONS_MARKER)) {
           try { capturedSections = JSON.parse(ln.slice(SECTIONS_MARKER.length)); } catch (e) { /* 坏行忽略 */ }
         } else {
           keep.push(ln);
@@ -1465,7 +1580,9 @@ ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish)
       }
     });
 
-    python.on('close', (code) => {
+    python.on('close', async (code) => {
+      try {
+      if (job.cleanup) await job.cleanup;
       if (activePython === python) activePython = null;
       // 冲刷行缓冲（子进程输出末尾可能无换行）
       if (stdoutCarry) {
@@ -1475,12 +1592,6 @@ ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish)
           logs.push(stdoutCarry);
         }
         stdoutCarry = '';
-      }
-      // 章节原文缓存落盘（dev=项目目录；打包=可写安装目录），供重启后润色读取
-      if (capturedSections && typeof capturedSections === 'object') {
-        try {
-          fs.writeFileSync(path.join(expPath, '.lab_sections.json'), JSON.stringify(capturedSections, null, 1), 'utf-8');
-        } catch (e) { /* 缓存失败不影响生成结果 */ }
       }
       // 扫描生成的 docx（跳过 Word 属主文件与生成中/残留的临时报告）
       // 仅认本次任务新建/更新的文件（mtime >= startTs），避免把旧报告误判为本次成功
@@ -1496,11 +1607,21 @@ ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish)
         }
       }
       // 退出码 0 但未产出新 docx：视为失败（多数情况是测量数据未填写完整，generate.py 打印缺失列表后静默退出）
-      const ok = code === 0 && !!reportFile;
+      const ok = !job.cancelled && code === 0 && !!reportFile;
+      log(`generate | 结束 | 实验=${genExpName} exit=${code} ok=${ok}${reportFile ? ' 报告=' + path.basename(reportFile) : ''} | ${Date.now() - genT0}ms`);
+      try {
+        pushGenerationLog({ exp: genExpName, exitCode: code, ok, logs: (logs || []).join('') });
+      } catch (e) { /* 缓冲失败不影响结果 */ }
+      // Only publish section sources belonging to a successfully saved report.
+      if (ok && capturedSections && typeof capturedSections === 'object') {
+        try {
+          fs.writeFileSync(path.join(expPath, '.lab_sections.json'), JSON.stringify(capturedSections, null, 1), 'utf-8');
+        } catch (e) { /* 缓存失败不影响生成结果 */ }
+      }
       resolve({
         ok,
         exitCode: code,
-        cancelled: activeCancelled,
+        cancelled: job.cancelled,
         logs: logs.join(''),
         reportFile,
         sections: capturedSections || undefined,
@@ -1508,39 +1629,45 @@ ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish)
           ? '未生成报告文件，请查看日志中的缺失提示（通常为测量数据未填写完整）'
           : undefined,
       });
+      } catch (error) {
+        resolve({ ok: false, error: error.message, cancelled: job.cancelled, logs: logs.join('') });
+      }
     });
 
     python.on('error', (err) => {
       if (activePython === python) activePython = null;
-      resolve({ ok: false, error: err.message, cancelled: activeCancelled, logs: logs.join('') });
+      resolve({ ok: false, error: err.message, cancelled: job.cancelled, logs: logs.join('') });
     });
   });
+  } catch (error) {
+    log(`generate | 异常 | 实验=${genExpName} | ${error.message}`);
+    return { ok: false, error: error.message };
+  } finally {
+    generationBusy = false;
+  }
 });
 
 // ── IPC: 取消生成（结束 python 进程树 + 清理其启动的 Word，保留用户手动打开的 Word）──
 ipcMain.handle('cancel-generate', async () => {
-  if (!activePython || activePython.exitCode !== null) {
+  const python = activePython;
+  if (!python || python.exitCode !== null) {
     return { ok: false, reason: 'no-active' };
   }
-  activeCancelled = true;
-  try {
-    execFile('taskkill', ['/PID', String(activePython.pid), '/T', '/F']);
-  } catch (e) { /* 进程可能已自行退出 */ }
-  // 等待 python 退出（close 事件会触发 run-generate 的 resolve）
-  await new Promise((resolve) => {
-    const timer = setTimeout(resolve, 8000);
-    activePython.once('close', () => { clearTimeout(timer); resolve(); });
-  });
-  // 差集清理：仅结束本次生成启动的 Word 实例（python 被杀时其 close() 兜底不会执行）
-  try {
-    const now = await listWinwordPids();
-    for (const pid of now) {
-      if (!activeWordPidsBefore.has(pid)) {
-        execFile('taskkill', ['/PID', String(pid), '/F']);
-      }
-    }
-  } catch (e) { /* 忽略清理失败 */ }
-  activePython = null;
+  const job = python.job;
+  job.cancelled = true;
+  if (!job.cleanup) job.cleanup = (async () => {
+    await new Promise(resolve => {
+      const timer = setTimeout(resolve, 8000);
+      python.once('close', () => { clearTimeout(timer); resolve(); });
+      execFile('taskkill', ['/PID', String(python.pid), '/T', '/F'], () => {});
+    });
+    // Verify both HWND and PID, then terminate through a process handle (no PID difference scan).
+    if (job.wordHandles.size) await new Promise(resolve => {
+      execFile(resolvePythonExe() || 'python', ['-c', cleanupScript, JSON.stringify([...job.wordHandles])],
+        { windowsHide: true, timeout: 10000 }, () => resolve());
+    });
+  })();
+  await job.cleanup;
   return { ok: true };
 });
 
@@ -1570,11 +1697,13 @@ ipcMain.handle('ai-chat', async (_, params) => {
   const { provider, apiKey, apiUrl, model, messages, temperature = 0.7, requestId } = params;
   const controller = new AbortController();
   if (requestId) aiAbortControllers.set(String(requestId), controller);
+  const aiT0 = Date.now();
   try {
     const preset = AI_PROVIDERS[provider] || AI_PROVIDERS.custom;
     // 用户设置了 apiUrl 就用用户的，否则用预设默认值
     const baseUrl = apiUrl || preset.baseUrl;
     const useModel = model || preset.model;
+    log(`ai-chat | 开始 | provider=${provider} model=${useModel} 消息数=${Array.isArray(messages) ? messages.length : 0}`);
 
     if (!apiKey) {
       return { ok: false, error: '未配置 API Key，请在设置中填写' };
@@ -1600,16 +1729,20 @@ ipcMain.handle('ai-chat', async (_, params) => {
 
     if (!response.ok) {
       const errText = await response.text();
+      log(`ai-chat | HTTP 失败 ${response.status} | ${Date.now() - aiT0}ms`);
       return { ok: false, error: `API 请求失败 (${response.status}): ${errText.slice(0, 200)}` };
     }
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content || '';
+    log(`ai-chat | 完成 | 返回 ${content.length} 字符 | ${Date.now() - aiT0}ms`);
     return { ok: true, content, usage: data.usage };
   } catch (err) {
     if (controller.signal.aborted) {
+      log(`ai-chat | 已取消 | ${Date.now() - aiT0}ms`);
       return { ok: false, cancelled: true, error: '已取消生成' };
     }
+    log(`ai-chat | 异常 | ${err.message} | ${Date.now() - aiT0}ms`);
     return { ok: false, error: err.message };
   } finally {
     if (requestId) aiAbortControllers.delete(String(requestId));

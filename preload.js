@@ -64,6 +64,8 @@ contextBridge.exposeInMainWorld('labAPI', {
   deleteCustomVariant: (expId, section, index) => ipcRenderer.invoke('delete-custom-variant', expId, section, index),
   exportCustomVariants: (payload) => ipcRenderer.invoke('export-custom-variants', payload),
   importCustomVariants: () => ipcRenderer.invoke('import-custom-variants'),
+  // 诊断日志导出（设置-开发者调试）
+  exportDiagnostics: (payload) => ipcRenderer.invoke('export-diagnostics', payload),
   // 渲染进程事件转发到主进程日志
   logEvent: (msg) => ipcRenderer.send('log-event', msg),
   // 关闭前未保存提示

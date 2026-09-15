@@ -14,9 +14,10 @@ import os
 import re
 import time
 import zipfile
-import ctypes
-import subprocess
 import win32com.client
+import win32api
+import win32process
+import win32event
 
 
 # ── Word COM 常量 ──
@@ -175,50 +176,6 @@ def split_rich_blocks(text: str) -> list[tuple[str, str]]:
     return ops
 
 
-def _get_word_pids() -> set:
-    """枚举当前所有 WINWORD.EXE 进程 PID（tasklist，纯标准库）。"""
-    try:
-        result = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq WINWORD.EXE", "/FO", "CSV", "/NH"],
-            capture_output=True, text=True, timeout=5,
-            encoding="mbcs", errors="replace",  # 中文 Windows 输出为 ANSI/GBK
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        out = result.stdout
-    except Exception:
-        return set()
-    if not out:
-        return set()
-    pids = set()
-    for line in out.strip().splitlines():
-        parts = line.replace('"', "").split(",")
-        if len(parts) >= 2 and parts[1].strip().isdigit():
-            pids.add(int(parts[1].strip()))
-    return pids
-
-
-def _wait_pid_exit(pid: int, timeout: float = 5.0) -> bool:
-    """等待进程退出，超时则强制终止该 PID。返回是否已退出。"""
-    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-    PROCESS_TERMINATE = 0x0001
-    STILL_ACTIVE = 259
-    start = time.time()
-    while time.time() - start < timeout:
-        h = ctypes.windll.kernel32.OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-        if not h:
-            return True  # 进程已不存在
-        code = ctypes.c_ulong()
-        ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
-        ctypes.windll.kernel32.CloseHandle(h)
-        if code.value != STILL_ACTIVE:
-            return True
-        time.sleep(0.1)
-    h = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
-    if h:
-        ctypes.windll.kernel32.TerminateProcess(h, 0)
-        ctypes.windll.kernel32.CloseHandle(h)
-    return False
 
 
 class DocxReportWriter:
@@ -237,15 +194,22 @@ class DocxReportWriter:
         self._tmp_path = self.output_path + ".~saving" + str(os.getpid()) + ".docx"
         self._closed = False
 
-        # 记录启动 Word 前的已有 WINWORD 进程（close 时只清理本次新增的实例）
-        self._word_pids_before = _get_word_pids()
-
+        self._word_handle = None
         self._word = win32com.client.DispatchEx("Word.Application")
         self._word.Visible = visible
         self._word.DisplayAlerts = False
         time.sleep(2)  # 等待 Word 完全初始化
 
         self._word.Documents.Add()
+        # Bind cleanup to this COM instance, never to a system-wide PID difference.
+        try:
+            hwnd = int(self._word.ActiveWindow.Hwnd)
+            pid = win32process.GetWindowThreadProcessId(hwnd)[1]
+            self._word_handle = win32api.OpenProcess(0x100001, False, pid)
+            print(f".LAB_WORD_INSTANCE:{pid}:{hwnd}", flush=True)
+        except Exception:
+            # If identity cannot be established, do not force-kill unrelated processes.
+            pass
         time.sleep(0.5)
         self._doc = self._word.ActiveDocument
 
@@ -685,18 +649,13 @@ class DocxReportWriter:
         except FileNotFoundError:
             pass  # 保存阶段失败时无临时文件可替换
 
-        # 兜底：Quit 之后重新枚举"本次新增"的 WINWORD 进程（Quit 前快照可能
-        # 错过尚未登记完成的实例；Quit 后即使 tasklist 短暂失败也能重试到）
-        time.sleep(1)
-        for _ in range(3):
+        # A retained process handle cannot accidentally target a reused PID.
+        if self._word_handle is not None:
             try:
-                my_pids = _get_word_pids() - self._word_pids_before
+                if win32event.WaitForSingleObject(self._word_handle, 5000) == 258:
+                    win32api.TerminateProcess(self._word_handle, 1)
             except Exception:
-                my_pids = set()
-            if not my_pids:
-                break
-            for pid in list(my_pids):
-                _wait_pid_exit(pid)
-            time.sleep(0.5)
-            if not (_get_word_pids() & my_pids):
-                break
+                pass
+            finally:
+                self._word_handle.Close()
+                self._word_handle = None

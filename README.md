@@ -1,4 +1,4 @@
-# 实验报告自动编写（labreport-writer）
+# 实验搭子（labreport-writer）
 
 面向西安电子科技大学物理实验课程的报告自动生成桌面应用。用户选择实验、在结构化表单中录入测量数据，应用即调用内置 Python 脚本完成数据处理（不确定度、线性回归、图表绘制），并通过 Word COM 接口生成可直接提交的 `.docx` 报告——公式为 Word 原生可编辑数学公式（OMML），表格、插图、学生信息一应俱全。在此基础上提供措辞变体组合与 AI 个性化润色（限定教材知识库），帮助报告在保持科学性的前提下形成个人化表述。
 
@@ -115,7 +115,7 @@ npm start
 npm run build:win
 ```
 
-产出 `dist/实验报告编写 Setup x.x.x.exe`（NSIS 安装包）与 `dist/win-unpacked/`（绿色便携版）。打包配置要点：`物理实验` 资源经 filter 排除 `*.xlsx / *.docx / *.png / __pycache__ / .lab_sections.json` 后整体释放至 `resources/`；应用自身代码进 asar。
+产出 `dist/实验搭子 Setup x.x.x.exe`（NSIS 安装包）与 `dist/win-unpacked/`（绿色便携版）。打包配置要点：`物理实验` 资源经 filter 排除 `*.xlsx / *.docx / *.png / __pycache__ / .lab_sections.json` 后整体释放至 `resources/`；应用自身代码进 asar。
 
 ## 质量校验
 

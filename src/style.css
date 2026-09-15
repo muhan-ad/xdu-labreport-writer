@@ -431,6 +431,21 @@ body {
   letter-spacing: 0.2px;
 }
 
+/* 主界面顶部醒目提醒（必读公告入口） */
+.notice-reminder {
+  margin-left: 10px;
+  padding: 3px 10px;
+  border: 1px solid #ef4444;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #dc2626;
+  background: rgba(239, 68, 68, 0.08);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.notice-reminder:hover { background: rgba(239, 68, 68, 0.16); }
+
 .titlebar-actions {
   display: flex;
   align-items: center;
@@ -2465,6 +2480,23 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   color: #c53030;
   font-weight: 600;
 }
+/* ── 设置 · 必读公告 ── */
+.settings-nav-notice { color: #dc2626; }
+.settings-nav-notice:hover { background: rgba(220, 38, 38, 0.10); }
+.settings-nav-notice.active {
+  background: rgba(220, 38, 38, 0.14);
+  color: #dc2626;
+  font-weight: 700;
+}
+.notice-title { color: #dc2626; }
+.notice-list {
+  margin: 10px 0 0;
+  padding-left: 22px;
+  color: #dc2626;
+  font-size: 13px;
+  line-height: 1.9;
+}
+.notice-list li { margin-bottom: 10px; }
 .danger-section { text-align: center; padding: 24px 12px; }
 .danger-title { color: #c53030; }
 .danger-hint { color: #b91c1c; margin-bottom: 16px; }
@@ -2548,3 +2580,26 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 .form-field-science .science-mantissa { width: 110px; }
 .form-field-science .science-exp { width: 90px; }
 .form-field-science .sci-times { margin: 0 6px; font-size: 13px; color: var(--text-secondary); }
+
+/* ── 获取 skill 弹窗：分享链接展示 ── */
+.share-link-input {
+  width: 100%;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12.5px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-hover);
+  border-radius: 6px;
+  background: var(--bg-hover);
+  color: var(--text);
+  cursor: text;
+}
+.share-link-input:focus { outline: none; border-color: var(--accent); }
+.share-link-meta {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.share-link-meta span {
+  font-weight: 600;
+  color: var(--accent);
+}

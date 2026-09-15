@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>实验报告编写</title>
+  <title>实验搭子</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -82,7 +82,8 @@
       <header class="titlebar">
         <div class="titlebar-drag">
           <div class="titlebar-logo">物</div>
-          <span class="titlebar-name">实验报告编写</span>
+          <span class="titlebar-name">实验搭子</span>
+          <span class="notice-reminder" title="请先阅读设置中的必读公告">⚠ 务必阅读设置中的「必读公告」再使用</span>
         </div>
         <div class="titlebar-actions">
           <div class="search-box">
@@ -465,6 +466,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 9l-3 3 3 3"/><path d="M16 9l3 3-3 3"/><line x1="12" y1="5" x2="12" y2="19"/></svg>
             开发者调试
           </button>
+          <button class="settings-nav-item settings-nav-notice" id="btnNavNotice">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            必读公告
+          </button>
           <button class="settings-nav-item settings-nav-danger" id="btnNavDanger">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             请勿点击
@@ -513,6 +518,7 @@
               <div class="skill-actions">
                 <button class="btn btn-sm btn-primary" id="btnImportSkill" type="button">导入 skill</button>
                 <button class="btn btn-sm btn-outline" id="btnOpenSkillsFolder" type="button">打开 skill 配置文件夹</button>
+                <button class="btn btn-sm btn-outline" id="btnGetSkill" type="button">获取 skill</button>
               </div>
             </div>
           </div>
@@ -548,8 +554,8 @@
               <ul class="help-list">
                 <li>左下角配置学生信息；</li>
                 <li>左侧选择实验，点击「清除数据」即可填写自己的数据，填写后「保存修改」；</li>
-                <li>在变体组合为各章节选择措辞或保持随机（部分实验暂无变体）；</li>
-                <li>点「生成报告」，完成后可在报告预览查看，或用 Word 打开；</li>
+                <li>在变体组合为各章节选择措辞或保持随机，目前 26 个实验均支持变体；</li>
+                <li>点「生成报告」时会先自动保存当前修改，完成后可在报告预览查看，或用 Word 打开；</li>
                 <li><b>注意：</b>安装包与仓库自带的均为示例数据，生成前必须替换为本人真实测量值，严禁直接提交示例数据产出。</li>
               </ul>
             </div>
@@ -575,18 +581,32 @@
               <ul class="help-list">
                 <li>环境要求：Microsoft Word 2016 及以上（推荐在西电正版化网站下载最新版，本应用不支持 WPS Office 应用）；</li>
                 <li>生成失败：查看生成日志中的缺失字段提示，多为必填数据未填全；</li>
-                <li>取消生成：会安全结束本次启动的 Word 进程，不影响你手动打开的文档；</li>
+                <li>取消生成：结束当前报告任务，并只清理能够确认属于该任务的 Word 实例；</li>
                 <li>隐私：学生信息、API Key、技能文件、润色导入文本均存储在本机应用数据目录，不进安装包升级路径之外的任何位置。</li>
               </ul>
             </div>
             <div class="settings-section help-section">
               <h4>开发者声明</h4>
               <ul class="help-list">
-                <li>本应用的实验模板、原理数据和自动化脚本来源来自对策府库，由宇宙创生提供，在此感谢对策府库各位同学的开源精神！</li>
+                <li>本应用的实验模板、原理数据和自动化脚本来源于对策府库，在此感谢对策府库各位小伙伴的开源精神！</li>
                 <li>本应用仅提供实验模板，不提供任何实验数据的生成，目前模板的实验数据由 AI 合理化生成，请勿直接使用！</li>
                 <li>对于本应用产生的实验报告，均需经用户亲自审查、校验、修改和完善，若直接提交，概不负责！</li>
-                <li>本应用的开源程序已经发布 GitHub，若有人想在此基础上进行功能的完善，可在对策府库官方群聊联系相关开发者慕寒并发起共创。</li>
+                <li>本应用的开源程序已经发布 GitHub，若有人想在此基础上进行功能的完善，可在对策府库官方群聊联系对策府库的小伙伴发起共创；如需联系开发者，请在「问题反馈」中说明情况并提供联系方式。</li>
               </ul>
+            </div>
+          </div>
+          <!-- 必读公告页 -->
+          <div class="settings-pane" id="paneNotice">
+            <div class="settings-section notice-section">
+              <h4 class="notice-title">⚠ 必读公告</h4>
+              <ol class="notice-list">
+                <li>本应用目前仍处于测试阶段。生成实验报告后，请务必根据自己的实验数据和老师的具体要求认真检查，尤其注意数据格式、有效数字、单位和报告排版。</li>
+                <li>如果报告中的公式无法正常生成或显示，请确认电脑已安装 Microsoft Word。本应用暂不支持 WPS Office，建议使用 Microsoft Word 2016 或更高版本。</li>
+                <li>部分实验在不同学期可能采用不同内容。例如，声速测量可能分为空气中测量和水中测量，薄透镜焦距测量可能使用凸透镜或凹透镜。如果应用中的模板与实际实验不一致，请及时提交问题反馈，帮助我们针对性调整。</li>
+                <li>做实验时，欢迎顺手拍摄实验桌面上的二维码并上传。这些图片对完善实验资料非常重要。上传步骤为：选择对应实验 → 点击「贡献数据」→ 选择「贡献实验报告」→ 选择图片 → 上传。（分数可以按照10分选）</li>
+                <li>如果你有功能建议，或者在使用过程中遇到问题，欢迎通过「问题反馈」告诉我们。请不要上传与实验或应用无关的内容，因为数据上传、存储和下载都会产生费用，请避免浪费传输资源。</li>
+                <li>应用功能或整体架构发生较大调整时，我们会通过「版本更新」发布；实验模板、实验内容等资料发生变化时，则会通过「实验数据更新」推送。建议每次使用前检查应用版本和实验数据是否为最新。</li>
+              </ol>
             </div>
           </div>
           <!-- 请勿点击页（高危彩蛋入口） -->
@@ -642,6 +662,12 @@
               </div>
               <div class="form-row">
                 <label class="radio-label"><input type="radio" name="devModeRadio" id="rdDevMode" /> 开发者调试</label>
+              </div>
+              <div class="form-row">
+                <div class="skill-actions">
+                  <button class="btn btn-sm btn-outline" id="btnExportDiagnostics" type="button">导出诊断日志</button>
+                </div>
+                <div class="form-hint" id="diagnosticsStatus"></div>
               </div>
             </div>
           </div>
@@ -752,6 +778,29 @@
       <div class="modal-footer">
         <button class="btn btn-ghost" id="btnConfirmCancel">取消</button>
         <button class="btn btn-primary" id="btnConfirmOk">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 获取 skill 弹窗（展示可复制的网盘分享链接） -->
+  <div class="modal-overlay" id="getSkillModal">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h3>获取 skill</h3>
+        <button class="modal-close" id="btnCloseGetSkill">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="form-hint">网盘分享包含全部 Skill 文件（.md）。下载解压后，回到本页点「导入 skill」选择文件即可使用。</p>
+        <div class="form-row">
+          <label>百度网盘链接</label>
+          <input type="text" class="share-link-input" id="skillPanLink" readonly value="" />
+        </div>
+        <div class="share-link-meta">提取码：<span id="skillPanCode"></span>（已包含在链接中）</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="btnCancelGetSkill">关闭</button>
+        <button class="btn btn-outline" id="btnOpenSkillLink" type="button">打开链接</button>
+        <button class="btn btn-primary" id="btnCopySkillLink" type="button">复制链接</button>
       </div>
     </div>
   </div>

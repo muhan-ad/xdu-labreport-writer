@@ -11,8 +11,42 @@ let queueState = 'idle';  // idle | running | paused | cancelled
 let queueResume = null;   // 暂停时唤醒调度循环的 resolve
 // 数据未保存标记（表单编辑）
 let isDataModified = false;
+let isSwitchingExperiment = false;
+let isSavingData = false;
+let isAiPolishing = false;
 
 const $ = (id) => document.getElementById(id);
+
+// ── 获取 skill：百度网盘分享链接（技能文件 .md 包）──
+const SKILL_PAN_URL = 'https://pan.baidu.com/s/1UzAla9IiEZ2KZ-Dvdtp_aA?pwd=f2dh';
+const SKILL_PAN_CODE = 'f2dh';
+
+// ── 渲染层错误采集（诊断日志用）：环形缓冲 60 条 + 上报主进程日志 ──
+const renderErrorBuffer = [];
+function pushRenderError(type, message, detail) {
+  const entry = {
+    time: new Date().toLocaleString('zh-CN', { hour12: false }),
+    type,
+    message: String(message || '未知错误').slice(0, 300),
+    detail: String(detail || '').slice(0, 500),
+  };
+  renderErrorBuffer.push(entry);
+  if (renderErrorBuffer.length > 60) renderErrorBuffer.shift();
+  try {
+    if (window.labAPI && window.labAPI.logEvent) {
+      window.labAPI.logEvent(`[${type}] ${entry.message}${entry.detail ? ' @ ' + entry.detail : ''}`);
+    }
+  } catch (e) { /* 上报失败忽略 */ }
+}
+window.addEventListener('error', (ev) => {
+  const d = ev.error && ev.error.stack ? ev.error.stack.split('\n').slice(0, 2).join(' | ') : '';
+  pushRenderError('error', ev.message, d);
+});
+window.addEventListener('unhandledrejection', (ev) => {
+  const r = ev.reason;
+  const msg = (r && (r.message || r.stack)) ? (r.message ? r.message : String(r).slice(0, 300)) : String(r || 'Promise 拒绝').slice(0, 300);
+  pushRenderError('unhandledrejection', msg);
+});
 
 // ── 实验标准名称映射（文件夹名 → 教材标准名称）──
 // 目录已按知识库（lab_部分1.pdf）目录名统一，此处保留映射以备将来目录名调整时兜底
@@ -160,6 +194,7 @@ function setDevMode(on) {
   saveSettings(s);
   applyDevUi();
   renderList();
+  try { window.labAPI.logEvent(`setDevMode=${on}`); } catch (e) { /* 忽略 */ }
   showToast('success', '已切换', on ? '开发者调试模式已开启' : '已回到普通模式', 3000);
 }
 
@@ -167,6 +202,59 @@ function loadDevelopPane() {
   const dev = isDevMode();
   $('rdDevMode').checked = dev;
   $('rdNormalMode').checked = !dev;
+}
+
+// ── 导出诊断日志（设置-开发者调试；主进程统一脱敏）──
+async function exportDiagnostics() {
+  const btn = $('btnExportDiagnostics');
+  const statusEl = $('diagnosticsStatus');
+  btn.disabled = true;
+  statusEl.textContent = '正在收集并导出…';
+  try {
+    const settings = loadSettings();
+    const student = loadStudentInfo();
+    // 配置摘要：绝不携带 apiKey
+    const config = {
+      provider: settings.provider || '',
+      model: settings.model || '',
+      apiUrl: settings.apiUrl || '',
+      aiPolish: !!settings.aiPolish,
+      kbOnly: settings.kbOnly !== false,
+      developerMode: !!settings.developerMode,
+      skills: (skillsCache || []).filter(s => !s.disabled).map(s => s.name),
+    };
+    const payload = {
+      config,
+      student: {
+        name: student.name || '',
+        id: student.id || '',
+        class: student.class || '',
+        date: student.date || '',
+      },
+      renderErrors: renderErrorBuffer,
+      expCount: experiments.length,
+      queueState,
+      queueSize: genQueue.length,
+      updateInfo: updateInfo || null,
+    };
+    const r = await window.labAPI.exportDiagnostics(payload);
+    if (!r.ok) {
+      statusEl.textContent = '';
+      showToast('error', '导出失败', r.error, 5000);
+      return;
+    }
+    if (r.canceled) {
+      statusEl.textContent = '';
+      return;
+    }
+    statusEl.textContent = `已导出：${r.path}`;
+    showToast('success', '诊断日志已导出', '已隐藏 API Key 等敏感信息（API Key 与润色内容不会包含在文件中）', 5000);
+  } catch (err) {
+    statusEl.textContent = '';
+    showToast('error', '导出异常', err.message, 5000);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ── 分类计数 ──
@@ -240,6 +328,9 @@ function renderList(keyword = '') {
 
 // ── 选中实验 ──
 async function selectExperiment(exp) {
+  if (currentExp?.id === exp.id || isSwitchingExperiment || isSavingData || isGenerating) return;
+  isSwitchingExperiment = true;
+  try {
   // 切换实验前若有未保存修改：保存并切换 / 取消则保留修改不切换（不静默丢弃）
   if (currentExp && currentExp.id !== exp.id && isDataModified) {
     const save = await appConfirm('当前实验有未保存的修改。\n点击「确定」保存并切换；点击「取消」不切换（修改保留）。');
@@ -282,16 +373,19 @@ async function selectExperiment(exp) {
   renderList($('searchInput').value);
 
   // 方式三：检测 schema，加载表单
-  loadExperimentData(exp);
+  await loadExperimentData(exp);
   // 加载变体组合面板
-  loadVariantsUI(exp);
+  await loadVariantsUI(exp);
   // 重置预览状态
   previewLoaded = false;
   // 更新 AI 状态（润色对象/技能/导入提示）
   updateAiStatus();
-  refreshAiScopeOptions(false);
+  await refreshAiScopeOptions(false);
   loadSkillList();
   updateOverrideBar();
+  } finally {
+    isSwitchingExperiment = false;
+  }
 }
 
 // ── 多选与批量生成 ──
@@ -340,6 +434,7 @@ function updateBatchButton() {
 }
 
 async function runBatchGenerate() {
+  if (isGenerating || isSavingData || isSwitchingExperiment) return;
   // 队列活跃（running/paused）时点击只是回面板查看，不重建
   if (queueState === 'running' || queueState === 'paused') { openQueuePanel(); return; }
   const sel = experiments.filter(e => selectedIds.has(e.id));
@@ -634,6 +729,24 @@ function renderForm() {
   });
 }
 
+// ── 表单输入导航：Enter/空格 跳转到下一个输入格（提高录入效率）──
+// 优先级：同行右边格子 → 下一行第一列 → 下一字段首格。array/matrix 按行优先渲染、
+// science 尾数在指数前，故 DOM 顺序天然符合该优先级；最后一个格子不跳转。
+function handleFormKeyNav(e) {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const el = e.target;
+  if (!(el instanceof HTMLInputElement) || !el.classList.contains('field-input')) return;
+  // 文本类字段保留空格的输入含义（仅 Enter 跳转）；数字类格子 Enter/空格均跳转
+  if (el.type === 'text' && e.key === ' ') return;
+  const inputs = Array.from($('dataTableWrap').querySelectorAll('input.field-input:not(:disabled):not([readonly])'));
+  const idx = inputs.indexOf(el);
+  if (idx < 0 || idx >= inputs.length - 1) return;
+  e.preventDefault();
+  const next = inputs[idx + 1];
+  next.focus();
+  next.select();
+}
+
 function renderField(fld) {
   const key = fld.key;
   const label = escapeHtml(fld.label || key);
@@ -763,9 +876,12 @@ function readFormData() {
 }
 
 async function saveFormData() {
-  if (!currentExp || !currentSchema) return false;
+  if (!currentExp || !currentSchema || isSavingData) return false;
+  const saveExp = currentExp;
+  isSavingData = true;
+  try {
   const data = readFormData();
-  const result = await window.labAPI.writeData(currentExp.path, data);
+  const result = await window.labAPI.writeData(saveExp.path, data);
   if (result.ok) {
     currentData = data;
     isDataModified = false;
@@ -787,6 +903,9 @@ async function saveFormData() {
   }
   showToast('error', '保存失败', result.error, 5000);
   return false;
+  } finally {
+    isSavingData = false;
+  }
 }
 
 function refreshFormCheck() {
@@ -828,9 +947,9 @@ async function saveExcelData() {
 // ── 报告预览 ──
 let previewLoaded = false;
 
-async function getReportText() {
-  if (!currentExp || !currentExp.reportFile) return '';
-  const result = await window.labAPI.docxToHtml(currentExp.reportFile);
+async function getReportText(exp = currentExp) {
+  if (!exp || !exp.reportFile) return '';
+  const result = await window.labAPI.docxToHtml(exp.reportFile);
   if (!result.ok) return '';
   const div = document.createElement('div');
   div.innerHTML = result.html;
@@ -899,10 +1018,12 @@ function updateOverrideBar() {
 }
 
 async function refreshAiScopeOptions(keepValue) {
+  const sourceExp = currentExp;
   currentSections = null;
   try {
-    if (currentExp) {
-      const r = await window.labAPI.readSections(currentExp.path);
+    if (sourceExp) {
+      const r = await window.labAPI.readSections(sourceExp.path);
+      if (currentExp !== sourceExp) return;
       if (r && r.ok && r.sections) currentSections = r.sections;
     }
   } catch (e) { /* 无缓存按仅复制处理 */ }
@@ -1213,6 +1334,7 @@ async function importCustomVariantsFiles() {
 }
 
 async function runAiPolish() {
+  if (isAiPolishing || isSwitchingExperiment) return;
   if (!currentExp || !currentExp.reportFile) {
     showToast('warning', '请先生成报告', '需要先生成报告才能进行 AI 润色');
     return;
@@ -1224,6 +1346,8 @@ async function runAiPolish() {
     return;
   }
   const srcExpId = currentExp.id;   // 记录润色来源实验，防跨实验导入
+  const sourceExp = { ...currentExp };
+  const sourceSections = { ...(currentSections || {}) };
 
   const style = document.querySelector('input[name="aiStyle"]:checked')?.value || 'rigorous';
   const scopeVals = [...document.querySelectorAll('#aiScopeGroup input[type="checkbox"]:checked')].map(i => i.value);
@@ -1231,6 +1355,8 @@ async function runAiPolish() {
     showToast('warning', '未选择润色对象', '请至少勾选一个章节或范围');
     return;
   }
+  isAiPolishing = true;
+  try {
   const skillIds = [...document.querySelectorAll('#aiSkillGroup input[type="checkbox"]:checked')].map(i => i.value);
   const kbOnly = $('chkKbOnly').checked;
 
@@ -1238,7 +1364,7 @@ async function runAiPolish() {
   let ragText = '';
   if (kbOnly) {
     try {
-      const rr = await window.labAPI.readRag(currentExp.path);
+      const rr = await window.labAPI.readRag(sourceExp.path);
       if (rr && rr.ok && rr.text) ragText = rr.text;
     } catch (e) { /* 读取失败时降级为软约束 */ }
   }
@@ -1260,7 +1386,7 @@ async function runAiPolish() {
   // "结果分析/全文"取自 docx 纯文本，只提取一次
   let fullText = '';
   if (scopeVals.some(v => !v.startsWith('sec:'))) {
-    try { fullText = await getReportText(); } catch (e) { fullText = ''; }
+    try { fullText = await getReportText(sourceExp); } catch (e) { fullText = ''; }
   }
 
   const results = [];
@@ -1272,7 +1398,7 @@ async function runAiPolish() {
       let sectionText = '', displayScope = '', section = null;
       if (scopeVal.startsWith('sec:')) {
         section = scopeVal.slice(4);
-        sectionText = (currentSections && currentSections[section]) || '';
+        sectionText = sourceSections[section] || '';
         displayScope = section;
         if (!sectionText) {
           results.push({ section, displayScope, error: '缺少章节源文，请先生成一次报告' });
@@ -1329,6 +1455,10 @@ async function runAiPolish() {
     $('aiLoadingCard').style.display = 'none';
     $('aiLoadingText').textContent = 'AI 正在润色中...';
     $('btnAiPolish').disabled = false;
+  }
+  } finally {
+    isAiPolishing = false;
+    updateAiStatus();
   }
 }
 
@@ -1414,7 +1544,7 @@ function updateAiStatus() {
 
   $('aiStatus').textContent = hasKey ? `已配置 · ${model}` : '未配置 API Key';
   $('aiStatus').style.color = hasKey ? 'var(--accent)' : 'var(--warning)';
-  $('btnAiPolish').disabled = !hasKey || !hasReport;
+  $('btnAiPolish').disabled = isAiPolishing || !hasKey || !hasReport;
 }
 
 function getDefaultModel(provider) {
@@ -1607,6 +1737,10 @@ function bindEvents() {
   $('btnNavUpdate').onclick = () => { switchSettingsPane('update'); loadUpdatePane(); };
   $('btnNavFeedback').onclick = () => switchSettingsPane('feedback');
   $('btnSubmitFeedback').onclick = submitFeedback;
+  $('btnNavNotice').onclick = () => switchSettingsPane('notice');
+  $('btnExportDiagnostics').onclick = exportDiagnostics;
+  const noticeReminder = document.querySelector('.notice-reminder');
+  if (noticeReminder) noticeReminder.onclick = () => { openModal('settingsModal'); switchSettingsPane('notice'); };
   $('btnNavDevelop').onclick = () => { switchSettingsPane('develop'); loadDevelopPane(); };
   $('rdDevMode').onclick = () => setDevMode(true);
   $('rdNormalMode').onclick = () => setDevMode(false);
@@ -1713,6 +1847,13 @@ function bindEvents() {
   };
   $('btnImportSkill').onclick = importSkillFiles;
   $('btnOpenSkillsFolder').onclick = () => window.labAPI.openSkillsFolder();
+  $('btnGetSkill').onclick = openGetSkillModal;
+  $('btnCloseGetSkill').onclick = closeGetSkillModal;
+  $('btnCancelGetSkill').onclick = closeGetSkillModal;
+  $('btnCopySkillLink').onclick = copySkillLink;
+  $('btnOpenSkillLink').onclick = openSkillLink;
+  // 数据表单输入导航（事件委托：表单渲染重建无需重绑）
+  $('dataTableWrap').addEventListener('keydown', handleFormKeyNav);
   $('btnExportCustomVariant').onclick = exportCustomVariantsOne;
   $('btnExportAllCustomVariants').onclick = exportAllCustomVariants;
   $('btnImportCustomVariants').onclick = importCustomVariantsFiles;
@@ -1747,6 +1888,47 @@ function settleConfirm(result) {
     r(result);
   }
   closeModal('confirmModal');
+}
+
+// ── 获取 skill 弹窗：展示可复制的网盘分享链接 ──
+function openGetSkillModal() {
+  $('skillPanLink').value = SKILL_PAN_URL;
+  $('skillPanCode').textContent = SKILL_PAN_CODE;
+  const btn = $('btnCopySkillLink');
+  btn.textContent = '复制链接';
+  btn.disabled = false;
+  openModal('getSkillModal');
+}
+
+function closeGetSkillModal() { closeModal('getSkillModal'); }
+
+function copySkillLink() {
+  const btn = $('btnCopySkillLink');
+  const done = () => {
+    btn.textContent = '已复制';
+    showToast('success', '已复制', '网盘链接已复制到剪贴板');
+    setTimeout(() => { if (btn.textContent === '已复制') btn.textContent = '复制链接'; }, 2000);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(SKILL_PAN_URL).then(done).catch(() => legacyCopySkillLink(done));
+  } else {
+    legacyCopySkillLink(done);
+  }
+}
+
+function legacyCopySkillLink(done) {
+  const inp = $('skillPanLink');
+  inp.focus();
+  inp.select();
+  try {
+    if (document.execCommand('copy')) { done(); return; }
+  } catch (e) { /* 忽略 */ }
+  showToast('error', '复制失败', '请手动全选链接复制');
+}
+
+async function openSkillLink() {
+  const r = await window.labAPI.openExternal(SKILL_PAN_URL);
+  if (!(r && r.ok)) showToast('error', '无法打开链接', (r && r.error) || '未知错误', 5000);
 }
 
 async function openDataFile() {
@@ -1798,6 +1980,8 @@ function switchSettingsPane(name) {
   $('paneUpdate').classList.toggle('active', name === 'update');
   $('btnNavFeedback').classList.toggle('active', name === 'feedback');
   $('paneFeedback').classList.toggle('active', name === 'feedback');
+  $('btnNavNotice').classList.toggle('active', name === 'notice');
+  $('paneNotice').classList.toggle('active', name === 'notice');
 }
 
 // ── 检查更新（对象存储清单，国内高速）──
@@ -2443,6 +2627,7 @@ function saveAppSettings() {
   settings.skillStates = getSkillStates();
   saveSettings(settings);
   closeModal('settingsModal');
+  try { window.labAPI.logEvent(`saveAppSettings | provider=${settings.provider} model=${settings.model || '（默认）'}`); } catch (e) { /* 忽略 */ }
   showToast('success', '已保存', '设置已更新');
   updateAiStatus();
   renderSkillOptions(false);
@@ -2450,7 +2635,13 @@ function saveAppSettings() {
 
 // ── 运行生成报告 ──
 async function runGenerate() {
-  if (!currentExp || isGenerating) return;
+  if (!currentExp || isGenerating || isBatchRunning || isSavingData || isSwitchingExperiment) return;
+  isGenerating = true;
+  const genExpId = currentExp.id;
+  const btn = $('btnGenerate');
+  btn.disabled = true;
+  let genOk = false;
+  try {
   // 生成前若有未保存修改先保存，保证报告使用当前界面值；保存失败则中止不启动 Word
   if (isDataModified) {
     const saved = await saveFormData();
@@ -2459,10 +2650,6 @@ async function runGenerate() {
       return;
     }
   }
-  isGenerating = true;
-  let genOk = false;
-
-  const btn = $('btnGenerate');
   btn.disabled = true;
   btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="40 20" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/></circle></svg> 生成中...';
   // 生成期间：结果区显示"报告生成中"，禁用"打开报告"，显示"取消生成"按钮
@@ -2473,8 +2660,7 @@ async function runGenerate() {
   $('logContent').textContent = '开始生成报告...\n';
   switchTab('generate');
 
-  try {
-    genOk = await runGenerateReport(btn, currentExp.id);
+    genOk = await runGenerateReport(btn, genExpId);
   } catch (err) {
     $('logContent').textContent += `\n❌ 异常: ${err.message}\n`;
     showToast('error', '运行异常', err.message, 5000);
