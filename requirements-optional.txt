@@ -1,0 +1,3 @@
+# Optional smooth interpolation for the gravity experiment.
+# Without scipy the experiment uses its built-in polynomial fallback.
+scipy>=1.9

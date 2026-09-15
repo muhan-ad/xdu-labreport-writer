@@ -72,11 +72,11 @@ python -m pip config set global.trusted-host pypi.tuna.tsinghua.edu.cn
 
 echo.
 echo [3/3] Installing dependencies...
-python -m pip install openpyxl matplotlib python-docx pywin32
+python -m pip install -r "%~dp0requirements.txt"
 if not errorlevel 1 goto :done
 
 echo [WARN] Mirror failed, retrying with default...
-python -m pip install openpyxl matplotlib python-docx pywin32
+python -m pip install --index-url https://pypi.org/simple -r "%~dp0requirements.txt"
 if not errorlevel 1 goto :done
 
 echo [ERROR] Installation failed. Try Run as Administrator.

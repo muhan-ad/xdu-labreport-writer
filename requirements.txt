@@ -1,0 +1,2 @@
+# Python dependencies for source development; run on Windows with Python 3.12+.
+-r 物理实验/requirements.txt

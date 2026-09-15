@@ -80,5 +80,8 @@
       "installerIcon": "src/icon.ico",
       "uninstallerIcon": "src/icon.ico"
     }
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

@@ -98,14 +98,18 @@ electron-builder NSIS 安装包：应用代码打包为 asar；`物理实验` �
 
 ### 开发者（源码运行）
 
-环境要求：Node.js ≥ 18；Python 二选一——仓库根放置 `python-runtime/`（嵌入式运行时，Release 构建产物同款），或本机安装 Python ≥ 3.10（建议 3.12+）并执行 `pip install -r 物理实验/requirements.txt`（亦可直接运行 `物理实验/setup.bat`）。
+环境要求：Windows、Node.js ≥ 22.12（建议 24）、Python 3.12+，生成报告需要 Microsoft Word 桌面版。Python 二选一：自行配置仓库根目录的 `python-runtime/`，或安装本机 Python 并按下方命令安装依赖。
 
 ```bash
 npm ci
+python -m pip install -r requirements.txt
+python scripts/check-python-dependencies.py
 npm start
 ```
 
 运行时 Python 解析优先级：内置 `python-runtime` → 本机 Python（Microsoft Store / 常见安装目录 / PATH）。
+
+依赖清单及本地配置说明见 [依赖与环境配置](docs/依赖与环境配置.md)。`node_modules/`、`python-runtime/` 不作为源码入库；所有必需 Python 包列于 requirements，Node 包由 `package-lock.json` 锁定。可选 SciPy 插值依赖列于 `requirements-optional.txt`，未安装时使用已有的多项式回退。
 
 ---
 
