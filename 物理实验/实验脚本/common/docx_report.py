@@ -494,6 +494,10 @@ class DocxReportWriter:
     def _preprocess_latex(formula: str) -> str:
         """将 LaTeX 公式转为 Word BuildUp() 兼容的 UnicodeMath 线性格式。
 
+        Word 数学对象禁止包含段落标记/换行：公式文本含 \\r 或 \\n 时 BuildUp()
+        会直接抛 COM 异常（-2147352567「数学对象中不能包含段落标记或分隔符」），
+        而不是静默降级。AI 润色/导入的跨行公式常带换行，故先统一替换为空格。
+
         Word BuildUp 支持的常用命令：\\frac、\\sqrt、\\sum、^、_、
         希腊字母（\\Delta、\\lambda 等）、\\cdot、\\pm、\\times、
         \\approx、\\left、\\right、\\overline。
@@ -502,6 +506,8 @@ class DocxReportWriter:
           - \\mathrm{...} → "..."（UnicodeMath 双引号 = 文本/正体模式）
           - \\text{...}   → "..."（同上）
         """
+        formula = formula.replace('\r', ' ').replace('\n', ' ')
+        # 1. \\mathrm{...} → "..."（双引号文本模式）
         # 1. \\mathrm{...} → "..."（双引号文本模式）
         #    文本模式中 ^ 不起上标作用，替换为 Unicode 上标字符
         formula = re.sub(r'\\mathrm\{([^}]*)\}', _text_mode_replace, formula)
