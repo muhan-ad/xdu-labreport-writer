@@ -29,66 +29,11 @@ def _load_json(path):
         return json.load(f)
 
 
-def _is_num(v):
-    return (isinstance(v, (int, float)) and not isinstance(v, bool)
-            and math.isfinite(v))   # 拒 NaN/Inf
-
-
-def validate(schema, data):
-    missing, invalid = [], []
-    for group in schema.get("groups", []):
-        for fld in group.get("fields", []):
-            key = fld.get("key")
-            label = fld.get("label", key)
-            typ = fld.get("type", "number")
-            required = fld.get("required", False)
-            v = data.get(key)
-
-            # 必填检查
-            if required:
-                if v is None:
-                    missing.append({"key": key, "label": label})
-                    continue
-                if typ == "array" and (not isinstance(v, list) or any(x is None for x in v)):
-                    missing.append({"key": key, "label": label})
-                    continue
-                if typ == "matrix" and (not isinstance(v, list)
-                        or any((not isinstance(row, list)) or any(x is None for x in row)
-                               for row in v)):
-                    missing.append({"key": key, "label": label})
-                    continue
-
-            if v is None:
-                continue
-
-            # 类型 / 长度检查
-            if typ in ("number", "science"):
-                if not _is_num(v):
-                    invalid.append({"key": key, "label": label, "reason": "应为数值"})
-            elif typ == "array":
-                if not isinstance(v, list):
-                    invalid.append({"key": key, "label": label, "reason": "应为数组"})
-                elif "length" in fld and len(v) != fld["length"]:
-                    invalid.append({"key": key, "label": label,
-                                    "reason": f"长度应为 {fld['length']}"})
-                elif any(x is not None and not _is_num(x) for x in v):
-                    invalid.append({"key": key, "label": label, "reason": "含非数值"})
-            elif typ == "matrix":
-                if not isinstance(v, list):
-                    invalid.append({"key": key, "label": label, "reason": "应为矩阵"})
-                else:
-                    rows, cols = fld.get("rows"), fld.get("cols")
-                    if rows is not None and len(v) != rows:
-                        invalid.append({"key": key, "label": label,
-                                        "reason": f"行数应为 {rows}"})
-                    elif cols is not None and any(
-                            not isinstance(r, list) or len(r) != cols for r in v):
-                        invalid.append({"key": key, "label": label,
-                                        "reason": f"列数应为 {cols}"})
-                    elif any(x is not None and not _is_num(x)
-                             for r in v if isinstance(r, list) for x in r):
-                        invalid.append({"key": key, "label": label, "reason": "含非数值"})
-    return {"ok": (not missing and not invalid), "missing": missing, "invalid": invalid}
+import importlib.util
+_spec = importlib.util.spec_from_file_location("lab_data_validation", os.path.join(BASE, "common", "data_validation.py"))
+_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_module)
+validate = _module.validate
 
 
 def main():
@@ -104,7 +49,9 @@ def main():
         data = _load_json(os.path.join(d, "data.json")) or {}
         results[os.path.basename(d)] = validate(schema, data)
     print(json.dumps(results, ensure_ascii=False, indent=1))
+    return 1 if any(not r["ok"] for r in results.values()) else 0
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    sys.exit(main())

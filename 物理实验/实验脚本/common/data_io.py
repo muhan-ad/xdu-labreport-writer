@@ -12,4 +12,13 @@ def load_data(path):
     if not os.path.exists(path):
         return {}
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    schema_path = os.path.join(os.path.dirname(path), "schema.json")
+    if os.path.exists(schema_path):
+        from .data_validation import validate
+        with open(schema_path, encoding="utf-8") as f:
+            result = validate(json.load(f), data)
+        if not result["ok"]:
+            errors = result["missing"] + result["invalid"]
+            raise ValueError("实验数据无效：" + "；".join(e["label"] + "：" + e.get("reason", "未填写") for e in errors))
+    return data

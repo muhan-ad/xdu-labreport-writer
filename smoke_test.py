@@ -63,6 +63,8 @@ def main():
             dat = json.load(open(os.path.join(ed, "data.json"), encoding="utf-8"))
             v = validate(sch, dat)
             miss = len(v["missing"])
+            if miss:
+                issues.append(f"missing:{miss}")
             if v["invalid"]:
                 issues.append(f"invalid:{[i['key'] for i in v['invalid']]}")
         except Exception as e:

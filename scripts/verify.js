@@ -1,0 +1,14 @@
+'use strict';
+const path = require('path');
+const fs = require('fs');
+const { spawnSync } = require('child_process');
+const root = path.join(__dirname, '..');
+const bundled = path.join(root, 'python-runtime/python.exe');
+const python = fs.existsSync(bundled) ? bundled : 'python';
+const commands = [[process.execPath, ['--test', 'tests/regression.test.js', 'tests/security.test.js']],
+  ...['smoke_test.py', 'validate_schema.py', 'tests/calculation_test.py'].map(file => [python, ['-B', '-X', 'utf8', file]])];
+for (const [exe, args] of commands) {
+  const result = spawnSync(exe, args, { cwd: root, stdio: 'inherit', windowsHide: true, timeout: 120000 });
+  if (result.error || result.status !== 0) { console.error(result.error?.message || '验证失败'); process.exit(result.status || 1); }
+}
+console.log('PASS: Node security/regression and Python static/calculation checks');

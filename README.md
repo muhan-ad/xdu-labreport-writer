@@ -66,7 +66,7 @@ electron-builder NSIS 安装包：应用代码打包为 asar；`物理实验` �
 
 ### 8. 检查更新
 
-设置 → **检查更新**：内置更新清单地址（国内对象存储 COS 直链，`latest.json` 双格式：新版读 `downloads` 下载入口、旧版读 `url/fileName` 直链）。点击「检查更新」：已是最新版本会提示；发现新版本后**新版弹窗展示下载入口（夸克网盘 / GitHub）由用户自行下载**，旧版本（≤1.6.x）则自动下载并打开安装程序。另有**实验数据热更新**：设置中「检查实验数据更新」可免重装拉取变体/知识库/新增实验的数据包。发布流程见 [RELEASE.md](RELEASE.md)。
+设置 → **检查更新**：COS 的 `latest.json` 仅提供版本和网盘分享链接。发现新版后弹窗展示入口，支持打开与复制；不在应用内下载安装包，也不要求 COS 存放安装包。另有**实验数据热更新**：保留应用内下载与应用，1.7.6 起要求发布签名、摘要及兼容性验证。发布流程见 [RELEASE.md](RELEASE.md)。
 
 ---
 
@@ -101,7 +101,7 @@ electron-builder NSIS 安装包：应用代码打包为 asar；`物理实验` �
 环境要求：Node.js ≥ 18；Python 二选一——仓库根放置 `python-runtime/`（嵌入式运行时，Release 构建产物同款），或本机安装 Python ≥ 3.10（建议 3.12+）并执行 `pip install -r 物理实验/requirements.txt`（亦可直接运行 `物理实验/setup.bat`）。
 
 ```bash
-npm install
+npm ci
 npm start
 ```
 
@@ -120,6 +120,7 @@ npm run build:win
 ## 质量校验
 
 ```bash
+npm run verify             # Node 安全/回归 + Python 静态/计算测试
 python smoke_test.py        # 全实验静态回归：脚本语法 / schema-data 一致性 / 变体章节数与 $ 配对 / 占位符键存在性 / 知识库存在性
 python validate_schema.py   # 各实验 data.json 相对 schema.json 的 missing / invalid 明细
 ```
@@ -142,13 +143,13 @@ validate_schema.py            schema-data 一致性校验
       generate.py             数据处理 + 报告生成入口
       schema.json             数据模型定义
       data.json               测量数据（示例值，使用前须替换）
-      variants.json           章节措辞变体（19/26 实验已具备）
+      variants.json           章节措辞变体（26/26 实验已具备）
       rag/原理.md             教材原理知识库（AI 润色约束依据）
 ```
 
 ## 隐私与数据
 
-- **学生信息、API Key、应用设置、技能启用状态、AI 润色导入文本**均存储于 Electron `localStorage`（位于 `%APPDATA%` 应用数据目录），**不写入项目目录、不进 git 仓库、不随安装包分发**；
+- **学生信息、普通应用设置、技能启用状态、AI 润色导入文本**保存在用户数据目录中的 `localStorage`；**API Key 单独使用系统加密存储**，页面不能取回已保存密钥，旧配置在启动时迁移。均不随安装包分发。
 - API Key 仅在调用 AI 服务时经 HTTPS 发送至用户自行配置的服务商端点；
 - 技能文件存放于 `%APPDATA%/<应用>/skills/`；报告文件、章节源文缓存（`.lab_sections.json`）、图表与生成物均被 `.gitignore` 排除；
 - 仓库为私有仓库；生成报告由使用者自行负责合规提交。

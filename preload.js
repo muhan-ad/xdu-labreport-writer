@@ -2,6 +2,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('labAPI', {
+  credentialStatus: () => ipcRenderer.invoke('credential-status'),
+  saveCredential: (payload) => ipcRenderer.invoke('credential-save', payload),
+  reportText: (filePath) => ipcRenderer.invoke('report-text', filePath),
   scanExperiments: () => ipcRenderer.invoke('scan-experiments'),
   openFile: (filePath) => ipcRenderer.invoke('open-file', filePath),
   runGenerate: (expPath, studentInfo, variants, polish) => ipcRenderer.invoke('run-generate', expPath, studentInfo, variants, polish),
@@ -37,6 +40,8 @@ contextBridge.exposeInMainWorld('labAPI', {
   // 检查更新（仅版本校对 + 浏览器打开下载链接）
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   checkForUpdate: (cfg) => ipcRenderer.invoke('check-for-update', cfg),
+  copyLink: (url) => ipcRenderer.invoke('copy-link', url),
+  openDataFile: (expPath) => ipcRenderer.invoke('open-data-file', expPath),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   // 贡献数据上传（COS 直传）
   contributeGetCredentials: (payload) => ipcRenderer.invoke('contribute-get-credentials', payload),

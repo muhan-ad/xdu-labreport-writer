@@ -1,16 +1,35 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const atomic = require('./atomic-store');
 
 const STATE_FILE = '.resource-state.json';
 
+function recoverTree(target) {
+  if (fs.existsSync(target)) return false;
+  const parent = path.dirname(path.resolve(target));
+  if (!fs.existsSync(parent)) return false;
+  const candidates = fs.readdirSync(parent).filter(n => n.startsWith('.resource-')).map(n => path.join(parent, n));
+  candidates.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+  for (const dir of candidates) {
+    if (fs.lstatSync(dir).isSymbolicLink()) continue;
+    const marker = path.join(dir, 'transaction.json'), previous = path.join(dir, 'previous');
+    if (!fs.existsSync(marker) || !fs.existsSync(previous)) continue;
+    let state; try { state = JSON.parse(fs.readFileSync(marker, 'utf8')); } catch (_) { continue; }
+    if (state.target !== path.resolve(target) || fs.lstatSync(previous).isSymbolicLink()) continue;
+    fs.renameSync(previous, target);
+    return true;
+  }
+  return false;
+}
+
 function readState(root) {
   const file = path.join(root, STATE_FILE);
-  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  return atomic.readJson(file, {});
 }
 
 function writeState(root, state) {
-  fs.writeFileSync(path.join(root, STATE_FILE), JSON.stringify(state, null, 2), 'utf8');
+  atomic.writeFile(path.join(root, STATE_FILE), JSON.stringify(state, null, 2), 'utf8');
 }
 
 function copyTree(source, dest, io = fs) {
@@ -29,6 +48,7 @@ function replaceTree(target, prepare, io = fs) {
   const prefix = path.join(parent, '.resource-');
   io.mkdirSync(parent, { recursive: true });
   const work = io.mkdtempSync(prefix);
+  io.writeFileSync(path.join(work, 'transaction.json'), JSON.stringify({ target: path.resolve(target) }));
   const candidate = path.join(work, 'candidate');
   const backup = path.join(work, 'previous');
   let moved = false;
@@ -51,6 +71,18 @@ function replaceTree(target, prepare, io = fs) {
       }
       throw error;
     }
+    // Only prune completed transactions for this exact target; retain two recovery copies.
+    try {
+      const old = io.readdirSync(parent).filter(n => n.startsWith('.resource-')).map(n => path.join(parent, n)).filter(dir => {
+        const marker = path.join(dir, 'transaction.json');
+        return !io.lstatSync(dir).isSymbolicLink() && io.existsSync(marker) &&
+          JSON.parse(io.readFileSync(marker, 'utf8')).target === path.resolve(target) && io.existsSync(path.join(dir, 'previous'));
+      }).sort((a, b) => io.statSync(b).mtimeMs - io.statSync(a).mtimeMs);
+      for (const dir of old.slice(2)) {
+        if (path.dirname(path.resolve(dir)) !== parent) throw Error('Invalid backup path');
+        io.rmSync(dir, { recursive: true, force: true });
+      }
+    } catch (_) { /* Retention must never undo a successful commit. */ }
     return moved ? backup : null;
   } catch (error) {
     // All paths here are descendants of our own freshly created temporary directory.
@@ -120,4 +152,4 @@ function syncBuiltin(builtin, target, fingerprint, appVersion) {
   return true;
 }
 
-module.exports = { readState, writeState, replaceTree, resourceVersion, syncBuiltin };
+module.exports = { readState, writeState, replaceTree, resourceVersion, syncBuiltin, recoverTree };

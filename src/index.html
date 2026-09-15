@@ -2,6 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'none'; frame-src 'self' labapp:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>实验搭子</title>
   <link rel="stylesheet" href="style.css">
@@ -491,7 +492,8 @@
               </div>
               <div class="form-group">
                 <label>API Key</label>
-                <input type="password" id="inputApiKey" placeholder="sk-..." />
+                <input type="password" id="inputApiKey" placeholder="sk-..." autocomplete="off" />
+                <button type="button" id="btnClearApiKey" class="btn btn-ghost">清除已存密钥</button>
               </div>
               <div class="form-group">
                 <label>模型名称（留空使用默认）</label>
@@ -872,7 +874,7 @@
   <!-- Toast 通知容器 -->
   <div class="toast-container" id="toastContainer"></div>
 
-  <script src="docx-preview.min.js"></script>
+  <script src="shared/data-validation.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

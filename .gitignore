@@ -49,3 +49,12 @@ test/
 *.docx
 
 .zcode/
+
+# 本地凭据与发布私钥（客户端公钥仍入库）
+.env
+.env.*
+!.env.example
+.labreport-release/
+data-update-ed25519.pem
+*.pfx
+*.p12

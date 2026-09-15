@@ -1,89 +1,33 @@
-# 贡献数据上传凭证云函数 — 部署指引
+# 投稿与反馈云函数（1.7.6 协议）
 
-给「贡献数据」功能签发放上传凭证的腾讯云函数（SCF）。签名密钥只存在函数的环境变量里，
-客户端应用只拿到 10 分钟有效的预签名 PUT 地址，拿不到任何密钥。
+## 部署
 
-## 一、创建函数（约 5 分钟）
+使用受平台支持的 Node.js 运行时。代码零外部依赖，不需要安装 COS SDK。函数环境变量：`SECRET_ID`、`SECRET_KEY`、`BUCKET`、`REGION`。密钥只留在云端，使用仅能写贡献目录的专用 CAM 身份。
 
-1. 打开腾讯云控制台 → 云函数 SCF → 新建函数；
-2. 基本配置：
-   - 创建方式：**从头开始**；
-   - 函数类型：事件函数；
-   - 运行环境：**Node.js 16 或 18**；
-   - 函数名称：如 `contribute-credentials`；
-3. 创建后进入「函数代码」页，把本目录的 `index.js` 内容粘贴替换；
-4. 安装依赖（二选一）：
-   - 方式 A（推荐，免 zip）：编辑器下方「在线安装依赖」输入 `cos-nodejs-sdk-v5` 并执行；
-   - 方式 B：本地 `npm install cos-nodejs-sdk-v5`，把 `index.js + package.json + node_modules` 打包 zip 上传。
+配置 HTTPS POST 入口，把网关可信来源 IP 传入 `requestContext.sourceIp` 或 `requestContext.identity.sourceIp`。函数不信任客户端提交的 IP 请求头；缺少可信来源时拒绝签发。
 
-## 二、配置环境变量（函数配置 → 环境变量）
-
-| 变量名 | 值 |
-|---|---|
-| `SECRET_ID` | 腾讯云 API 密钥 SecretId |
-| `SECRET_KEY` | 腾讯云 API 密钥 SecretKey |
-| `BUCKET` | COS 桶全名（如 `labreport-1485394950-1250000000`，带 APPID 后缀） |
-| `REGION` | 桶所在园区（如 `ap-guangzhou`） |
-
-> 建议：为这个函数单独建一个**子账号密钥**（CAM），只授予下表的最小写权限，避免使用主账号密钥。
-
-## 三、开启访问入口（函数 URL，免 API 网关）
-
-1. 函数配置 → 触发器 → 创建触发器 → 触发方式选「**函数 URL**」；
-2. 鉴权类型：**免鉴权**（应用直接 POST 调用，函数自身只发预签名、无泄露风险）；
-3. 创建后复制生成的访问地址，形如：
-   `https://<env>.scf.<region>.tencentcs.com/release/contribute-credentials`
-
-## 四、把地址填回应用
-
-编辑应用源码 `main.js` 中的常量：
-
-```js
-const CONTRIBUTE_FN_URL = 'https://<env>.scf.<region>.tencentcs.com/release/contribute-credentials';
-```
-
-重新打包发布后，「贡献数据」上传即可用。
-
-## 五、联调测试
-
-```bash
-curl -X POST "https://<env>.scf.<region>.tencentcs.com/release/contribute-credentials" \
-  -H "Content-Type: application/json" \
-  -d '{"keys":["contributions/reports/测试实验/20260101_000000/manifest.json"]}'
-```
-
-正常返回：
+新协议：
 
 ```json
-{"ok":true,"items":[{"key":"contributions/reports/测试实验/20260101_000000/manifest.json","putUrl":"https://xxx.cos.ap-guangzhou.myqcloud.com/...?q-sign-algorithm=..."}],"expires":600}
+{"files":[{"key":"contributions/feedbacks/20260915/feedback.json","size":128}]}
 ```
 
-拿到 `putUrl` 后可顺手验证直传：
+同时支持 `contributions/variants/<实验>/<批次>/<文件>`、`contributions/reports/<实验>/<批次>/<文件>` 和 `contributions/feedbacks/<批次>/<文件>`。云端将批次替换成随机 UUID；响应 `key` 保留原请求标识供客户端对应，`objectKey` 是实际对象名。
 
-```bash
-curl -X PUT --upload-file manifest.json "<putUrl>"
-```
+允许 json/docx/jpg/jpeg/png；单文件最多 20MB，单批次最多 20 个文件、总计 40MB。签名绑定 PUT、对象路径、Content-Type、Content-Length 和 `x-cos-forbid-overwrite: true`，有效期 600 秒。客户端上传必须带同样的请求头。变更大小会导致签名不匹配。
 
-## 六、安全边界（已内置）
+## 必须配套的生产控制
 
-- key 必须匹配 `contributions/(variants|reports)/<实验名>/<文件名>`，其它任何路径一律 400 拒绝；
-- 单次请求最多 20 个 key；签名有效期 10 分钟；
-- 上传走 COS 上行流量（免费）；此函数月调用几千次规模在免费额度内，费用为 0；
-- 密钥永不进入应用安装包（客户端只接触预签名 URL）。
+1. CAM/桶策略仅允许写 `contributions/*`，不允许写 `latest.json`、实验 ZIP、数据清单或读取其他用户对象。
+2. 使用 `cos:content-length` 条件约束上限，并要求 `cos:x-cos-forbid-overwrite`。该防覆盖头在开启对象版本控制的桶中不起相同作用，部署时需验证实际桶设置。
+3. **网关/WAF 或共享存储实现跨实例限流与每日累计配额。** 代码中的每 IP 每小时 20 批/100MB 只是单个热实例的补充保护；冷启动和横向扩容会重置/分散计数，不能替代分布式配额。
+4. 投稿前缀禁止公开读取，配置审核、恶意文件隔离、未完成/过期投稿清理及费用告警。上传白名单和签名不等于文件内容已安全。
+5. 如果来源在校园 NAT 后集中，请按实际使用人数调整分布式限流；不要为放开使用而取消大小和路径约束。
 
-## 附：CAM 子账号最小权限示例
+参考：[COS 条件键与限制大小](https://cloud.tencent.com/document/product/436/71307)、[PUT Object 防覆盖条件](https://intl.cloud.tencent.com/ind/document/product/436/7749)。
 
-```json
-{
-  "version": "2.0",
-  "statement": [
-    {
-      "effect": "allow",
-      "action": ["cos:PutObject"],
-      "resource": ["qcs::cos:ap-guangzhou:uid/1250000000:*/*/contributions/*"]
-    }
-  ]
-}
-```
+## 上线验收
 
-（`uid/1250000000` 与桶全名按您的实际账号修改。）
+测试三种合法投稿、反馈内容在管理端可读、超大/越界/重复 key 拒绝、短时批量请求被限流、签名头篡改失败及部分上传的过期清理。凭证有期限不代表已上传对象自动删除。
+
+本目录代码更新不表示云端已经部署。须在发布客户端前部署，否则客户端会报告凭证协议不兼容。旧客户端 `keys` 协议不再受支持，版本升级提示需同步发布。

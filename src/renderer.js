@@ -155,11 +155,22 @@ function loadSettings() {
   } catch { return {}; }
 }
 function saveSettings(settings) {
+  delete settings.apiKey;
   localStorage.setItem('appSettings', JSON.stringify(settings));
 }
 
 // ── 初始化 ──
 async function init() {
+  const legacy = loadSettings();
+  if (legacy.apiKey) {
+    const migrated = await window.labAPI.saveCredential({ ...legacy, key: legacy.apiKey });
+    if (migrated.ok) { legacy.hasApiKey = migrated.configured; saveSettings(legacy); }
+    else showToast('error', '密钥迁移失败', migrated.error + '，请在设置中重新保存', 8000);
+  }
+  const credentials = await window.labAPI.credentialStatus();
+  const settings = loadSettings();
+  if (!settings.apiKey) { settings.hasApiKey = !!credentials.configured; saveSettings(settings); }
+
   experiments = await window.labAPI.scanExperiments();
   experiments.forEach(e => { e.category = getCategory(e.name); });
 
@@ -881,6 +892,8 @@ async function saveFormData() {
   isSavingData = true;
   try {
   const data = readFormData();
+  const errors = dataValidation.validate(currentSchema, data, false);
+  if (errors.length) { showToast('error', '数据无效', errors.join('；')); return false; }
   const result = await window.labAPI.writeData(saveExp.path, data);
   if (result.ok) {
     currentData = data;
@@ -911,7 +924,7 @@ async function saveFormData() {
 function refreshFormCheck() {
   if (!currentSchema) return;
   const data = readFormData();
-  const missing = [];
+  const missing = dataValidation.validate(currentSchema, data);
   for (const group of (currentSchema.groups || [])) {
     for (const fld of (group.fields || [])) {
       if (!fld.required) continue;
@@ -926,7 +939,7 @@ function refreshFormCheck() {
   const bar = $('dataIssueBar');
   if (missing.length > 0) {
     bar.style.display = 'block';
-    bar.innerHTML = `<span class="issue-text">未填 ${missing.length} 项必填数据：${escapeHtml(missing.join('、'))}</span>`;
+    bar.innerHTML = `<span class="issue-text">请检查 ${missing.length} 项数据：${escapeHtml(missing.join('、'))}</span>`;
   } else {
     bar.style.display = 'none';
   }
@@ -948,12 +961,9 @@ async function saveExcelData() {
 let previewLoaded = false;
 
 async function getReportText(exp = currentExp) {
-  if (!exp || !exp.reportFile) return '';
-  const result = await window.labAPI.docxToHtml(exp.reportFile);
-  if (!result.ok) return '';
-  const div = document.createElement('div');
-  div.innerHTML = result.html;
-  return div.textContent || div.innerText || '';
+  if (!exp?.reportFile) return '';
+  const r = await window.labAPI.reportText(exp.reportFile);
+  return r.ok ? r.text : '';
 }
 
 function extractSection(text, scope) {
@@ -1341,7 +1351,7 @@ async function runAiPolish() {
   }
 
   const settings = loadSettings();
-  if (!settings.apiKey) {
+  if (!settings.hasApiKey) {
     showToast('warning', '未配置 API Key', '请在设置中配置 API Key 后再使用');
     return;
   }
@@ -1427,7 +1437,6 @@ async function runAiPolish() {
       try {
         const result = await window.labAPI.aiChat({
           provider: settings.provider || 'deepseek',
-          apiKey: settings.apiKey,
           apiUrl: settings.apiUrl,
           model: settings.model,
           messages,
@@ -1538,7 +1547,7 @@ function renderAiResults() {
 
 function updateAiStatus() {
   const settings = loadSettings();
-  const hasKey = !!settings.apiKey;
+  const hasKey = !!settings.hasApiKey;
   const hasReport = !!(currentExp && currentExp.reportFile);
   const model = settings.model || getDefaultModel(settings.provider);
 
@@ -1584,61 +1593,39 @@ const DEFAULT_API_URLS = {
 
 // ── Tab 切换 ──
 
+let previewRequest = 0;
 async function loadPreview() {
-  if (!currentExp || !currentExp.reportFile) {
-    $('previewWrap').innerHTML = `
-      <div class="preview-empty">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        <p>生成报告后可在此预览</p>
-      </div>`;
-    return;
-  }
-  $('previewWrap').innerHTML = '<div class="preview-empty"><p>加载中...</p></div>';
-  try {
-    const result = await window.labAPI.readDocxBuffer(currentExp.reportFile);
-    if (!result.ok) {
-      $('previewWrap').innerHTML = `<div class="preview-empty"><p>预览失败：${result.error}</p></div>`;
-      showToast('error', '预览失败', result.error, 5000);
-      return;
-    }
-    // base64 转 ArrayBuffer
-    const binary = atob(result.buffer);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-    // 清空容器并渲染
-    $('previewWrap').innerHTML = '';
-    if (window.docxPreview && window.docxPreview.renderAsync) {
-      await window.docxPreview.renderAsync(bytes.buffer, $('previewWrap'), null, {
-        inWrapper: true,
-        ignoreWidth: true,
-        breakPages: false,
-        useBase64URL: true,
-      });
-    }
-    // docx-preview 对 Word COM 生成的公式(OMML)支持有限；渲染结果为空则回退 mammoth 文本版
-    if (!$('previewWrap').querySelector('section, p, table, img, canvas')) {
-      await previewFallback('未渲染出内容');
+  const target = currentExp, token = ++previewRequest;
+  const wrap = $('previewWrap');
+  wrap.textContent = target?.reportFile ? '加载中…' : '生成报告后可在此预览';
+  if (!target?.reportFile) return;
+  const result = await window.labAPI.readDocxBuffer(target.reportFile);
+  if (token !== previewRequest || currentExp?.id !== target.id) return;
+  if (!result.ok) { wrap.textContent = '预览失败：' + result.error; return; }
+  const frame = document.createElement('iframe');
+  frame.sandbox = 'allow-scripts';
+  frame.title = '报告预览'; frame.src = 'labapp://app/preview.html';
+  frame.style.cssText = 'width:100%;height:75vh;border:0;background:white';
+  frame.onload = () => {
+    if (token !== previewRequest) return;
+    frame.contentWindow.postMessage({ type: 'preview', buffer: result.buffer }, '*');
+  };
+  const receive = async event => {
+    if (event.source !== frame.contentWindow || event.data?.type !== 'preview-result') return;
+    window.removeEventListener('message', receive);
+    if (token !== previewRequest || currentExp?.id !== target.id) return;
+    if (!event.data.ok) {
+      const fallback = await window.labAPI.docxToHtml(target.reportFile);
+      if (token !== previewRequest || currentExp?.id !== target.id) return;
+      frame.removeAttribute('src'); frame.sandbox = '';
+      frame.srcdoc = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'">' +
+        (fallback.ok ? fallback.html : '<p>无法预览，请在 Word 中打开报告。</p>');
     }
     previewLoaded = true;
-  } catch (err) {
-    await previewFallback(err.message);
-  }
-}
-
-// docx-preview 失败/空白时的回退：用 mammoth 转 HTML（正文/表格/图可读，公式可能不显示）
-async function previewFallback(reason) {
-  try {
-    const h = await window.labAPI.docxToHtml(currentExp.reportFile);
-    if (h.ok && h.html) {
-      $('previewWrap').innerHTML =
-        `<div class="docx-html-preview">${h.html}</div>`
-        + `<p class="preview-note">公式等复杂内容预览受限，已切换为文本预览模式。</p>`;
-      return;
-    }
-  } catch (e) { /* 回退失败则走下方错误提示 */ }
-  $('previewWrap').innerHTML = `<div class="preview-empty"><p>预览失败：${escapeHtml(reason || '')}</p></div>`;
+  };
+  window.addEventListener('message', receive);
+  setTimeout(() => window.removeEventListener('message', receive), 60000);
+  wrap.replaceChildren(frame);
 }
 
 // ── Tab 切换 ──
@@ -1771,6 +1758,13 @@ function bindEvents() {
   $('btnCloseSettings').onclick = () => closeModal('settingsModal');
   $('btnCancelSettings').onclick = () => closeModal('settingsModal');
   $('btnSaveSettings').onclick = saveAppSettings;
+  $('btnClearApiKey').onclick = async () => {
+    const r = await window.labAPI.saveCredential({ key: '' });
+    if (!r.ok) { showToast('error', '清除失败', r.error); return; }
+    const settings = loadSettings(); settings.hasApiKey = false; saveSettings(settings);
+    $('inputApiKey').value = ''; $('inputApiKey').placeholder = '请输入 API Key'; updateAiStatus();
+    showToast('success', '已清除', '已删除此应用保存的 API Key');
+  };
   $('btnAiConfig').onclick = () => { closeModal('studentModal'); openModal('settingsModal'); loadSettingsForm(); };
   $('selectProvider').onchange = () => {
     renderModelChips();
@@ -1806,7 +1800,7 @@ function bindEvents() {
     if ($('logContent').textContent === '等待生成...') {
       $('logContent').textContent = '';
     }
-    $('logContent').textContent += data;
+    $('logContent').textContent = ($('logContent').textContent + data).slice(-128 * 1024);
     $('logContent').scrollTop = $('logContent').scrollHeight;
   });
 
@@ -1933,7 +1927,7 @@ async function openSkillLink() {
 
 async function openDataFile() {
   if (currentExp && currentExp.dataFile) {
-    const r = await window.labAPI.openFile(currentExp.dataFile);
+    const r = await window.labAPI.openDataFile(currentExp.path);
     if (!r.ok) showToast('error', '无法打开文件', '数据文件不存在或已被移动', 5000);
   }
 }
@@ -2110,10 +2104,18 @@ function openUpdateModal(r) {
         `<div class="update-download-link">`
         + `<span><span class="update-download-name">${escapeHtml(d.name)}</span>`
         + (d.hint ? ` <span class="update-download-hint">${escapeHtml(d.hint)}</span>` : '') + `</span>`
-        + `<button class="btn btn-sm btn-primary cv-open-link" data-url="${escapeHtml(d.url)}">下载</button>`
+        + `<input class="update-share-url" aria-label="网盘分享链接" readonly value="${escapeHtml(d.url)}">`
+        + `<button class="btn btn-sm btn-outline cv-copy-link" data-url="${escapeHtml(d.url)}">复制链接</button>`
+        + `<button class="btn btn-sm btn-primary cv-open-link" data-url="${escapeHtml(d.url)}">打开网盘</button>`
         + `</div>`
       ).join('') + '</div>'
     : '<div class="form-hint">暂无可用下载链接，请稍后再试</div>';
+  wrap.querySelectorAll('.cv-copy-link').forEach(b => {
+    b.onclick = async () => {
+      const result = await window.labAPI.copyLink(b.dataset.url);
+      showToast(result.ok ? 'success' : 'error', result.ok ? '已复制链接' : '复制失败', result.ok ? '网盘分享链接已复制' : result.error);
+    };
+  });
   wrap.querySelectorAll('.cv-open-link').forEach(b => {
     b.onclick = async () => {
       const res = await window.labAPI.openExternal(b.dataset.url);
@@ -2142,7 +2144,7 @@ async function submitFeedback() {
       exp: currentExp ? currentExp.id : '',
     };
     const data = new TextEncoder().encode(JSON.stringify(payload, null, 1));
-    const c = await window.labAPI.contributeGetCredentials({ keys: [key] });
+    const c = await window.labAPI.contributeGetCredentials({ files: [{ key, size: data.byteLength }] });
     if (!c.ok || !Array.isArray(c.items) || !c.items.length) {
       statusEl.textContent = '';
       showToast('error', '提交失败', (c && c.error) || '服务异常', 5000);
@@ -2335,7 +2337,7 @@ async function doContributeUpload() {
   const baseKey = `contributions/${cvMode === 'variant' ? 'variants' : 'reports'}/${expId}/${ts}`;
   const items = files.map(f => ({ name: f.name, key: `${baseKey}/${f.name}` }));
   statusEl.textContent = '正在获取上传凭证…';
-  const c = await window.labAPI.contributeGetCredentials({ keys: items.map(x => x.key) });
+  const c = await window.labAPI.contributeGetCredentials({ files: items.map((x, i) => ({ key: x.key, size: files[i].data.byteLength })) });
   if (!c.ok || !Array.isArray(c.items) || !c.items.length) {
     statusEl.textContent = '';
     showToast('error', '无法上传', (c && c.error) || '凭证服务异常', 5000);
@@ -2575,7 +2577,8 @@ function loadSettingsForm() {
     showToast('info', '供应商已更新', '豆包/通义千问已下架，AI 服务已重置为 DeepSeek，请重新配置', 6000);
   }
   $('selectProvider').value = s.provider || 'deepseek';
-  $('inputApiKey').value = s.apiKey || '';
+  $('inputApiKey').value = '';
+  $('inputApiKey').placeholder = s.hasApiKey ? '已安全保存，留空保留；输入新密钥可替换' : '请输入 API Key';
   $('inputModel').value = s.model || '';
   $('inputApiUrl').value = s.apiUrl || '';
   $('chkAiPolish').checked = !!s.aiPolish;
@@ -2615,16 +2618,22 @@ function autoFillApiUrl() {
 }
 
 // ── 保存设置 ──
-function saveAppSettings() {
+async function saveAppSettings() {
   // 在现有设置基础上更新（保留 developerMode 等非本表单字段，避免保存时把开发者模式重置）
   const settings = loadSettings();
   settings.provider = $('selectProvider').value;
-  settings.apiKey = $('inputApiKey').value.trim();
+  const newKey = $('inputApiKey').value.trim();
   settings.model = $('inputModel').value.trim();
   settings.apiUrl = $('inputApiUrl').value.trim();
   settings.aiPolish = $('chkAiPolish').checked;
   settings.kbOnly = $('chkKbOnly').checked;
   settings.skillStates = getSkillStates();
+  if (newKey) {
+    const stored = await window.labAPI.saveCredential({ ...settings, key: newKey });
+    if (!stored.ok) { showToast('error', '密钥未保存', stored.error, 6000); return; }
+    settings.hasApiKey = stored.configured;
+  }
+  if (settings.apiUrl && !/^https:\/\//i.test(settings.apiUrl)) { showToast('error', '地址无效', 'AI 服务必须使用 HTTPS'); return; }
   saveSettings(settings);
   closeModal('settingsModal');
   try { window.labAPI.logEvent(`saveAppSettings | provider=${settings.provider} model=${settings.model || '（默认）'}`); } catch (e) { /* 忽略 */ }
@@ -2675,6 +2684,7 @@ async function runGenerate() {
       $('btnOpenReport').disabled = !currentExp.hasReport;
       $('btnOpenReport2').disabled = !currentExp.hasReport;
       setResultState(currentExp.hasReport && currentExp.reportFile ? 'success' : 'empty', currentExp.reportFile);
+      if (currentExp.hasReport) $('metaReport').textContent = '本次未成功，显示上次报告';
     }
   }
 }
@@ -2906,7 +2916,7 @@ async function runVariantAI() {
   const original = $('variantAIOriginal').value;
   if (!original) { showToast('error', '内容为空', '没有可调整的原文本'); return; }
   const settings = loadSettings();
-  if (!settings.apiKey) {
+  if (!settings.hasApiKey) {
     showToast('error', '未配置 API Key', '请先在设置中填写 API Key');
     return;
   }
@@ -2929,7 +2939,6 @@ async function runVariantAI() {
     ];
     const result = await window.labAPI.aiChat({
       provider: settings.provider || 'deepseek',
-      apiKey: settings.apiKey,
       apiUrl: settings.apiUrl,
       model: settings.model,
       messages,

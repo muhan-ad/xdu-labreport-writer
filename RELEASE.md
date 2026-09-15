@@ -1,78 +1,62 @@
-# 发布更新流程（供开发者使用）
+# 发布流程（1.7.6 起）
 
-应用内置「检查更新」功能：读取一份**公网可访问的更新清单 `latest.json`**（版本号 + 安装包直链），
-发现新版本后自动下载并打开安装程序。
+## 安装包：网盘分发，COS 仅校对版本
 
-更新清单与安装包建议放在**国内对象存储（腾讯云 COS / 阿里云 OSS）**：
-国内 CDN 高速直连、默认域名免备案、无单文件大小限制（安装包 164MB、以后更大都不受影响）、
-免费额度足够个人项目使用（超量后每月成本约几毛钱）。
+1. 运行 `npm run verify`；在 Windows/Word 环境运行 `tests/electron_smoke.js` 和 `tests/word_integration.js`。
+2. 使用 `npm run build:win` 构建安装包，将安装包放到网盘。
+3. 在 COS 更新 `latest.json`。不需要在 COS 上传安装包，不提供应用内下载安装功能。
 
-## 发布步骤（每次发版）
+```json
+{
+  "version": "1.7.6",
+  "notes": "安全、预览与数据处理修复",
+  "downloads": [
+    {"name": "网盘下载", "url": "https://网盘服务域名/实际分享链接", "hint": "可填写提取码"}
+  ]
+}
+```
 
-1. **改版本号**：编辑 `package.json` 的 `version` 字段（如 `1.5.1`）；
-2. **打包**：`npm run build:win`，产物为 `dist/实验报告编写 Setup <版本>.exe`，
-   同时复制一份英文名 `dist/labreport-setup-<版本>.exe`（latest.json 指向英文名，避免 URL 编码问题）；
-3. **上传 3 个文件**到 COS/OSS 桶（覆盖旧版本同名文件即可）：
+客户端仅校对版本，发现新版后显示下载入口，用户可打开或复制链接。`url/fileName` 安装包直链旧格式不再回退展示。请填实际 HTTPS 分享链接，不要使用上述占位示例。
 
-   | 文件 | 说明 |
-   |---|---|
-   | `labreport-setup-<版本>.exe` | 安装包（应用整体更新） |
-   | `latest.json` | 更新清单（指向安装包） |
-   | `data-package-<数据版本>.zip` 与 `data-manifest.json` | 实验数据包 + 数据清单 |
+## 实验数据：保留应用内热更新，必须签名
 
-   `latest.json` 示例：
-   ```json
-   {
-     "version": "1.5.1",
-     "notes": "本次更新内容：\n1. 修复……\n2. 新增……",
-     "url": "https://labreport-1485394950.cos.ap-guangzhou.myqcloud.com/labreport-setup-1.5.1.exe",
-     "fileName": "labreport-setup-1.5.1.exe"
-   }
-   ```
-4. 完成。用户应用内「设置 → 检查更新」→ 自动发现新版本 → 自动下载 → 自动打开安装程序。
+数据版本独立于应用版本。ZIP 可包含 `实验脚本/` 根目录，或直接包含实验名与 `common/`。仅包含 `.py/.json/.md/.png/.jpg/.jpeg`，不要打入报告、缓存、备份或隐藏文件。
 
-## 实验数据热更新（改变体/知识库/新增实验，无需重装）
+### 信任密钥
 
-实验数据（约 0.7MB 的 zip）与安装包（约 164MB）分开更新。
-**数据版本独立于应用版本**：应用内置数据版本为 `1.0.0`，数据包每次发布时可在 `1.0.0` 基础上递增
-（如 `1.0.1`、`1.1.0`），应用内「检查实验数据更新」按数据版本号比较。
+- 客户端公钥：`src/update-public-key.pem`，随应用发布。
+- 本次初始化的私钥保存在维护机器用户目录 `.labreport-release/data-update-ed25519.pem`，不在 Git 仓库或安装资源内，已限制本机文件 ACL。
+- 请离线备份私钥；私钥丢失不能用随机新私钥签出旧客户端接受的数据包。轮换需要发布带新信任配置的应用。
+- `scripts/release-data.js init` 仅供首次建立信任，拒绝覆盖既有公钥或把私钥写入仓库。
 
-1. **打包数据包**（在项目根目录执行；`DVER` 为本次数据版本号，如 `1.0.1`）：
-   ```bash
-   python -c "import os,sys,zipfile,json; ROOT=os.getcwd(); SRC=os.path.join(ROOT,'物理实验','实验脚本'); DIST=os.path.join(ROOT,'dist'); DVER='1.0.1'; zp=os.path.join(DIST,f'data-package-{DVER}.zip'); c=0
-   import io
-   zf=zipfile.ZipFile(zp,'w',zipfile.ZIP_DEFLATED)
-   for dp,dn,fns in os.walk(os.path.realpath(SRC)):
-       dn[:]=[d for d in dn if d!='__pycache__']
-       for fn in fns:
-           if fn.lower().endswith(('.docx','.png','.xlsx','.xls','.pdf')) or fn=='.lab_sections.json': continue
-           full=os.path.realpath(os.path.join(dp,fn))
-           if not full.startswith(os.path.realpath(SRC)+os.sep): raise SystemExit('越界')
-           zf.writestr(os.path.join('实验脚本',os.path.relpath(full,os.path.realpath(SRC))),open(full,'rb').read()); c+=1
-   zf.close(); print(zp, c)"
-   ```
-   （产物为 `dist/data-package-<数据版本>.zip`，约 0.7MB；内含每个实验的 `sample.json`——「填入默认数据」恢复的内置测试数据快照，随包同步更新）
-2. **更新清单** `data-manifest.json`（同桶，覆盖上传）：
-   ```json
-   {
-     "dataVersion": "1.0.1",
-     "notes": "本次实验数据更新说明",
-     "url": "https://labreport-1485394950.cos.ap-guangzhou.myqcloud.com/data-package-1.0.1.zip"
-   }
-   ```
-3. 用户应用内「设置 → 检查更新 → 检查实验数据更新」→ 下载 → 应用，**无需重装应用**。
+### 签名发布
 
-合并规则：用户的测量数据 `data.json` 永不覆盖；用户改过的 `variants.json` 保留本地版本；
-`sample.json`（内置测试数据）、公共库、原理知识库、脚本直接更新。
+先生成 ZIP，再运行：
 
-## 首次配置（一次性）
+```powershell
+node scripts/release-data.js sign "$env:USERPROFILE/.labreport-release/data-update-ed25519.pem" "dist/data-package-1.0.1.zip" "1.0.1" "https://labreport-1485394950.cos.ap-guangzhou.myqcloud.com/data-package-1.0.1.zip" "dist/data-manifest.json" "本次实验资源更新说明"
+```
 
-应用「设置 → 检查更新」→ 填写 `latest.json` 的完整 URL（须为公网 http/https 地址，
-本地/内网地址会被自动拒绝），保存后持久生效。
+工具生成包含 `dataVersion/minAppVersion/url/size/sha256/files/notes/signature` 的清单，并用客户端公钥自检。最低客户端版本默认取本仓库应用版本。先上传 ZIP，再替换 COS `data-manifest.json`；签名后不得手工改动其中字段。
 
-## 检查更新原理
+客户端会验证签名、当前版本、最低兼容版本、源域名、压缩包大小与摘要、全部文件摘要，再事务合并。压缩包最多 64MB，解压后最多 256MB，单文件最多 32MB、条目最多 4096，压缩比不超过 500。
 
-- GET 清单 → 比对 `version` 与本地版本 → 有新版本即自动下载 `url`，进度实时显示；
-- 下载完成后自动打开安装程序；可随时点「稍后再说」取消下载；
-- 安全检查：更新/下载地址仅允许公网 http/https，自动拒绝 localhost、内网、私有与保留地址
-  （域名解析后再次核验）。
+已有用户数据不覆盖；官方变体按上次官方基线三方合并；新的资源备份保留最近两份。旧版本产生的无事务标记备份不会自动删除。
+
+**兼容性提醒：** 1.7.6 不会接受无签名的旧实验包。必须同步采用新发布工具；这不影响已经安装的实验和本地报告生成。
+
+## 投稿与反馈服务
+
+部署 `cloud/contribute-credentials/index.js`，按同目录 README 配置安全策略。新客户端使用 `files:[{key,size}]` 协议，旧的 `keys` 请求会被拒绝；需先部署云函数，再发布客户端。
+
+云函数与网关配置不会因本地修改自动部署。上线前核验函数平台来源 IP 字段、COS 写权限/对象版本设置、分布式限流和存储生命周期，执行测试投稿及反馈。
+
+## 发布前核对
+
+- 本项目按维护者选择使用无 Windows 数字签名的安装包，不把购买证书作为发布前提。核验版本号和 SHA-256；实验数据包 Ed25519 签名仍需保留，两者用途不同。
+- 安装到无开发工具的 Windows 用户环境，验证 Word/Python/预览、更新及反馈。
+- 运行时版本记录见 `docs/python-runtime-inventory.json`；更换嵌入式 Python 后重新生成记录并测试。
+
+## 管理端兼容性
+
+2026-09-15 核对相邻 `labreport-writer-manager/core/package.py`：管理端一键推送仍生成旧的无签名清单，不能直接用于 1.7.6 客户端。首次发布可使用本文件的签名工具手动发布；管理端接入该签名流程后才能恢复一键推送。不要让旧推送流程覆盖已签名的 `data-manifest.json`。

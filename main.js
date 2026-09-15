@@ -1,5 +1,5 @@
 // main.js — Electron 主进程
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, safeStorage, session, protocol, clipboard, net: electronNet } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn, spawnSync, execFile } = require('child_process');
@@ -7,6 +7,30 @@ const mammoth = require('mammoth');
 const resourceStore = require('./src/main/resource-store');
 const { cleanupScript } = require('./src/main/word-process');
 const diagnostics = require('./src/main/diagnostics');
+const atomic = require('./src/main/atomic-store');
+const dataValidation = require('./src/shared/data-validation');
+const security = require('./src/main/security');
+const network = require('./src/main/network');
+const updatePackage = require('./src/main/update-package');
+const { createKeyStore } = require('./src/main/key-store');
+const { pathToFileURL } = require('url');
+const crypto = require('crypto');
+// Keep the legacy top-level origin so existing student/settings storage is preserved.
+const APP_URL = pathToFileURL(path.join(__dirname, 'src/index.html')).href;
+protocol.registerSchemesAsPrivileged([{ scheme: 'labapp', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+const keyStore = createKeyStore(app.getPath('userData'), safeStorage);
+function handle(name, fn) {
+  ipcMain.handle(name, (event, ...args) => {
+    if (!security.trustedSender(event, mainWindow?.webContents, APP_URL)) return { ok: false, error: '拒绝不可信的调用来源' };
+    try { return fn(event, ...args); } catch (e) { return { ok: false, error: e.message }; }
+  });
+}
+function listen(name, fn) {
+  ipcMain.on(name, (event, ...args) => {
+    if (security.trustedSender(event, mainWindow?.webContents, APP_URL)) fn(event, ...args);
+  });
+}
+
 
 // 生成日志缓冲（导出诊断用）：最近 3 次，每次 60KB
 const generationLogBuffer = [];
@@ -126,7 +150,7 @@ function log(msg) {
       const st = fs.statSync(file);
       if (st.size > 1024 * 1024) {
         const tail = fs.readFileSync(file, 'utf-8').slice(-512 * 1024);
-        fs.writeFileSync(file, tail, 'utf-8');
+        atomic.writeFile(file, tail, 'utf-8');
       }
     }
     fs.appendFileSync(file, line, 'utf-8');
@@ -156,15 +180,25 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
-  mainWindow.loadFile(path.join(__dirname, 'src', 'index.html'));
+  mainWindow.webContents.on('will-navigate', event => event.preventDefault());
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.loadURL(APP_URL);
   // mainWindow.webContents.openDevTools();
+
+  mainWindow.on('closed', () => { mainWindow = null; });
 
   // 关闭前提示未保存的数据
   mainWindow.on('close', (e) => {
     if (allowClose) return;
-    if (!isDataDirty) return;
+    if (!isDataDirty) {
+      if (generationBusy || resourceUpdating || activeDataReq || aiAbortControllers.size || activeUploads.size) {
+        e.preventDefault(); app.quit();
+      }
+      return;
+    }
     e.preventDefault();
     const choice = dialog.showMessageBoxSync(mainWindow, {
       type: 'warning',
@@ -188,21 +222,35 @@ function createWindow() {
 }
 
 // ── IPC: 未保存数据状态 / 确认关闭 ──
-ipcMain.on('data-modified', (_, dirty) => {
+listen('data-modified', (_, dirty) => {
   isDataDirty = !!dirty;});
 
 // ── IPC: 渲染进程事件转发到日志 ──
-ipcMain.on('log-event', (_, msg) => {
+listen('log-event', (_, msg) => {
   log(`[renderer] ${msg}`);
 });
 
-ipcMain.on('app-confirm-close', () => {
+listen('app-confirm-close', () => {
   allowClose = true;
   if (mainWindow) mainWindow.close();
 });
 
+if (!app.requestSingleInstanceLock()) { app.exit(0); }
+app.on('second-instance', () => { if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus(); } });
 app.whenReady().then(() => {
   log(`app started | packaged=${app.isPackaged} | PROJECT_ROOT=${PROJECT_ROOT} | EXPERIMENTS_DIR=${EXPERIMENTS_DIR}`);
+  protocol.handle('labapp', request => {
+    try {
+      const url = new URL(request.url);
+      if (url.hostname !== 'app' || request.method !== 'GET') return new Response('', { status: 403 });
+      const relative = decodeURIComponent(url.pathname).replace(/^\//, '');
+      if (relative.startsWith('main/') || !/\.(html|js|css|png|ico|mp3)$/i.test(relative)) return new Response('', { status: 403 });
+      const file = security.inside(path.join(__dirname, 'src', relative), path.join(__dirname, 'src'));
+      return electronNet.fetch(pathToFileURL(file).href);
+    } catch (_) { return new Response('', { status: 404 }); }
+  });
+  session.defaultSession.setPermissionRequestHandler((_, __, callback) => callback(false));
+  session.defaultSession.setPermissionCheckHandler(() => false);
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -211,6 +259,22 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+let quitting = false;
+app.on('before-quit', event => {
+  if (quitting || !(generationBusy || resourceUpdating || activeDataReq || aiAbortControllers.size || activeUploads.size)) return;
+  event.preventDefault();
+  quitting = true;
+  activeDataReq?.abort();
+  for (const controller of aiAbortControllers.values()) controller.abort();
+  for (const controller of activeUploads) controller.abort();
+  (async () => {
+    await cancelGeneration();
+    // Atomic resource replacement is synchronous; extraction is bounded and must finish before exit.
+    while (resourceUpdating) await new Promise(resolve => setTimeout(resolve, 100));
+    allowClose = true; app.quit();
+  })().catch(e => { log('退出清理失败：' + e.message); quitting = false; });
 });
 
 // ── 实验数据目录（热更新支持）──
@@ -236,7 +300,7 @@ function readCustomVariantsFile(expId) {
   const p = customVariantPathFor(expId);
   if (!p || !fs.existsSync(p)) return null;
   try {
-    const v = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    const v = atomic.readJson(p);
     return (v && typeof v === 'object') ? v : null;
   } catch (e) {
     return null;
@@ -253,6 +317,7 @@ function getDataRoots() {
   const udRoot = path.join(app.getPath('userData'), '实验数据', '实验脚本');
   const mfPath = path.join(app.getPath('userData'), '实验数据', 'data-manifest.json');
   // userData 根无条件激活：安装目录为只读出厂数据，用户的实验数据/报告一律落 userData
+  resourceStore.recoverTree(udRoot);
   try { fs.mkdirSync(udRoot, { recursive: true }); } catch (e) { /* 忽略 */ }
   const roots = [];
   if (fs.existsSync(udRoot)) {
@@ -293,11 +358,11 @@ function syncInstalledResources() {
 function ensureUserCopy(expPath) {
     if (resourceUpdating) throw new Error('实验资源更新中，请稍后重试');
     syncInstalledResources();
-    const p = path.resolve(expPath);
+    const p = experimentPath(expPath);
     const builtinRoot = path.resolve(EXPERIMENTS_DIR);
     const { udRoot } = getDataRoots();
     const udRootRes = path.resolve(udRoot);
-    if (!fs.existsSync(builtinRoot)) return p;
+    if (!fs.existsSync(builtinRoot)) throw Error('内置实验资源缺失');
     if (p.startsWith(udRootRes + path.sep)) return p;          // 已在 userData
     if (!p.startsWith(builtinRoot + path.sep)) throw new Error('无效的实验目录');
     const name = path.relative(builtinRoot, p).split(path.sep).shift();
@@ -311,9 +376,31 @@ function ensureUserCopy(expPath) {
     return dst;
 }
 
+function experimentPath(raw) {
+  if (typeof raw !== 'string') throw Error('无效实验路径');
+  const p = path.resolve(raw);
+  const root = getDataRoots().roots.find(r => path.dirname(p).toLowerCase() === path.resolve(r.dir).toLowerCase());
+  if (!root || path.basename(p).startsWith('.') || path.basename(p) === 'common') throw Error('未知实验目录');
+  security.inside(p, root.dir);
+  if (!fs.existsSync(path.join(p, 'generate.py'))) throw Error('实验入口不存在');
+  return p;
+}
+function reportPath(raw) {
+  if (typeof raw !== 'string' || !/\.docx$/i.test(raw)) throw Error('只允许访问实验报告 DOCX');
+  const p = path.resolve(raw);
+  experimentPath(path.dirname(p));
+  security.inside(p, path.dirname(p));
+  const st = fs.statSync(p);
+  if (!st.isFile() || st.size > 32 * 1024 * 1024) throw Error('报告不存在或超过 32MB');
+  return p;
+}
+
 function scanDirEntry(d, source) {
   const expPath = path.join(d.dir, d.name);
-  const generatePy = path.join(expPath, 'generate.py');
+  const generatePy = security.inside(path.join(expPath, 'generate.py'), expPath);
+  const errors = dataValidation.validate(atomic.readJson(security.inside(path.join(expPath, 'schema.json'), expPath)),
+    atomic.readJson(security.inside(path.join(expPath, 'data.json'), expPath)));
+  if (errors.length) throw Error(errors.join('；'));
   if (!fs.existsSync(generatePy)) return null;
   const files = fs.readdirSync(expPath);
   const hasDataJson = files.includes('data.json');
@@ -326,8 +413,8 @@ function scanDirEntry(d, source) {
     hasData: hasDataJson || hasSchemaJson,
     hasReport: !!docx,
     dataFile: hasDataJson
-      ? path.join(expPath, 'data.json')
-      : (hasSchemaJson ? path.join(expPath, 'schema.json') : null),
+      ? security.inside(path.join(expPath, 'data.json'), expPath)
+      : (hasSchemaJson ? security.inside(path.join(expPath, 'schema.json'), expPath) : null),
     reportFile: docx ? path.join(expPath, docx) : null,
     source,
     hasCustomVariants: hasCustomVariantsFor(d.name),
@@ -335,7 +422,7 @@ function scanDirEntry(d, source) {
 }
 
 // ── IPC: 扫描实验列表 ──
-ipcMain.handle('scan-experiments', () => {
+handle('scan-experiments', () => {
   syncInstalledResources();
   const { roots } = getDataRoots();
   const results = [];
@@ -354,64 +441,72 @@ ipcMain.handle('scan-experiments', () => {
 });
 
 // ── IPC: 窗口控制 ──
-ipcMain.on('window-minimize', () => { if (mainWindow) mainWindow.minimize(); });
-ipcMain.on('window-maximize', () => {
+listen('window-minimize', () => { if (mainWindow) mainWindow.minimize(); });
+listen('window-maximize', () => {
   if (!mainWindow) return;
   if (mainWindow.isMaximized()) mainWindow.unmaximize();
   else mainWindow.maximize();
 });
-ipcMain.on('window-close', () => { if (mainWindow) mainWindow.close(); });
+listen('window-close', () => { if (mainWindow) mainWindow.close(); });
 
 // ── IPC: 读取 schema.json（方式三：表单模式）──
-ipcMain.handle('read-schema', (_, expPath) => {
+handle('read-schema', (_, expPath) => {
   try {
-    const p = path.join(expPath, 'schema.json');
+    expPath = experimentPath(expPath);
+    const p = security.inside(path.join(expPath, 'schema.json'), expPath);
     if (!fs.existsSync(p)) return { ok: true, schema: null };
-    return { ok: true, schema: JSON.parse(fs.readFileSync(p, 'utf-8')) };
+    return { ok: true, schema: atomic.readJson(p) };
   } catch (err) {
     return { ok: false, error: err.message };
   }
 });
 
 // ── IPC: 读取 sample.json（内置测试数据快照，供「填入默认数据」恢复）──
-ipcMain.handle('read-sample-data', (_, expPath) => {
+handle('read-sample-data', (_, expPath) => {
   try {
-    const p = path.join(expPath, 'sample.json');
+    expPath = experimentPath(expPath);
+    const p = security.inside(path.join(expPath, 'sample.json'), expPath);
     if (!fs.existsSync(p)) return { ok: true, data: null };
-    return { ok: true, data: JSON.parse(fs.readFileSync(p, 'utf-8')) };
+    return { ok: true, data: atomic.readJson(p) };
   } catch (err) {
     return { ok: false, error: err.message };
   }
 });
 
 // ── IPC: 读取 data.json（方式三：表单数据真相）──
-ipcMain.handle('read-data', (_, expPath) => {
+handle('read-data', (_, expPath) => {
   try {
-    const p = path.join(expPath, 'data.json');
+    expPath = experimentPath(expPath);
+    const p = security.inside(path.join(expPath, 'data.json'), expPath);
     if (!fs.existsSync(p)) return { ok: true, data: null };
-    return { ok: true, data: JSON.parse(fs.readFileSync(p, 'utf-8')) };
+    return { ok: true, data: atomic.readJson(p) };
   } catch (err) {
     return { ok: false, error: err.message };
   }
 });
 
 // ── IPC: 写入 data.json（方式三：保存表单数据；用户数据落 userData 副本）──
-ipcMain.handle('write-data', (_, expPath, data) => {
+handle('write-data', (_, expPath, data) => {
   try {
     const p = ensureUserCopy(expPath);
-    fs.writeFileSync(path.join(p, 'data.json'), JSON.stringify(data, null, 2), 'utf-8');
-    return { ok: true, path: p, dataFile: path.join(p, 'data.json') };
+    if (Buffer.byteLength(JSON.stringify(data)) > 1024 * 1024) throw Error('测量数据过大');
+    const schema = atomic.readJson(security.inside(path.join(p, 'schema.json'), p));
+    const errors = dataValidation.validate(schema, data, false);
+    if (errors.length) throw Error(errors.join('；'));
+    atomic.writeFile(security.inside(path.join(p, 'data.json'), p), JSON.stringify(data, null, 2), 'utf-8');
+    return { ok: true, path: p, dataFile: security.inside(path.join(p, 'data.json'), p) };
   } catch (err) {
     return { ok: false, error: err.message };
   }
 });
 
 // ── IPC: 读取章节原文缓存（AI 按章节润色的数据源，由 run-generate 落盘）──
-ipcMain.handle('read-sections', (_, expPath) => {
+handle('read-sections', (_, expPath) => {
   try {
-    const p = path.join(expPath, '.lab_sections.json');
+    expPath = experimentPath(expPath);
+    const p = security.inside(path.join(expPath, '.lab_sections.json'), expPath);
     if (!fs.existsSync(p)) return { ok: true, sections: null };
-    return { ok: true, sections: JSON.parse(fs.readFileSync(p, 'utf-8')) };
+    return { ok: true, sections: atomic.readJson(p) };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -442,7 +537,7 @@ function parseSkillMeta(text, fallbackName) {
   return { name, description, body: body.trim() };
 }
 
-ipcMain.handle('list-skills', () => {
+handle('list-skills', () => {
   try {
     const dir = getSkillsDir();
     const out = [];
@@ -460,7 +555,7 @@ ipcMain.handle('list-skills', () => {
   }
 });
 
-ipcMain.handle('import-skill', async () => {
+handle('import-skill', async () => {
   try {
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
       title: '导入 Skill 文件',
@@ -496,7 +591,7 @@ ipcMain.handle('import-skill', async () => {
 });
 
 // 删除技能：仅允许技能文件夹内、扩展名合法的文件（拒绝路径分隔符与上级引用）
-ipcMain.handle('delete-skill', (_, id) => {
+handle('delete-skill', (_, id) => {
   try {
     const dir = path.resolve(getSkillsDir());
     if (typeof id !== 'string' || !id || id.includes('..') || /[\\/]/.test(id)) {
@@ -518,7 +613,7 @@ ipcMain.handle('delete-skill', (_, id) => {
 // ═══════════════════════════════════════════════
 
 // 列出所有有自建变体的实验
-ipcMain.handle('list-custom-variants', () => {
+handle('list-custom-variants', () => {
   try {
     const dir = getCustomVariantsDir();
     const out = [];
@@ -545,7 +640,7 @@ ipcMain.handle('list-custom-variants', () => {
 });
 
 // 读取某实验的自建变体（结构与 variants.json 同构）
-ipcMain.handle('read-custom-variants', (_, expId) => {
+handle('read-custom-variants', (_, expId) => {
   try {
     const v = readCustomVariantsFile(expId);
     return { ok: true, data: v };
@@ -555,7 +650,7 @@ ipcMain.handle('read-custom-variants', (_, expId) => {
 });
 
 // 新增一条自建变体（同文本去重）
-ipcMain.handle('save-custom-variant', (_, expId, section, text) => {
+handle('save-custom-variant', (_, expId, section, text) => {
   try {
     if (!CUSTOM_SECTION_NAMES.includes(section)) return { ok: false, error: '无效的章节名' };
     if (typeof text !== 'string' || !text.trim()) return { ok: false, error: '变体文本为空' };
@@ -565,7 +660,7 @@ ipcMain.handle('save-custom-variant', (_, expId, section, text) => {
     const arr = Array.isArray(v[section]) ? v[section] : [];
     if (!arr.includes(text)) arr.push(text);
     v[section] = arr;
-    fs.writeFileSync(p, JSON.stringify(v, null, 1), 'utf-8');
+    atomic.writeFile(p, JSON.stringify(v, null, 1), 'utf-8');
     return { ok: true, total: arr.length };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -573,7 +668,7 @@ ipcMain.handle('save-custom-variant', (_, expId, section, text) => {
 });
 
 // 删除一条自建变体；章节清空删键、文件清空删除
-ipcMain.handle('delete-custom-variant', (_, expId, section, index) => {
+handle('delete-custom-variant', (_, expId, section, index) => {
   try {
     if (!CUSTOM_SECTION_NAMES.includes(section)) return { ok: false, error: '无效的章节名' };
     const p = customVariantPathFor(expId);
@@ -588,7 +683,7 @@ ipcMain.handle('delete-custom-variant', (_, expId, section, index) => {
     arr.splice(index, 1);
     if (arr.length) v[section] = arr; else delete v[section];
     const anyLeft = Object.values(v).some(a => Array.isArray(a) && a.length);
-    if (anyLeft) fs.writeFileSync(p, JSON.stringify(v, null, 1), 'utf-8');
+    if (anyLeft) atomic.writeFile(p, JSON.stringify(v, null, 1), 'utf-8');
     else if (fs.existsSync(p)) fs.unlinkSync(p);
     // 联动清理：删除自建库条目的同时，把该实验 variants.json 中同章节的同文本条目一并移除
     // （保存自建变体时实验里也追加了一份，库删了实验里不应残留“生成后的变体”）
@@ -609,7 +704,7 @@ ipcMain.handle('delete-custom-variant', (_, expId, section, index) => {
           if (rmIdx >= 0) {
             cur.splice(rmIdx, 1);
             if (cur.length) ev[section] = cur; else delete ev[section];
-            fs.writeFileSync(vp, JSON.stringify(ev, null, 1), 'utf-8');
+            atomic.writeFile(vp, JSON.stringify(ev, null, 1), 'utf-8');
           }
         }
       } catch (e) { /* 联动清理失败不阻塞库删除 */ }
@@ -621,7 +716,7 @@ ipcMain.handle('delete-custom-variant', (_, expId, section, index) => {
 });
 
 // 导出：单实验（save 对话框）或全部（选文件夹逐实验写 自建变体_<实验名>.json）
-ipcMain.handle('export-custom-variants', async (_, payload) => {
+handle('export-custom-variants', async (_, payload) => {
   try {
     const exportAll = !!(payload && payload.exportAll);
     const dir = getCustomVariantsDir();
@@ -667,7 +762,7 @@ ipcMain.handle('export-custom-variants', async (_, payload) => {
     if (canceled || !filePath) return { ok: true, canceled: true };
     const v = readCustomVariantsFile(expId);
     if (!v) return { ok: false, error: '读取自建变体失败' };
-    fs.writeFileSync(filePath, JSON.stringify(v, null, 1), 'utf-8');
+    atomic.writeFile(filePath, JSON.stringify(v, null, 1), 'utf-8');
     return { ok: true, canceled: false, count: 1 };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -675,7 +770,7 @@ ipcMain.handle('export-custom-variants', async (_, payload) => {
 });
 
 // 导入（批量）：多选 .json，文件名取实验名（前导「自建变体_」自动剥离），结构校验后合并去重
-ipcMain.handle('import-custom-variants', async () => {
+handle('import-custom-variants', async () => {
   try {
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
       title: '导入自建变体文件（可多选批量导入）',
@@ -728,7 +823,7 @@ ipcMain.handle('import-custom-variants', async () => {
           errors.push(path.basename(src) + ': 无效的实验名');
           continue;
         }
-        fs.writeFileSync(p, JSON.stringify(existing, null, 1), 'utf-8');
+        atomic.writeFile(p, JSON.stringify(existing, null, 1), 'utf-8');
         imported.push(expId);
       } catch (e) {
         errors.push(path.basename(src) + ': ' + e.message);
@@ -740,7 +835,7 @@ ipcMain.handle('import-custom-variants', async () => {
   }
 });
 
-ipcMain.handle('open-skills-folder', () => {
+handle('open-skills-folder', () => {
   const dir = getSkillsDir();
   shell.openPath(dir);
   return { ok: true, dir };
@@ -748,7 +843,7 @@ ipcMain.handle('open-skills-folder', () => {
 
 // ── IPC: 报告管理（设置页）──
 // 列出全部实验目录下已生成的 .docx（含大小/修改时间），按时间倒序
-ipcMain.handle('list-reports', () => {
+handle('list-reports', () => {
   const out = [];
   try {
     const { roots } = getDataRoots();
@@ -786,8 +881,9 @@ ipcMain.handle('list-reports', () => {
 });
 
 // 删除报告：仅允许删除实验目录之内的 .docx（规范化路径并校验包含关系）
-ipcMain.handle('delete-report', (_, filePath) => {
+handle('delete-report', (_, filePath) => {
   try {
+    filePath = reportPath(filePath);
     if (typeof filePath !== 'string' || !filePath) return { ok: false, error: '无效路径' };
     const p = path.resolve(filePath);
     const { roots } = getDataRoots();
@@ -806,8 +902,9 @@ ipcMain.handle('delete-report', (_, filePath) => {
 });
 
 // 在资源管理器中定位文件
-ipcMain.handle('show-in-folder', (_, filePath) => {
+handle('show-in-folder', (_, filePath) => {
   try {
+    filePath = reportPath(filePath);
     if (fs.existsSync(filePath)) shell.showItemInFolder(filePath);
     return { ok: true };
   } catch (err) {
@@ -816,9 +913,10 @@ ipcMain.handle('show-in-folder', (_, filePath) => {
 });
 
 // ── IPC: 读取实验知识库(原理) —— AI 润色限定依据 ──
-ipcMain.handle('read-rag', (_, expPath) => {
+handle('read-rag', (_, expPath) => {
   try {
-    const p = path.join(expPath, 'rag', '原理.md');
+    expPath = experimentPath(expPath);
+    const p = security.inside(path.join(expPath, 'rag', '原理.md'), expPath);
     if (!fs.existsSync(p)) return { ok: true, text: null };
     return { ok: true, text: fs.readFileSync(p, 'utf-8') };
   } catch (err) {
@@ -827,19 +925,21 @@ ipcMain.handle('read-rag', (_, expPath) => {
 });
 
 // ── IPC: docx 转 HTML（用于报告预览/文本提取）──
-ipcMain.handle('docx-to-html', async (_, filePath) => {
+handle('docx-to-html', async (_, filePath) => {
   try {
+    filePath = reportPath(filePath);
     if (!fs.existsSync(filePath)) return { ok: false, error: '文件不存在' };
     const result = await mammoth.convertToHtml({ path: filePath });
-    return { ok: true, html: result.value, messages: result.messages };
+    return { ok: true, html: security.cleanHtml(result.value), messages: result.messages };
   } catch (err) {
     return { ok: false, error: err.message };
   }
 });
 
 // ── IPC: 读取 docx 为 Buffer（用于 docx-preview 渲染）──
-ipcMain.handle('read-docx-buffer', (_, filePath) => {
+handle('read-docx-buffer', (_, filePath) => {
   try {
+    filePath = reportPath(filePath);
     if (!fs.existsSync(filePath)) return { ok: false, error: '文件不存在' };
     const buffer = fs.readFileSync(filePath);
     return { ok: true, buffer: buffer.toString('base64') };
@@ -849,7 +949,7 @@ ipcMain.handle('read-docx-buffer', (_, filePath) => {
 });
 
 // ── IPC: 读取内置音频（src/ 下随包分发，任何环境均可播放）──
-ipcMain.handle('read-audio-file', () => {
+handle('read-audio-file', () => {
   try {
     const filePath = path.join(__dirname, 'src', 'do-not-click.mp3');
     if (!fs.existsSync(filePath)) return { ok: false, error: '音频文件不存在' };
@@ -866,6 +966,8 @@ ipcMain.handle('read-audio-file', () => {
 const DATA_MANIFEST_URL = 'https://labreport-1485394950.cos.ap-guangzhou.myqcloud.com/data-manifest.json';
 // 内置实验数据版本（未应用任何数据包时的基准版本，独立于应用版本号）
 const DATA_BUILTIN_VERSION = '1.0.0';
+let approvedManifest = null;
+let downloadedPackage = null;
 
 function readLocalDataManifest() {
   try {
@@ -878,15 +980,10 @@ function readLocalDataManifest() {
 }
 
 // 路径边界断言：p 必须位于 root 内
-function ensureInside(p, root) {
-  const rp = path.resolve(p);
-  const rr = path.resolve(root);
-  if (rp !== rr && !rp.startsWith(rr + path.sep)) throw new Error('路径越界: ' + p);
-  return rp;
-}
+function ensureInside(p, root) { return security.inside(p, root); }
 
 // ── IPC: 实验数据版本信息（本地）
-ipcMain.handle('get-data-info', () => {
+handle('get-data-info', () => {
   const mf = readLocalDataManifest();
   return {
     ok: true,
@@ -898,8 +995,9 @@ ipcMain.handle('get-data-info', () => {
 });
 
 // ── IPC: 检查实验数据更新（远端 data-manifest.json）
-ipcMain.handle('check-data-update', async () => {
+handle('check-data-update', async () => {
   const t0 = Date.now();
+  approvedManifest = null;
   try {
     const u = assertPublicUrl(DATA_MANIFEST_URL);
     if (!(await checkPublicDns(u.hostname))) throw new Error('更新地址无法解析或指向本地地址');
@@ -924,7 +1022,9 @@ ipcMain.handle('check-data-update', async () => {
     const remote = String(mf.dataVersion || '').replace(/^v/i, '');
     const local = readLocalDataManifest();
     const localVer = local ? String(local.dataVersion).replace(/^v/i, '') : DATA_BUILTIN_VERSION;
-    const hasUpdate = !!(remote && compareVersions(remote, localVer) > 0);
+    const hasUpdate = !!(remote && updatePackage.compare(remote, localVer) > 0);
+    if (hasUpdate) approvedManifest = updatePackage.verify(mf,
+      fs.readFileSync(path.join(__dirname, 'src/update-public-key.pem')), app.getVersion(), localVer, new URL(DATA_MANIFEST_URL).hostname);
     log(`data-update | 检查完成 | 本地=${localVer} 远端=${remote || '无'} 可更新=${hasUpdate} | ${Date.now() - t0}ms`);
     return {
       ok: true,
@@ -942,79 +1042,44 @@ ipcMain.handle('check-data-update', async () => {
 
 // ── IPC: 下载实验数据包（zip，进度经 'data-update-progress' 回传）
 let activeDataReq = null;
-ipcMain.handle('download-data-package', async (event, payload) => {
-  const rawUrl = String((payload && payload.url) || '');
-  let url;
+handle('download-data-package', async (event, payload) => {
+  if (activeDataReq || resourceUpdating) return { ok: false, error: '更新任务正在运行' };
+  if (!approvedManifest || payload?.url !== approvedManifest.url) return { ok: false, error: '请先检查并验证更新清单' };
+  const manifest = JSON.parse(JSON.stringify(approvedManifest));
+  const dir = path.join(app.getPath('userData'), '实验数据');
+  fs.mkdirSync(dir, { recursive: true });
+  const dest = path.join(dir, 'package-' + crypto.randomUUID() + '.zip');
+  const controller = new AbortController(); activeDataReq = controller;
+  downloadedPackage = null;
   try {
-    const u = assertPublicUrl(rawUrl);
-    if (!(await checkPublicDns(u.hostname))) throw new Error('下载地址无法解析或指向本地地址');
-    url = u.href;
-  } catch (err) {
-    return { ok: false, error: err.message };
-  }
-  const dataRoot = path.join(app.getPath('userData'), '实验数据');
-  fs.mkdirSync(dataRoot, { recursive: true });
-  const dest = ensureInside(path.join(dataRoot, '_package.zip'), dataRoot);
-  log('data-package | 开始下载');
-  const sendProgress = (percent) => {
-    try { event.sender.send('data-update-progress', { percent }); } catch (e) { /* 忽略 */ }
-  };
-  return new Promise((resolve) => {
-    const req = https.get(url, { headers: { 'User-Agent': 'labreport-writer-updater' } }, (res) => {
-      if (res.statusCode !== 200) {
-        res.resume();
-        activeDataReq = null;
-        log(`data-package | 下载失败 HTTP ${res.statusCode}`);
-        return resolve({ ok: false, error: `下载失败 HTTP ${res.statusCode}` });
-      }
-      const total = parseInt(res.headers['content-length'] || '0', 10) || 0;
-      let received = 0;
-      const out = fs.createWriteStream(dest);
-      res.pipe(out);
-      res.on('data', (chunk) => {
-        received += chunk.length;
-        if (total) sendProgress(Math.min(95, Math.round(received * 100 / total)));
-      });
-      out.on('finish', () => {
-        activeDataReq = null;
-        sendProgress(100);
-        log(`data-package | 下载完成 ${received} 字节`);
-        resolve({ ok: true, filePath: dest });
-      });
-      out.on('error', (e) => {
-        activeDataReq = null;
-        res.destroy();
-        log(`data-package | 下载写出失败 ${e.message}`);
-        resolve({ ok: false, error: e.message });
-      });
-      res.on('error', (e) => {
-        activeDataReq = null;
-        out.destroy();
-        log(`data-package | 下载传输失败 ${e.message}`);
-        resolve({ ok: false, error: e.message });
-      });
-    });
-    req.on('error', (e) => { activeDataReq = null; log(`data-package | 请求失败 ${e.message}`); resolve({ ok: false, error: e.message }); });
-    activeDataReq = req;
-  });
+    await network.download(manifest.url, dest, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(180000)]),
+      expectedSize: manifest.size, maxBytes: updatePackage.MAX_PACKAGE, allowedHost: new URL(DATA_MANIFEST_URL).hostname,
+      progress: percent => event.sender.send('data-update-progress', { percent }) });
+    if (updatePackage.hashFile(dest) !== manifest.sha256) throw Error('更新包摘要不匹配');
+    downloadedPackage = { path: dest, manifest };
+    return { ok: true, filePath: dest };
+  } catch (e) {
+    if (fs.existsSync(dest)) fs.unlinkSync(dest);
+    return { ok: false, error: e.message };
+  } finally { if (activeDataReq === controller) activeDataReq = null; }
 });
-
-ipcMain.on('cancel-data-download', () => {
-  if (activeDataReq) {
-    try { activeDataReq.destroy(); } catch (e) { /* 忽略 */ }
-    activeDataReq = null;
-  }
-});
+listen('cancel-data-download', () => activeDataReq?.abort());
 
 // 用内置 Python 安全解压 zip（条目路径校验防 zip-slip）
 const UNZIP_SCRIPT = [
-  'import sys, zipfile',
-  'z, dest = sys.argv[1], sys.argv[2]',
-  "with zipfile.ZipFile(z) as zf:",
-  "    for n in zf.namelist():",
-  "        p = n.replace(chr(92), '/')",
-  "        if p.startswith('/') or any(s == '..' for s in p.split('/')):",
-  "            raise SystemExit('bad entry: ' + n)",
+  'import sys, zipfile, pathlib, stat',
+  'z, dest = sys.argv[1], pathlib.Path(sys.argv[2]).resolve()',
+  'with zipfile.ZipFile(z) as zf:',
+  '    entries = zf.infolist()',
+  '    if len(entries) > 4096 or sum(i.file_size for i in entries) > 256*1024*1024: raise ValueError("archive too large")',
+  '    seen = set()',
+  '    for i in entries:',
+  "        n = i.filename.replace(chr(92), '/')",
+  "        if ':' in n or n.startswith('/') or any(x in ('.', '..') for x in n.split('/')): raise ValueError('bad path')",
+  "        if n.lower() in seen: raise ValueError('duplicate path')",
+  '        seen.add(n.lower())',
+  "        if stat.S_ISLNK(i.external_attr >> 16) or i.file_size > 32*1024*1024 or i.file_size > max(i.compress_size,1)*500: raise ValueError('unsafe entry')",
+  "        if not (dest / n).resolve().is_relative_to(dest): raise ValueError('path escape')",
   '    zf.extractall(dest)',
 ].join('\n');
 
@@ -1022,9 +1087,9 @@ function unzipSafe(zipPath, destDir) {
   return new Promise((resolve, reject) => {
     const pythonExe = resolvePythonExe();
     if (!pythonExe) return reject(new Error('未找到内置 Python 运行时'));
-    const proc = spawn(pythonExe, ['-c', UNZIP_SCRIPT, zipPath, destDir]);
+    const proc = spawn(pythonExe, ['-c', UNZIP_SCRIPT, zipPath, destDir], { windowsHide: true, timeout: 60000 });
     let errOut = '';
-    proc.stderr.on('data', (d) => { errOut += d.toString(); });
+    proc.stderr.on('data', (d) => { errOut = (errOut + d.toString()).slice(-4096); });
     proc.on('error', reject);
     proc.on('close', (code) => {
       if (code === 0) resolve();
@@ -1062,7 +1127,7 @@ function copyDirAcross(src, srcRoot, dest, destRoot) {
 
 // 递归合并数据包目录到 userData：data.json 永不覆盖；variants.json 用户改过则保留
 // skipDocs=true 时跳过 .docx（供 ensureUserCopy 使用，避免安装目录残留报告覆盖用户报告）
-function mergeDataTree(stagingDir, udRoot, builtinRoot, warnings, skipDocs) {
+function mergeDataTree(stagingDir, udRoot, builtinRoot, warnings, skipDocs, bases = {}, relative = '') {
   if (!fs.existsSync(stagingDir)) return;
   for (const entry of fs.readdirSync(stagingDir)) {
     const src = ensureInside(path.join(stagingDir, entry), stagingDir);
@@ -1078,7 +1143,7 @@ function mergeDataTree(stagingDir, udRoot, builtinRoot, warnings, skipDocs) {
       }
       // 实验目录：先合并文件
       fs.mkdirSync(dst, { recursive: true });
-      mergeDataTree(src, dst, path.join(builtinRoot, entry), warnings, skipDocs);
+      mergeDataTree(src, dst, path.join(builtinRoot, entry), warnings, skipDocs, bases, path.join(relative, entry));
       // data.json 保障：userData 无而安装目录有时，复制安装目录的用户数据
       const bd = ensureInside(path.join(builtinRoot, entry, 'data.json'), EXPERIMENTS_DIR);
       const dd = ensureInside(path.join(dst, 'data.json'), udRoot);
@@ -1097,7 +1162,7 @@ function mergeDataTree(stagingDir, udRoot, builtinRoot, warnings, skipDocs) {
         const builtinV = ensureInside(path.join(builtinRoot, name), EXPERIMENTS_DIR);
         let userModified = false;
         try {
-          const a = fs.readFileSync(builtinV, 'utf-8');
+          const a = bases[path.join(relative, name)] ?? fs.readFileSync(builtinV, 'utf-8');
           const b = fs.readFileSync(dst, 'utf-8');
           userModified = a !== b;
         } catch (e) {
@@ -1114,15 +1179,19 @@ function mergeDataTree(stagingDir, udRoot, builtinRoot, warnings, skipDocs) {
 }
 
 // ── IPC: 应用数据包（解压 + 合并到 userData + 写 manifest）
-ipcMain.handle('apply-data-package', async (_, payload) => {
+handle('apply-data-package', async (_, payload) => {
   if (generationBusy || resourceUpdating) return { ok: false, error: '报告生成或资源更新中，请稍后重试' };
   syncInstalledResources();
   resourceUpdating = true;
   const t0 = Date.now();
   try {
     const zipPath = String((payload && payload.filePath) || '');
-    const version = String((payload && payload.version) || '').trim();
-    const notes = String((payload && payload.notes) || '').trim();
+    if (!downloadedPackage || downloadedPackage.path !== zipPath) throw Error('请先下载已验证的更新包');
+    const manifest = downloadedPackage.manifest;
+    const version = manifest.dataVersion, notes = manifest.notes || '';
+    updatePackage.verify(manifest, fs.readFileSync(path.join(__dirname, 'src/update-public-key.pem')),
+      app.getVersion(), readLocalDataManifest()?.dataVersion || DATA_BUILTIN_VERSION, new URL(DATA_MANIFEST_URL).hostname);
+    if (fs.statSync(zipPath).size !== manifest.size || updatePackage.hashFile(zipPath) !== manifest.sha256) throw Error('下载文件已变化');
     log(`data-package | 开始应用 v${version}`);
     if (!/\.zip$/i.test(path.basename(zipPath))) return { ok: false, error: '数据包应为 zip 文件' };
     const dataRoot = path.join(app.getPath('userData'), '实验数据');
@@ -1133,18 +1202,27 @@ ipcMain.handle('apply-data-package', async (_, payload) => {
     fs.rmSync(staging, { recursive: true, force: true });
     fs.mkdirSync(staging, { recursive: true });
     await unzipSafe(zipPath, staging);
+    updatePackage.verifyTree(staging, manifest);
     // 包内结构约定：zip 内直接是 实验脚本 树（本目录开头）
     const warnings = [];
     const stagingRoot = fs.existsSync(path.join(staging, '实验脚本'))
       ? path.join(staging, '实验脚本')
       : staging;
     const backupPath = resourceStore.replaceTree(udRoot, candidate => {
-      mergeDataTree(stagingRoot, candidate, EXPERIMENTS_DIR, warnings, true);
       const state = resourceStore.readState(candidate);
+      mergeDataTree(stagingRoot, candidate, EXPERIMENTS_DIR, warnings, true, state.variantBases || {});
+      const bases = { ...(state.variantBases || {}) };
+      for (const file of Object.keys(manifest.files)) {
+        const rel = file.replace(/^实验脚本\//, '');
+        if (path.basename(rel) === 'variants.json') bases[rel.split('/').join(path.sep)] = fs.readFileSync(path.join(staging, file), 'utf8');
+      }
+      state.variantBases = bases;
       resourceStore.writeState(candidate, { ...state, manifest: {
         dataVersion: version, notes, updatedAt: new Date().toISOString(),
       } });
     });
+    downloadedPackage = null;
+    approvedManifest = null;
     // 清理
     fs.rmSync(staging, { recursive: true, force: true });
     try { fs.unlinkSync(zipPath); } catch (e) { /* 忽略 */ }
@@ -1176,82 +1254,21 @@ function compareVersions(a, b) {
 }
 
 // 拒绝 localhost / 环回 / 私有 / 链路本地 / 组播 / 保留地址，只允许公网主机
-function isBlockedHost(host) {
-  const h = String(host || '').toLowerCase().replace(/^\[|\]$/g, '').split(':')[0];
-  if (!h || h === 'localhost' || h.endsWith('.local') || h.endsWith('.lan')) return true;
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) {
-    const p = h.split('.').map(Number);
-    if (p.some(x => x > 255)) return true;
-    const [a, b] = p;
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;   // CGNAT 100.64.0.0/10
-    if (a === 169 && b === 254) return true;             // 链路本地
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 198 && (b === 18 || b === 19)) return true;
-    if (a >= 224) return true;                           // 组播/保留
-    return false;
-  }
-  return false;
-}
-
-// 校验更新 URL：仅 http/https，host 拒绝本地/私有地址
-function assertPublicUrl(rawUrl) {
-  let u;
-  try { u = new URL(rawUrl); } catch (e) { throw new Error('更新地址格式不正确'); }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-    throw new Error('仅支持 http/https 地址');
-  }
-  if (isBlockedHost(u.hostname)) throw new Error('不允许访问本地或私有地址');
-  return u;
-}
-
-// 域名解析后再次核验：解析结果必须全部为公网 IP
+const isBlockedHost = network.blocked;
+const assertPublicUrl = network.publicUrl;
 function checkPublicDns(hostname) {
-  return new Promise((resolve) => {
-    dns.lookup(hostname, { all: true }, (err, addrs) => {
-      if (err || !addrs || !addrs.length) return resolve(false);
-      resolve(addrs.every(a => !isBlockedHost(a.address)));
-    });
-  });
+  return new Promise(resolve => network.lookup(hostname, { all: true }, err => resolve(!err)));
 }
-
-// GET JSON（跟随重定向、超时、UA）
-function httpsGetJson(url, timeout = 15000) {
-  return new Promise((resolve, reject) => {
-    const req = https.get(url, {
-      headers: { 'User-Agent': 'labreport-writer-updater' },
-      timeout,
-    }, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        res.resume();
-        return resolve(httpsGetJson(res.headers.location, timeout));
-      }
-      if (res.statusCode !== 200) {
-        res.resume();
-        return reject(new Error(`HTTP ${res.statusCode}`));
-      }
-      let data = '';
-      res.setEncoding('utf8');
-      res.on('data', c => { data += c; });
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch (e) { reject(new Error('响应解析失败')); }
-      });
-    });
-    req.on('error', reject);
-    req.on('timeout', () => req.destroy(new Error('请求超时')));
-  });
-}
+const httpsGetJson = network.json;
 
 // ── IPC: 当前应用版本 ──
-ipcMain.handle('get-app-version', () => app.getVersion());
+handle('get-app-version', () => app.getVersion());
 
 // 检查更新：读取更新清单 latest.json（{ version, notes, downloads:[{name,url,hint}] }），仅做版本校对，
 // 不下载不安装——把下载入口交给用户（浏览器打开对应链接）
-ipcMain.handle('check-for-update', async (_, cfg) => {
+handle('check-for-update', async (_, cfg) => {
   try {
-    const manifestUrl = String((cfg && cfg.manifestUrl) || '').trim();
+    const manifestUrl = 'https://labreport-1485394950.cos.ap-guangzhou.myqcloud.com/latest.json';
     const current = app.getVersion();
     if (!manifestUrl) {
       return { ok: false, error: '请先在设置中填写自定义更新清单地址' };
@@ -1275,18 +1292,6 @@ ipcMain.handle('check-for-update', async (_, cfg) => {
         downloads.push({ name, url: du.href, hint: String(d.hint || '').trim() });
       } catch (e) { /* 跳过非法下载入口 */ }
     }
-    // 兼容旧格式清单（{ url, fileName } 单直链）：downloads 为空时回退构造一个入口
-    if (!downloads.length) {
-      const legacyUrl = String(mf.url || '').trim();
-      if (legacyUrl) {
-        try {
-          const du = assertPublicUrl(legacyUrl);
-          if (await checkPublicDns(du.hostname)) {
-            downloads.push({ name: '安装包直链', url: du.href, hint: '' });
-          }
-        } catch (e) { /* 忽略非法旧地址 */ }
-      }
-    }
     return {
       ok: true,
       hasUpdate,
@@ -1300,8 +1305,20 @@ ipcMain.handle('check-for-update', async (_, cfg) => {
   }
 });
 
+handle('copy-link', (_, rawUrl) => {
+  try { const url = network.publicUrl(rawUrl); if (url.href.length > 4096) throw Error('链接过长'); clipboard.writeText(url.href); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+handle('open-data-file', async (_, rawPath) => {
+  try {
+    const dir = experimentPath(rawPath), file = security.inside(path.join(dir, 'data.json'), dir);
+    if (fs.statSync(file).size > 1024 * 1024) throw Error('数据文件过大');
+    const error = await shell.openPath(file); return error ? { ok: false, error } : { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 // ── IPC: 浏览器打开下载链接（仅允许公网 http/https）──
-ipcMain.handle('open-external', async (_, rawUrl) => {
+handle('open-external', async (_, rawUrl) => {
   try {
     const u = assertPublicUrl(rawUrl);
     if (!(await checkPublicDns(u.hostname))) {
@@ -1320,129 +1337,60 @@ ipcMain.handle('open-external', async (_, rawUrl) => {
 // 凭证云函数 URL（腾讯云 SCF 函数 URL，POST {keys:[...]} 返回预签名 PUT 地址；密钥不进应用）
 const CONTRIBUTE_FN_URL = 'https://1485394950-jr8mommpp1.ap-guangzhou.tencentscf.com';
 
-// 请求上传凭证：云函数校验 key 前缀（contributions/variants|reports）并返回预签名 PUT 地址
-ipcMain.handle('contribute-get-credentials', async (_, payload) => {
-  const t0 = Date.now();
+const uploadTickets = new Map();
+const activeUploads = new Set();
+handle('contribute-get-credentials', async (_, payload) => {
   try {
-    const fnUrl = String((payload && payload.fnUrl) || CONTRIBUTE_FN_URL || '').trim();
-    if (!fnUrl) return { ok: false, error: '贡献上传服务未配置（请联系开发者部署凭证云函数）' };
-    const keys = Array.isArray((payload && payload.keys) || []) ? payload.keys : [];
-    if (!keys.length || keys.length > 20) return { ok: false, error: '文件数量无效' };
-    log(`contribute | 请求凭证 ${keys.length} 个`);
-    for (const k of keys) {
-      if (typeof k !== 'string') return { ok: false, error: '文件名格式无效' };
-      // variants/reports 为 5 段（类型/实验/时间戳/文件）；feedbacks 为 4 段（类型/时间戳/文件）
-      const m = String(k).match(/^contributions\/(?:(?:variants|reports)\/[^/]+\/[^/]+\/[^/]+|feedbacks\/[^/]+\/[^/]+)$/);
-      if (!m) return { ok: false, error: '贡献路径无效：' + String(k).slice(0, 120) };
-    }
-    const u = assertPublicUrl(fnUrl);
-    if (!(await checkPublicDns(u.hostname))) {
-      return { ok: false, error: '凭证服务地址无法解析或指向本地地址' };
-    }
-    const body = JSON.stringify({ keys });
-    const resp = await new Promise((resolve, reject) => {
-      const r = https.request(u, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-          'User-Agent': 'labreport-writer-contributor',
-        },
-        timeout: 15000,
-      }, res => {
-        let data = '';
-        res.setEncoding('utf8');
-        res.on('data', c => { data += c; });
-        res.on('end', () => {
-          try { resolve(JSON.parse(data)); } catch (e) { reject(new Error('凭证响应解析失败')); }
-        });
-      });
-      r.on('error', reject);
-      r.on('timeout', () => r.destroy(new Error('凭证请求超时')));
-      r.write(body);
-      r.end();
+    for (const [url, ticket] of uploadTickets) if (ticket.expires < Date.now()) uploadTickets.delete(url);
+    if (uploadTickets.size > 100) throw Error('待上传任务过多');
+    const files = payload?.files;
+    if (!Array.isArray(files) || !files.length || files.length > 20 || files.some(f => !Number.isSafeInteger(f.size) || f.size < 1 || f.size > 20 * 1024 * 1024)) throw Error('上传文件数量或大小无效');
+    const resp = await network.json(CONTRIBUTE_FN_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files }) });
+    if (!resp.ok || !Array.isArray(resp.items) || resp.items.length !== files.length) throw Error('凭证服务协议不兼容，请联系维护者更新云函数');
+    const items = resp.items.map(it => {
+      const url = network.publicUrl(it.putUrl);
+      if (url.hostname !== new URL(DATA_MANIFEST_URL).hostname || !url.pathname.startsWith('/contributions/') || !files.some(f => f.key === it.key && f.size === it.size)) throw Error('上传凭证内容无效');
+      uploadTickets.set(url.href, { size: it.size, expires: Date.now() + 540000 });
+      return { key: it.key, putUrl: url.href };
     });
-    const items = Array.isArray(resp && resp.items) ? resp.items : [];
-    const out = [];
-    for (const it of items) {
-      const putUrl = String(it.putUrl || '').trim();
-      if (!putUrl) continue;
-      try {
-        const pu = assertPublicUrl(putUrl);
-        if (!(await checkPublicDns(pu.hostname))) continue;
-        out.push({ key: String(it.key || ''), putUrl: pu.href });
-      } catch (e) { /* 跳过非法凭证 */ }
-    }
-    if (!out.length) {
-      log(`contribute | 凭证返回空 | ${Date.now() - t0}ms`);
-      return { ok: false, error: '凭证服务未返回有效上传地址' };
-    }
-    log(`contribute | 凭证就绪 ${out.length} 个 | ${Date.now() - t0}ms`);
-    return { ok: true, items: out };
-  } catch (err) {
-    log(`contribute | 凭证请求异常 | ${err.message}`);
-    return { ok: false, error: err.message };
-  }
+    return { ok: true, items };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
-
-// 直传单个文件到预签名 PUT 地址（仅公网 https；单文件上限 20MB）
-ipcMain.handle('contribute-upload', async (_, payload) => {
-  const t0 = Date.now();
+handle('contribute-upload', async (_, payload) => {
+  if (activeUploads.size >= 2) return { ok: false, error: '正在上传，请稍后重试' };
+  const controller = new AbortController(); activeUploads.add(controller);
   try {
-    const rawUrl = String((payload && payload.putUrl) || '');
-    const u = assertPublicUrl(rawUrl);
-    if (!(await checkPublicDns(u.hostname))) {
-      return { ok: false, error: '上传地址无效或指向本地地址' };
-    }
-    const rawData = payload && payload.data;
-    if (!(rawData instanceof Uint8Array || rawData instanceof ArrayBuffer || Buffer.isBuffer(rawData))) {
-      return { ok: false, error: '上传内容无效' };
-    }
-    const buf = Buffer.isBuffer(rawData) ? rawData : Buffer.from(rawData);
-    if (buf.length > 20 * 1024 * 1024) return { ok: false, error: '单个文件不能超过 20MB' };
-    // 预签名固定以 application/octet-stream 参与签名，PUT 头必须与签名完全一致，否则 COS 返回 403
-    const contentType = 'application/octet-stream';
-    const resp = await new Promise((resolve, reject) => {
-      const r = https.request(u, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': contentType,
-          'Content-Length': buf.length,
-          'User-Agent': 'labreport-writer-contributor',
-        },
-        timeout: 120000,
-      }, res => {
-        res.resume();
-        res.on('end', () => resolve({ status: res.statusCode }));
-      });
-      r.on('error', reject);
-      r.on('timeout', () => r.destroy(new Error('上传超时')));
-      r.write(buf);
-      r.end();
-    });
-    if (resp.status !== 200 && resp.status !== 204) {
-      log(`contribute | 上传失败 HTTP ${resp.status} ${buf.length} 字节 | ${Date.now() - t0}ms`);
-      return { ok: false, error: `上传失败 HTTP ${resp.status}` };
-    }
-    log(`contribute | 上传完成 ${buf.length} 字节 | ${Date.now() - t0}ms`);
+    const url = network.publicUrl(payload?.putUrl).href;
+    const ticket = uploadTickets.get(url);
+    if (!ticket || ticket.expires < Date.now()) throw Error('上传凭证不存在或已过期');
+    const data = payload.data;
+    if (!(data instanceof Uint8Array || data instanceof ArrayBuffer)) throw Error('上传数据无效');
+    const buf = Buffer.from(data);
+    if (buf.length !== ticket.size) throw Error('上传文件与凭证大小不匹配');
+    const res = await network.response(url, { method: 'PUT', signal: AbortSignal.any([controller.signal, AbortSignal.timeout(120000)]),
+      headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': buf.length, 'x-cos-forbid-overwrite': 'true' }, body: buf });
+    res.resume();
+    await new Promise((resolve, reject) => { res.on('end', resolve); res.on('error', reject); });
+    uploadTickets.delete(url);
     return { ok: true };
-  } catch (err) {
-    log(`contribute | 上传异常 | ${err.message}`);
-    return { ok: false, error: err.message };
-  }
+  } catch (e) { return { ok: false, error: e.message }; }
+  finally { activeUploads.delete(controller); }
 });
 
 // ── IPC: 用默认程序打开文件 ──
-ipcMain.handle('open-file', (_, filePath) => {
-  if (fs.existsSync(filePath)) {
-    shell.openPath(filePath);
-    return { ok: true };
-  }
-  return { ok: false, error: '文件不存在' };
+handle('open-file', async (_, filePath) => {
+  try {
+    const error = await shell.openPath(reportPath(filePath));
+    return error ? { ok: false, error } : { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+handle('report-text', async (_, filePath) => {
+  try { return { ok: true, text: (await mammoth.extractRawText({ path: reportPath(filePath) })).value }; }
+  catch (e) { return { ok: false, error: e.message }; }
 });
 
 // ── IPC: 导出诊断日志（设置-开发者调试；单 .txt，统一脱敏）──
-ipcMain.handle('export-diagnostics', async (_, payload) => {
+handle('export-diagnostics', async (_, payload) => {
   try {
     const p = payload || {};
     let runLog = '';
@@ -1484,7 +1432,7 @@ ipcMain.handle('export-diagnostics', async (_, payload) => {
       filters: [{ name: '文本文件', extensions: ['txt'] }],
     });
     if (canceled || !filePath) return { ok: true, canceled: true };
-    fs.writeFileSync(filePath, out, 'utf-8');
+    atomic.writeFile(filePath, out, 'utf-8');
     log(`diagnostics | 已导出 ${path.basename(filePath)} | ${Buffer.byteLength(out)} 字节`);
     return { ok: true, canceled: false, path: filePath, size: Buffer.byteLength(out) };
   } catch (err) {
@@ -1495,18 +1443,21 @@ ipcMain.handle('export-diagnostics', async (_, payload) => {
 // ── IPC: 运行 generate.py 生成报告 ──
 // variants.compose 向 stdout 打印的章节原文标记（供应用侧按章节润色/导入重生成）
 const SECTIONS_MARKER = '.LAB_SECTIONS_JSON:';
-ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish) => {
+handle('run-generate', async (_, expPath, studentInfo, variants, polish) => {
   if (generationBusy || resourceUpdating) return { ok: false, error: '已有任务正在运行，请稍后重试' };
   syncInstalledResources();
   generationBusy = true;
-  const job = { cancelled: false, wordHandles: new Map(), cleanup: null };
+  const job = { cancelled: false, wordHandles: new Map(), cleanup: null, inputFile: null };
   const genT0 = Date.now();
   const genExpName = path.basename(String(expPath || ''));
   log(`generate | 开始 | 实验=${genExpName}`);
   try {
   // 生成报告属写操作：迁移/复用 userData 副本，报告与章节缓存不再落入安装目录
   expPath = ensureUserCopy(expPath);
-  const generatePy = path.join(expPath, 'generate.py');
+  const generatePy = security.inside(path.join(expPath, 'generate.py'), expPath);
+  const errors = dataValidation.validate(atomic.readJson(security.inside(path.join(expPath, 'schema.json'), expPath)),
+    atomic.readJson(security.inside(path.join(expPath, 'data.json'), expPath)));
+  if (errors.length) throw Error(errors.join('；'));
   if (!fs.existsSync(generatePy)) {
     log(`generate | 失败 | generate.py 不存在 | 实验=${genExpName}`);
     return { ok: false, error: 'generate.py 不存在', logs: [] };
@@ -1524,14 +1475,12 @@ ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish)
     if (studentInfo.class) env.LAB_STUDENT_CLASS = studentInfo.class;
     if (studentInfo.date) env.LAB_STUDENT_DATE = studentInfo.date;
   }
-  // 变体组合选择（{章节: 变体序号}），传给 generate.py
-  if (variants && Object.keys(variants).length > 0) {
-    env.LAB_VARIANTS = JSON.stringify(variants);
-  }
-  // AI 润色导入（{章节: Markdown 文本}），由 compose() 注入覆盖对应变体章节
-  if (polish && typeof polish === 'object' && Object.keys(polish).length > 0) {
-    env.LAB_POLISH = JSON.stringify(polish);
-  }
+  const jobInput = JSON.stringify({ variants: variants || {}, polish: polish || {} });
+  if (Buffer.byteLength(jobInput) > 512 * 1024) throw Error('润色与变体内容过长，请减少后重试');
+  job.inputFile = path.join(expPath, '.job-' + crypto.randomUUID() + '.json');
+  atomic.writeFile(job.inputFile, jobInput, 'utf8', false);
+  delete env.LAB_VARIANTS; delete env.LAB_POLISH;
+  env.LAB_JOB_INPUT = job.inputFile;
 
   // 解析真实可用的 python.exe 直接 spawn（优先 Store Python，排除沙箱路径，不依赖 cmd.exe）
   const pythonExe = resolvePythonExe() || 'python';
@@ -1540,15 +1489,25 @@ ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish)
 
   return await new Promise((resolve) => {
     const logs = [];
+    let logSize = 0;
+    logs.push = function(...entries) {
+      for (const entry of entries) { const text = String(entry).slice(-128 * 1024); Array.prototype.push.call(this, text); logSize += text.length; }
+      while (logSize > 128 * 1024 && this.length > 1) logSize -= this.shift().length;
+      return this.length;
+    };
     let capturedSections = null;   // compose() 打印的章节原文缓存
     let stdoutCarry = '';          // 跨 chunk 的行缓冲（标记行可能分块到达）
     const python = spawn(pythonExe, [generatePy], {
       cwd: expPath,
       shell: false,
+      windowsHide: true,
       env,
     });
     activePython = python;
     python.job = job;
+    const deadline = setTimeout(() => { log('生成超时，正在清理'); cancelGeneration(); }, 5 * 60 * 1000);
+    python.once('close', () => clearTimeout(deadline));
+    python.once('error', () => clearTimeout(deadline));
     python.stdout.setEncoding('utf8');
     python.stderr.setEncoding('utf8');
 
@@ -1556,6 +1515,7 @@ ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish)
       // 按行处理：截出章节缓存标记行（不进入展示日志），其余原样转发
       const lines = (stdoutCarry + data.toString()).split(/\r?\n/);
       stdoutCarry = lines.pop();
+      if (stdoutCarry.length > 1024 * 1024) { job.cancelled = true; cancelGeneration(); stdoutCarry = ''; }
       const keep = [];
       for (const ln of lines) {
         const wordMatch = /^\.LAB_WORD_INSTANCE:(\d+):(\d+)$/.exec(ln);
@@ -1615,7 +1575,7 @@ ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish)
       // Only publish section sources belonging to a successfully saved report.
       if (ok && capturedSections && typeof capturedSections === 'object') {
         try {
-          fs.writeFileSync(path.join(expPath, '.lab_sections.json'), JSON.stringify(capturedSections, null, 1), 'utf-8');
+          atomic.writeFile(security.inside(path.join(expPath, '.lab_sections.json'), expPath), JSON.stringify(capturedSections, null, 1), 'utf-8');
         } catch (e) { /* 缓存失败不影响生成结果 */ }
       }
       resolve({
@@ -1643,12 +1603,13 @@ ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish)
     log(`generate | 异常 | 实验=${genExpName} | ${error.message}`);
     return { ok: false, error: error.message };
   } finally {
+    if (job.inputFile && fs.existsSync(job.inputFile)) fs.unlinkSync(job.inputFile);
     generationBusy = false;
   }
 });
 
 // ── IPC: 取消生成（结束 python 进程树 + 清理其启动的 Word，保留用户手动打开的 Word）──
-ipcMain.handle('cancel-generate', async () => {
+async function cancelGeneration() {
   const python = activePython;
   if (!python || python.exitCode !== null) {
     return { ok: false, reason: 'no-active' };
@@ -1669,7 +1630,8 @@ ipcMain.handle('cancel-generate', async () => {
   })();
   await job.cleanup;
   return { ok: true };
-});
+}
+handle('cancel-generate', cancelGeneration);
 
 // ── AI 提供商预设 ──
 const AI_PROVIDERS = {
@@ -1693,64 +1655,44 @@ const AI_PROVIDERS = {
 
 // ── IPC: AI 对话（requestId 支持取消：ai-chat-cancel 中止对应请求）──
 const aiAbortControllers = new Map();   // requestId -> AbortController
-ipcMain.handle('ai-chat', async (_, params) => {
-  const { provider, apiKey, apiUrl, model, messages, temperature = 0.7, requestId } = params;
+function aiEndpoint(params) {
+  const preset = AI_PROVIDERS[params.provider] || AI_PROVIDERS.custom;
+  const url = network.publicUrl(String(params.apiUrl || preset.baseUrl).replace(/\/+$/, ''));
+  if (url.search || url.hash) throw Error('API 地址不能包含查询参数或片段');
+  return url.href.replace(/\/+$/, '');
+}
+handle('credential-status', () => ({ ok: true, ...keyStore.status() }));
+handle('credential-save', (_, payload) => {
+  try { return { ok: true, ...keyStore.save(payload.key, payload.key ? aiEndpoint(payload) : '') }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+handle('ai-chat', async (_, params) => {
+  if (!params || !Array.isArray(params.messages) || params.messages.length > 30 || Buffer.byteLength(JSON.stringify(params.messages)) > 256 * 1024)
+    return { ok: false, error: 'AI 请求内容无效或过大' };
+  const { provider, model, messages, temperature = 0.7 } = params;
+  const requestId = String(params.requestId || crypto.randomUUID());
+  if (aiAbortControllers.size >= 2 || aiAbortControllers.has(requestId)) return { ok: false, error: 'AI 请求正在处理，请稍后重试' };
   const controller = new AbortController();
-  if (requestId) aiAbortControllers.set(String(requestId), controller);
-  const aiT0 = Date.now();
+  aiAbortControllers.set(requestId, controller);
   try {
-    const preset = AI_PROVIDERS[provider] || AI_PROVIDERS.custom;
-    // 用户设置了 apiUrl 就用用户的，否则用预设默认值
-    const baseUrl = apiUrl || preset.baseUrl;
-    const useModel = model || preset.model;
-    log(`ai-chat | 开始 | provider=${provider} model=${useModel} 消息数=${Array.isArray(messages) ? messages.length : 0}`);
-
-    if (!apiKey) {
-      return { ok: false, error: '未配置 API Key，请在设置中填写' };
-    }
-    if (!baseUrl) {
-      return { ok: false, error: '未配置 API 地址' };
-    }
-
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: useModel,
-        messages,
-        temperature,
-        stream: false,
-      }),
-      signal: controller.signal,
+    const baseUrl = aiEndpoint(params);
+    const apiKey = keyStore.get(baseUrl);
+    const data = await network.json(baseUrl + '/chat/completions', {
+      method: 'POST', signal: controller.signal, timeoutMs: 120000, maxBytes: 2 * 1024 * 1024,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
+      body: JSON.stringify({ model: model || (AI_PROVIDERS[provider] || AI_PROVIDERS.custom).model,
+        messages, temperature, stream: false }),
     });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      log(`ai-chat | HTTP 失败 ${response.status} | ${Date.now() - aiT0}ms`);
-      return { ok: false, error: `API 请求失败 (${response.status}): ${errText.slice(0, 200)}` };
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || '';
-    log(`ai-chat | 完成 | 返回 ${content.length} 字符 | ${Date.now() - aiT0}ms`);
+    const content = data.choices?.[0]?.message?.content;
+    if (typeof content !== 'string' || !content.trim()) throw Error('AI 返回了空内容');
     return { ok: true, content, usage: data.usage };
-  } catch (err) {
-    if (controller.signal.aborted) {
-      log(`ai-chat | 已取消 | ${Date.now() - aiT0}ms`);
-      return { ok: false, cancelled: true, error: '已取消生成' };
-    }
-    log(`ai-chat | 异常 | ${err.message} | ${Date.now() - aiT0}ms`);
-    return { ok: false, error: err.message };
-  } finally {
-    if (requestId) aiAbortControllers.delete(String(requestId));
-  }
+  } catch (e) {
+    return { ok: false, cancelled: controller.signal.aborted, error: controller.signal.aborted ? '已取消生成' : e.message };
+  } finally { aiAbortControllers.delete(requestId); }
 });
 
 // 取消一次进行中的 AI 请求
-ipcMain.on('ai-chat-cancel', (_, requestId) => {
+listen('ai-chat-cancel', (_, requestId) => {
   const c = aiAbortControllers.get(String(requestId || ''));
   if (c) {
     try { c.abort(); } catch (e) { /* 忽略 */ }
@@ -1759,13 +1701,14 @@ ipcMain.on('ai-chat-cancel', (_, requestId) => {
 });
 
 // ── 变体组合：读取实验的 variants.json ──
-ipcMain.handle('load-variants', async (_, expPath) => {
+handle('load-variants', async (_, expPath) => {
   try {
-    const p = path.join(expPath, 'variants.json');
+    expPath = experimentPath(expPath);
+    const p = security.inside(path.join(expPath, 'variants.json'), expPath);
     if (!fs.existsSync(p)) {
       return { ok: true, variants: null };
     }
-    const variants = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    const variants = atomic.readJson(p);
     return { ok: true, variants };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -1773,13 +1716,13 @@ ipcMain.handle('load-variants', async (_, expPath) => {
 });
 
 // ── 变体组合：保存实验的 variants.json（AI 调整结果写回；用户数据落 userData 副本）──
-ipcMain.handle('save-variants', async (_, expPath, variants) => {
+handle('save-variants', async (_, expPath, variants) => {
   try {
     if (!variants || typeof variants !== 'object') {
       return { ok: false, error: '变体数据无效' };
     }
     const p = ensureUserCopy(expPath);
-    fs.writeFileSync(path.join(p, 'variants.json'), JSON.stringify(variants, null, 1), 'utf-8');
+    atomic.writeFile(security.inside(path.join(p, 'variants.json'), p), JSON.stringify(variants, null, 1), 'utf-8');
     return { ok: true, path: p };
   } catch (err) {
     return { ok: false, error: err.message };

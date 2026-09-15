@@ -13,9 +13,19 @@ const SECRET_KEY = process.env.SECRET_KEY || process.env.Secret_Key || '';
 const EXPIRES = 600;
 
 // Allowed key shape: contributions/<variants|reports>/<exp>/<timestamp>/<file>
-const KEY_RE = /^contributions\/(variants|reports)\/[^/]+\/[^/]+\/[^/]+$/;
+const KEY_RE = /^contributions\/(?:(?:variants|reports)\/[^/]+\/[^/]+\/[^/]+|feedbacks\/[^/]+\/[^/]+)$/;
+const limits = new Map();
+function takeQuota(ip, bytes) {
+  const now = Date.now();
+  for (const [key, value] of limits) if (value.until <= now) limits.delete(key);
+  const current = limits.get(ip) || { until: now + 3600000, count: 0, bytes: 0 };
+  if (limits.size >= 2000 && !limits.has(ip)) return false;
+  if (current.count >= 20 || current.bytes + bytes > 100 * 1024 * 1024) return false;
+  current.count++; current.bytes += bytes; limits.set(ip, current); return true;
+}
 
-function cosSignPutUrl(key) {
+
+function cosSignPutUrl(key, size) {
   const host = BUCKET + '.cos.' + REGION + '.myqcloud.com';
   const now = Math.floor(Date.now() / 1000);
   const keyTime = now + ';' + (now + EXPIRES);
@@ -31,7 +41,7 @@ function cosSignPutUrl(key) {
     'q-sign-time': keyTime,
     'q-key-time': keyTime,
   };
-  const headers = { 'content-type': 'application/octet-stream', 'host': host };
+  const headers = { 'content-type': 'application/octet-stream', 'content-length': String(size), 'x-cos-forbid-overwrite': 'true', 'host': host };
 
   const paramKeys = Object.keys(params).sort();
   const headerKeys = Object.keys(headers).sort();
@@ -67,24 +77,39 @@ exports.main_handler = async function (event) {
     if (!BUCKET || !SECRET_ID || !SECRET_KEY) {
       return reply(500, { ok: false, error: 'env not configured' });
     }
-    let keys = [];
+    if (event?.httpMethod !== 'POST') return reply(405, { ok: false, error: 'POST required' });
+    if (typeof event.body !== 'string' || Buffer.byteLength(event.body) > 32768) return reply(413, { ok: false, error: 'body too large' });
+    let files = [];
     try {
       const body = JSON.parse((event && typeof event.body === 'string') ? event.body : '{}');
-      keys = Array.isArray(body.keys) ? body.keys : [];
+      files = Array.isArray(body.files) ? body.files : [];
     } catch (e) {
       return reply(400, { ok: false, error: 'body must be JSON' });
     }
-    if (!keys.length || keys.length > 20) {
+    if (!files.length || files.length > 20) {
       return reply(400, { ok: false, error: 'keys count must be 1-20' });
     }
     const valid = [];
-    for (const k of keys) {
-      if (typeof k !== 'string' || !KEY_RE.test(k)) {
+    let total = 0;
+    const seen = new Set();
+    for (const file of files) {
+      const k = file.key;
+      if (typeof k !== 'string' || k.length > 500 || !KEY_RE.test(k) || /[\\:\x00-\x1f]/.test(k) || k.split('/').some(p => p.startsWith('.') || /[. ]$/.test(p)) || !/\.(json|docx|jpg|jpeg|png)$/i.test(k) || seen.has(k)) {
         return reply(400, { ok: false, error: 'invalid key: ' + String(k).slice(0, 120) });
       }
-      valid.push(k);
+      if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > 20 * 1024 * 1024) return reply(413, { ok: false, error: 'invalid file size' });
+      total += file.size; seen.add(k); valid.push(file);
     }
-    const items = valid.map(function (k) { return { key: k, putUrl: cosSignPutUrl(k) }; });
+    if (total > 40 * 1024 * 1024) return reply(413, { ok: false, error: 'batch too large' });
+    // Only trust the platform request context, never X-Forwarded-For supplied by a client.
+    const ip = event.requestContext?.sourceIp || event.requestContext?.identity?.sourceIp;
+    if (!ip || !takeQuota(ip, total)) return reply(429, { ok: false, error: 'upload quota exceeded or source unavailable' });
+    const submission = crypto.randomUUID();
+    const items = valid.map(file => {
+      const parts = file.key.split('/'); parts[parts.length - 2] = submission;
+      const objectKey = parts.join('/');
+      return { key: file.key, objectKey, size: file.size, putUrl: cosSignPutUrl(objectKey, file.size) };
+    });
     return reply(200, { ok: true, items: items, expires: EXPIRES });
   } catch (err) {
     return reply(500, { ok: false, error: err.message });

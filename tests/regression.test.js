@@ -139,7 +139,7 @@ test('multi-section polishing uses the original snapshot after switching experim
   let releaseFirst, calls = 0;
   Object.assign(ui, {
     currentSections: { one: 'A first', two: 'A second' }, skillsCache: [],
-    loadSettings: () => ({ apiKey: 'fake' }), getAiStylePrompt: () => '', renderAiResults: () => {},
+    loadSettings: () => ({ hasApiKey: true }), getAiStylePrompt: () => '', renderAiResults: () => {},
     document: { querySelector: () => null, querySelectorAll: s => s.includes('aiScopeGroup') ? [{value:'sec:one'}, {value:'sec:two'}] : [] },
     window: { labAPI: { aiChat: async () => {
       if (++calls === 1) await new Promise(r => releaseFirst = r);
@@ -158,13 +158,21 @@ test('multi-section polishing uses the original snapshot after switching experim
 });
 
 function mainHarness(t, failUpdateCopy = false) {
-  const root = fixture(t), handlers = new Map(), children = [], kills = [];
+  const root = fixture(t), handlers = new Map(), rawHandlers = new Map(), children = [], kills = [];
+  let ready;
+  const copied = [];
+  const webContents = { mainFrame: { url: require('node:url').pathToFileURL(path.join(__dirname, '../src/index.html')).href }, on: () => {}, setWindowOpenHandler: () => {}, send: () => {} };
+  const testKeys = require('node:crypto').generateKeyPairSync('ed25519');
   const mainFile = path.join(__dirname, '../main.js');
   const nativeRequire = createRequire(mainFile);
   const fakeElectron = {
     app: { isPackaged: false, getPath: () => root, getVersion: () => '1.7.5',
-      whenReady: () => ({ then: () => {} }), on: () => {} },
-    ipcMain: { handle: (name, fn) => handlers.set(name, fn), on: () => {} },
+      whenReady: () => ({ then: fn => { ready = fn; } }), on: () => {}, requestSingleInstanceLock: () => true },
+    clipboard: { writeText: text => copied.push(text) },
+    protocol: { registerSchemesAsPrivileged: () => {}, handle: () => {} },
+    BrowserWindow: function() { this.webContents = webContents; this.on = () => {}; this.loadURL = () => {}; },
+    session: { defaultSession: { setPermissionRequestHandler: () => {}, setPermissionCheckHandler: () => {} } },
+    ipcMain: { handle: (name, fn) => { rawHandlers.set(name, fn); handlers.set(name, (event, ...args) => fn({ sender: webContents, senderFrame: webContents.mainFrame }, ...args)); }, on: () => {} },
   };
   const childTools = {
     spawn: () => {
@@ -183,13 +191,21 @@ function mainHarness(t, failUpdateCopy = false) {
       else setImmediate(() => cb?.(null, ''));
     },
   };
-  const fileTools = { ...fs, copyFileSync: (from, to) => {
+  const fileTools = { ...fs, readFileSync: (file, ...args) => String(file).endsWith('update-public-key.pem') ? testKeys.publicKey.export({ type: 'spki', format: 'pem' }) : fs.readFileSync(file, ...args), copyFileSync: (from, to) => {
     if (failUpdateCopy && from.includes('_staging')) throw Error('simulated update copy failure');
     fs.copyFileSync(from, to);
   } };
   const mockedRequire = name => name === 'electron' ? fakeElectron : name === 'child_process' ? childTools : name === 'fs' ? fileTools : nativeRequire(name);
-  new Function('require', '__dirname', read(mainFile))(mockedRequire, path.dirname(mainFile));
-  return { root, handlers, children, kills };
+  const controls = new Function('require', '__dirname', read(mainFile) + '\nreturn { unzipScript: UNZIP_SCRIPT, setPackage: value => { downloadedPackage = value; }, merge: (stage, target, bases) => { const warnings = []; mergeDataTree(stage, target, EXPERIMENTS_DIR, warnings, true, bases); return warnings; } };')(mockedRequire, path.dirname(mainFile));
+  ready();
+  const authorize = (zip, files) => {
+    const crypto = require('node:crypto');
+    const manifest = { dataVersion: '2.0.0', minAppVersion: '1.7.5', url: 'https://labreport-1485394950.cos.ap-guangzhou.myqcloud.com/test.zip', size: fs.statSync(zip).size,
+      sha256: crypto.createHash('sha256').update(fs.readFileSync(zip)).digest('hex'), files, notes: 'test' };
+    manifest.signature = crypto.sign(null, Buffer.from(require('../src/main/update-package').canonical(manifest)), testKeys.privateKey).toString('base64');
+    controls.setPackage({ path: zip, manifest });
+  };
+  return { root, handlers, rawHandlers, children, kills, authorize, merge: controls.merge, unzipScript: controls.unzipScript, copied };
 }
 
 test('main process rejects concurrent generation and cleans only the reported Word instance', async t => {
@@ -227,13 +243,14 @@ test('data package applies common and version together after successful extracti
   const h = mainHarness(t), dataRoot = path.join(h.root, '实验数据');
   const zip = path.join(dataRoot, '_package.zip');
   put(zip, 'mock archive');
+  h.authorize(zip, { '实验脚本/common/core.py': require('node:crypto').createHash('sha256').update('updated').digest('hex') });
   const pending = h.handlers.get('apply-data-package')({}, { filePath: zip, version: '2', notes: 'test' });
   put(path.join(dataRoot, '_staging/实验脚本/common/core.py'), 'updated');
   h.children[0].emit('close', 0); // Extraction is mocked; merge and commit use real temporary files.
   const result = await pending;
   assert.equal(result.ok, true, result.error);
   assert.equal(read(path.join(dataRoot, '实验脚本/common/core.py')), 'updated');
-  assert.equal(h.handlers.get('get-data-info')().localVersion, '2');
+  assert.equal(h.handlers.get('get-data-info')().localVersion, '2.0.0');
   assert.ok(fs.existsSync(result.backupPath));
 });
 
@@ -243,14 +260,73 @@ test('data package copy failure keeps the complete old tree and version', async 
   const target = path.join(dataRoot, '实验脚本');
   put(path.join(target, 'common/old.py'), 'keep');
   const state = store.readState(target);
-  store.writeState(target, { ...state, manifest: { dataVersion: '1' } });
+  store.writeState(target, { ...state, manifest: { dataVersion: '1.0.0' } });
   const zip = path.join(dataRoot, '_package.zip');
   put(zip, 'mock archive');
+  h.authorize(zip, { '实验脚本/common/core.py': require('node:crypto').createHash('sha256').update('new').digest('hex') });
   const pending = h.handlers.get('apply-data-package')({}, { filePath: zip, version: '2' });
   put(path.join(dataRoot, '_staging/实验脚本/common/core.py'), 'new');
   h.children[0].emit('close', 0);
   const result = await pending;
   assert.equal(result.ok, false);
   assert.equal(read(path.join(target, 'common/old.py')), 'keep');
-  assert.equal(h.handlers.get('get-data-info')().localVersion, '1');
+  assert.equal(h.handlers.get('get-data-info')().localVersion, '1.0.0');
+});
+
+
+test('IPC rejects an unknown sender before accessing the filesystem', t => {
+  const h = mainHarness(t);
+  const r = h.rawHandlers.get('read-docx-buffer')({ senderFrame: { url: 'https://example.invalid' } }, __filename);
+  assert.equal(r.ok, false);
+  assert.match(r.error, /不可信/);
+  assert.equal(h.handlers.get('read-docx-buffer')({}, __filename).ok, false);
+});
+
+
+test('successive official variant updates use the prior official baseline and preserve real edits', t => {
+  const h = mainHarness(t), stage = path.join(h.root, 'stage'), target = path.join(h.root, 'target');
+  put(path.join(target, 'A/variants.json'), '["v0"]');
+  put(path.join(stage, 'A/variants.json'), '["v1"]');
+  const key = path.join('A', 'variants.json');
+  h.merge(stage, target, { [key]: '["v0"]' });
+  assert.equal(read(path.join(target, key)), '["v1"]');
+  put(path.join(stage, key), '["v2"]');
+  h.merge(stage, target, { [key]: '["v1"]' });
+  assert.equal(read(path.join(target, key)), '["v2"]');
+  put(path.join(target, key), '["personal"]');
+  put(path.join(stage, key), '["v3"]');
+  assert.equal(h.merge(stage, target, { [key]: '["v2"]' }).length, 1);
+  assert.equal(read(path.join(target, key)), '["personal"]');
+});
+
+test('startup restores a resource tree interrupted between renames', t => {
+  const root = fixture(t), target = path.join(root, 'live'), transaction = path.join(root, '.resource-test');
+  put(path.join(transaction, 'transaction.json'), JSON.stringify({ target }));
+  put(path.join(transaction, 'previous/data.json'), '{"measurement":42}');
+  assert.equal(store.recoverTree(target), true);
+  assert.equal(read(path.join(target, 'data.json')), '{"measurement":42}');
+});
+
+
+test('actual ZIP extractor accepts normal resources and refuses traversal and compression bombs', async t => {
+  const h = mainHarness(t), JSZip = require('jszip');
+  const bundled = path.join(__dirname, '../python-runtime/python.exe');
+  const python = fs.existsSync(bundled) ? bundled : 'python';
+  for (const [name, content, expected] of [['common/core.py', 'print(1)', 0], ['../outside.py', 'bad', 1], ['large.md', 'A'.repeat(1024 * 1024), 1]]) {
+    const zip = new JSZip(); zip.file(name, content);
+    const file = path.join(h.root, 'extract-' + expected + '.zip');
+    fs.writeFileSync(file, await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
+    const dest = path.join(h.root, 'extracted'); fs.mkdirSync(dest, { recursive: true });
+    const result = require('child_process').spawnSync(python, ['-B', '-c', h.unzipScript, file, dest], { windowsHide: true, timeout: 10000, encoding: 'utf8' });
+    assert.equal(result.status === 0, expected === 0, result.stderr);
+    assert.equal(fs.existsSync(path.join(h.root, 'outside.py')), false);
+  }
+});
+
+
+test('copy link IPC accepts a share URL and refuses non-HTTPS clipboard payloads', t => {
+  const h = mainHarness(t);
+  assert.equal(h.handlers.get('copy-link')({}, 'https://pan.quark.cn/s/test').ok, true);
+  assert.deepEqual(h.copied, ['https://pan.quark.cn/s/test']);
+  assert.equal(h.handlers.get('copy-link')({}, 'file:///C:/private.txt').ok, false);
 });

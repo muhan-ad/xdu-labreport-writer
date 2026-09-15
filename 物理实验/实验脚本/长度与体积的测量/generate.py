@@ -90,6 +90,10 @@ def _compute(data: dict) -> dict:
     Y0 = [float(v) for v in (data.get("Y0") or []) if v is not None]
     Y1 = [float(v) for v in (data.get("Y1") or []) if v is not None]
 
+    if L <= 0 or W <= 0 or any(x < 0 for x in (dl_inst, dd_inst, dd_shi_inst, dx_inst)):
+        raise ValueError("板长、板宽必须大于零，仪器误差不能为负")
+    if any(not values for values in (D, d_shi, X0, X1, Y0, Y1)) or len(X0) != len(X1) or len(Y0) != len(Y1):
+        raise ValueError("请填写完整且成对的测量数组")
     n = len(D)
 
     # 板长 / 板宽：单次测量，仅 B 类
@@ -116,6 +120,10 @@ def _compute(data: dict) -> dict:
     uLx = math.sqrt(smartlab_ua(Lx) ** 2 + uB_x ** 2)
     uLy = math.sqrt(smartlab_ua(Ly) ** 2 + uB_x ** 2)
 
+    if min(D_corrected, d_corrected, Lx_a, Ly_a) <= 0:
+        raise ValueError("零点修正后孔径、板厚及缝尺寸必须大于零")
+    if L * W <= math.pi * D_corrected ** 2 / 4 + Lx_a * Ly_a:
+        raise ValueError("孔与缝的面积不能达到或超过板面积，请核对尺寸")
     # 体积（贯穿板厚 d）
     V_p = L * W * d_corrected
     V_h = math.pi * D_corrected ** 2 / 4 * d_corrected
@@ -126,7 +134,12 @@ def _compute(data: dict) -> dict:
     uVp = V_p * math.sqrt((uL / L) ** 2 + (uW / W) ** 2 + (ud / d_corrected) ** 2)
     uVh = V_h * math.sqrt((2 * uD / D_corrected) ** 2 + (ud / d_corrected) ** 2)
     uVs = V_s * math.sqrt((uLx / Lx_a) ** 2 + (uLy / Ly_a) ** 2 + (ud / d_corrected) ** 2)
-    uV = math.sqrt(uVp ** 2 + uVh ** 2 + uVs ** 2)
+    # All three volumes share d: propagate independent ORIGINAL measurements.
+    area = L * W - math.pi * D_corrected ** 2 / 4 - Lx_a * Ly_a
+    uV = math.sqrt((W * d_corrected * uL) ** 2 + (L * d_corrected * uW) ** 2
+                   + (math.pi * D_corrected * d_corrected * uD / 2) ** 2
+                   + (Ly_a * d_corrected * uLx) ** 2 + (Lx_a * d_corrected * uLy) ** 2
+                   + (area * ud) ** 2)
 
     return {
         "dl_inst": dl_inst, "dd_inst": dd_inst, "dd_shi_inst": dd_shi_inst, "dx_inst": dx_inst,
@@ -316,9 +329,10 @@ def _generate_docx(data: dict, output_path: str):
         r"\frac{u(V_s)}{V_s} = \sqrt{\left(\frac{u(L_x)}{L_x}\right)^2 + \left(\frac{u(L_y)}{L_y}\right)^2 + \left(\frac{u(d)}{d}\right)^2}"
     )
     doc.add_paragraph("")
+    doc.add_paragraph("板、孔、缝共用厚度测量，因此从原始独立尺寸传播不确定度。令 A=LW-πD²/4-L_xL_y，厚度贡献为 A²u(d)²。")
     doc.add_run("金属体体积的绝对不确定度：")
     doc.add_math(
-        r"u(V) = \sqrt{u(V_p)^2 + u(V_h)^2 + u(V_s)^2} = "
+        r"u(V) = \sqrt{(Wd)^2u(L)^2+(Ld)^2u(W)^2+(\pi Dd/2)^2u(D)^2+(L_yd)^2u(L_x)^2+(L_xd)^2u(L_y)^2+A^2u(d)^2} = "
         + format_number(r["uV"], r["uV"]) + r" \text{ mm}^3"
     )
     doc.add_paragraph("")

@@ -27,9 +27,20 @@ def load_variants(script_dir: str):
         return json.load(f)
 
 
+def _job_value(name, legacy):
+    job = os.environ.get("LAB_JOB_INPUT")
+    if job:
+        p = os.path.realpath(job)
+        if os.path.dirname(p) != os.path.realpath(os.getcwd()) or os.path.getsize(p) > 512 * 1024:
+            raise ValueError("任务输入文件无效")
+        with open(p, encoding="utf-8") as f:
+            return json.dumps(json.load(f).get(name, {}), ensure_ascii=False)
+    return os.environ.get(legacy, "").strip()
+
+
 def get_variant_choices():
     """读取环境变量 LAB_VARIANTS 中的组合选择（JSON dict）。未提供返回 None。"""
-    raw = os.environ.get("LAB_VARIANTS", "").strip()
+    raw = _job_value("variants", "LAB_VARIANTS")
     if not raw:
         return None
     try:
@@ -57,7 +68,7 @@ def render_variant(text: str, data: dict) -> str:
 
 def get_polish_overrides():
     """读取环境变量 LAB_POLISH 中的润色导入（JSON {章节名: Markdown 文本}）。"""
-    raw = os.environ.get("LAB_POLISH", "").strip()
+    raw = _job_value("polish", "LAB_POLISH")
     if not raw:
         return None
     try:
