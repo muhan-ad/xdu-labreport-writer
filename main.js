@@ -1085,7 +1085,7 @@ const UNZIP_SCRIPT = [
 
 function unzipSafe(zipPath, destDir) {
   return new Promise((resolve, reject) => {
-    const pythonExe = resolvePythonExe();
+    const pythonExe = resolvePythonExe() || 'python';
     if (!pythonExe) return reject(new Error('未找到内置 Python 运行时'));
     const proc = spawn(pythonExe, ['-c', UNZIP_SCRIPT, zipPath, destDir], { windowsHide: true, timeout: 60000 });
     let errOut = '';
