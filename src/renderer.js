@@ -2048,18 +2048,24 @@ async function checkDataUpdate() {
       showToast('error', '更新失败', ap.error, 5000);
       return;
     }
-    if (ap.warnings && ap.warnings.length) {
-      showToast('info', '数据更新完成', ap.warnings.join('；'), 6000);
-    } else {
-      showToast('success', '数据更新完成', `实验数据已更新到 v${r.remoteVersion}`, 4000);
-    }
+    // 更新前的实验名集合（用于识别本次云端新增的实验）
+    const oldNames = new Set(experiments.map(e => getDisplayName(e)));
     // 重新扫描实验（热更新后的实验列表与资源入口）
     experiments = await window.labAPI.scanExperiments();
     experiments.forEach(e => { e.category = getCategory(e.name); });
+    const addedExps = experiments.filter(e => !oldNames.has(getDisplayName(e))).map(getDisplayName);
     updateCategoryCounts();
     renderList();
     updateEmptyStats();
     loadDataInfo();
+    if (ap.warnings && ap.warnings.length) {
+      const w = ap.warnings.join('；') + (addedExps.length ? `；本次新增实验：${addedExps.join('、')}` : '');
+      showToast('info', '数据更新完成', w, 6000);
+    } else if (addedExps.length) {
+      showToast('success', '数据更新完成', `实验数据已更新到 v${r.remoteVersion}，本次新增实验：${addedExps.join('、')}`, 6000);
+    } else {
+      showToast('success', '数据更新完成', `实验数据已更新到 v${r.remoteVersion}`, 4000);
+    }
   } catch (err) {
     showToast('error', '检查失败', err.message, 5000);
   } finally {
