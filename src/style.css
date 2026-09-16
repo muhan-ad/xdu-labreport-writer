@@ -2531,6 +2531,39 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 .btn-lg { padding: 12px 24px; font-size: 15px; border-radius: 10px; }
 .btn-block { display: block; width: 100%; }
 #paneDanger .btn-danger { font-size: 16px; font-weight: 700; letter-spacing: 2px; }
+/* ── 设置 · 感谢声明 ── */
+.settings-nav-thanks { color: var(--warning); }
+.settings-nav-thanks:hover { background: rgba(217, 119, 6, 0.10); }
+.settings-nav-thanks.active {
+  background: rgba(217, 119, 6, 0.14);
+  color: var(--warning);
+  font-weight: 600;
+}
+.thanks-title { color: var(--warning); }
+.thanks-hint { margin-bottom: 14px; }
+.thanks-list {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--warning-light);
+  padding: 6px 14px;
+}
+.thanks-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 2px;
+  font-size: 14px;
+  border-bottom: 1px dashed var(--border);
+}
+.thanks-row:last-child { border-bottom: none; }
+.thanks-name { font-weight: 700; color: var(--text); }
+.thanks-sep { color: var(--warning); }
+.thanks-work { color: var(--text-secondary); }
+.thanks-empty {
+  padding: 14px 2px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
 
 /* 高危警告弹窗 */
 .modal-danger { width: 440px; border: 2px solid rgba(220, 38, 38, 0.4); }

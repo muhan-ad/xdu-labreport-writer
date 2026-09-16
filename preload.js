@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld('labAPI', {
   writeData: (expPath, data) => ipcRenderer.invoke('write-data', expPath, data),
   readRag: (expPath) => ipcRenderer.invoke('read-rag', expPath),
   readSections: (expPath) => ipcRenderer.invoke('read-sections', expPath),
+  // 感谢声明名单（common/credits.json，随实验数据更新推送）
+  readCredits: () => ipcRenderer.invoke('read-credits'),
   // 报告管理（设置页）
   listReports: () => ipcRenderer.invoke('list-reports'),
   deleteReport: (filePath) => ipcRenderer.invoke('delete-report', filePath),

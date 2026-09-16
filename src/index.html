@@ -543,6 +543,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             必读公告
           </button>
+          <button class="settings-nav-item settings-nav-thanks" id="btnNavThanks">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            感谢声明
+          </button>
           <button class="settings-nav-item settings-nav-danger" id="btnNavDanger">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             请勿点击
@@ -696,6 +700,14 @@
                 <li>如果你发现某些实验有错误，比如实验表格的参数与实验不匹配，请通过「问题反馈」告诉我们。</li>
                 <li>某些实验报告要求图片需标注学生信息，如果有此类要求，直接在 Word 编辑图片添加即可。</li>
               </ol>
+            </div>
+          </div>
+          <!-- 感谢声明页（名单随实验数据更新同步） -->
+          <div class="settings-pane" id="paneThanks">
+            <div class="settings-section thanks-section">
+              <h4 class="thanks-title">♥ 感谢声明</h4>
+              <div class="form-hint thanks-hint">感谢以下开发者对本项目的贡献。</div>
+              <div id="thanksList" class="thanks-list"></div>
             </div>
           </div>
           <!-- 请勿点击页（高危彩蛋入口） -->

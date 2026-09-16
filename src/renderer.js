@@ -1965,6 +1965,7 @@ function bindEvents() {
   $('btnNavFeedback').onclick = () => switchSettingsPane('feedback');
   $('btnSubmitFeedback').onclick = submitFeedback;
   $('btnNavNotice').onclick = () => switchSettingsPane('notice');
+  $('btnNavThanks').onclick = () => { switchSettingsPane('thanks'); loadThanksPane(); };
   $('btnExportDiagnostics').onclick = exportDiagnostics;
   const noticeReminder = document.querySelector('.notice-reminder');
   if (noticeReminder) noticeReminder.onclick = () => { openModal('settingsModal'); switchSettingsPane('notice'); };
@@ -2263,6 +2264,37 @@ function switchSettingsPane(name) {
   $('paneFeedback').classList.toggle('active', name === 'feedback');
   $('btnNavNotice').classList.toggle('active', name === 'notice');
   $('paneNotice').classList.toggle('active', name === 'notice');
+  $('btnNavThanks').classList.toggle('active', name === 'thanks');
+  $('paneThanks').classList.toggle('active', name === 'thanks');
+}
+
+// ── 感谢声明（名单来自 common/credits.json，可随实验数据更新推送）──
+async function loadThanksPane() {
+  const el = $('thanksList');
+  if (!el) return;
+  let r = null;
+  try { r = await window.labAPI.readCredits(); } catch (e) { /* 读取失败按空态处理 */ }
+  const items = (r && r.ok && Array.isArray(r.items)) ? r.items : [];
+  if (!items.length) {
+    el.innerHTML = '<div class="thanks-empty">（致谢名单待同步，可稍后在「检查更新」中获取最新实验数据）</div>';
+    return;
+  }
+  el.innerHTML = '';
+  for (const it of items) {
+    const row = document.createElement('div');
+    row.className = 'thanks-row';
+    const name = document.createElement('span');
+    name.className = 'thanks-name';
+    name.textContent = it.name;
+    const sep = document.createElement('span');
+    sep.className = 'thanks-sep';
+    sep.textContent = '——';
+    const work = document.createElement('span');
+    work.className = 'thanks-work';
+    work.textContent = it.contribution;
+    row.append(name, sep, work);
+    el.appendChild(row);
+  }
 }
 
 // ── 检查更新（对象存储清单，国内高速）──

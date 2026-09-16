@@ -995,6 +995,47 @@ handle('read-rag', (_, expPath) => {
   }
 });
 
+// ── IPC: 读取致谢名单（common/credits.json，随实验数据更新推送）──
+const CREDITS_MAX_ITEMS = 100;      // 名单条数上限（防止异常数据撑爆界面）
+const CREDITS_MAX_NAME = 40;
+const CREDITS_MAX_WORK = 80;
+
+// 结构校验：只接受 {items:[{name,contribution}]}，逐条丢弃不合法项，整体不合法返回 null
+function normalizeCredits(data) {
+  if (!data || typeof data !== 'object' || !Array.isArray(data.items)) return null;
+  const clip = (s, n) => Array.from(s).slice(0, n).join('');   // 按码点截断，不劈开代理对
+  const items = [];
+  for (const it of data.items) {
+    if (!it || typeof it !== 'object') continue;
+    const name = typeof it.name === 'string' ? it.name.trim() : '';
+    const work = typeof it.contribution === 'string' ? it.contribution.trim() : '';
+    if (!name || !work) continue;
+    items.push({ name: clip(name, CREDITS_MAX_NAME), contribution: clip(work, CREDITS_MAX_WORK) });
+    if (items.length >= CREDITS_MAX_ITEMS) break;
+  }
+  return items.length ? items : null;
+}
+
+handle('read-credits', () => {
+  const { roots } = getDataRoots();
+  for (const root of roots) {                 // userData 副本优先，安装目录出厂数据兜底
+    let p;
+    try {
+      p = security.inside(path.join(root.dir, 'common', 'credits.json'), root.dir);
+    } catch (e) { continue; }
+    if (!fs.existsSync(p)) continue;
+    let data;
+    try {
+      data = JSON.parse(fs.readFileSync(p, 'utf-8'));
+    } catch (e) {
+      log(`credits | 名单文件解析失败：${p}`);
+      return { ok: true, items: null };
+    }
+    return { ok: true, items: normalizeCredits(data) };
+  }
+  return { ok: true, items: null };           // 未部署名单：界面按空态显示
+});
+
 // ── IPC: docx 转 HTML（用于报告预览/文本提取）──
 handle('docx-to-html', async (_, filePath) => {
   try {

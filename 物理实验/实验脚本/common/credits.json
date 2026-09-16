@@ -1,0 +1,10 @@
+{
+ "title": "感谢声明",
+ "updatedAt": "2026-09-17T00:10:52+08:00",
+ "items": [
+  {"name": "慕寒", "contribution": "应用架构"},
+  {"name": "宇宙创生", "contribution": "脚本开发"},
+  {"name": "mozhou周言", "contribution": "OCR识别"},
+  {"name": "怀山", "contribution": "辅助开发"}
+ ]
+}

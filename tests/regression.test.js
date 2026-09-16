@@ -526,3 +526,63 @@ test('scan falls back to the builtin schema when a template is corrupted', t => 
   assert.ok(names.includes(name), '出厂 schema 兜底成功则该实验仍显示');
   assert.ok(Array.isArray(r.warnings) && r.warnings.some(w => w.includes(name) && w.includes('模板损坏')), 'warnings 提示模板损坏');
 });
+
+// ── 感谢声明：名单读取（userData 副本优先 / 内置兜底）与界面接线 ──
+const CREDITS_REL = ['实验数据', '实验脚本', 'common', 'credits.json'];
+
+test('credits list reads the user copy first and falls back to the builtin one', t => {
+  const h = mainHarness(t);
+  const read_credits = h.handlers.get('read-credits');
+  assert.ok(typeof read_credits === 'function', 'read-credits handler 已注册');
+
+  // 未推送过名单时：读安装目录的出厂名单（四条初始署名）
+  const builtin = read_credits();
+  assert.equal(builtin.ok, true);
+  assert.deepEqual(builtin.items.map(i => i.name), ['慕寒', '宇宙创生', 'mozhou周言', '怀山']);
+  assert.equal(builtin.items[0].contribution, '应用架构');
+
+  // userData 副本优先：数据包更新后的名单必须盖过出厂名单
+  put(path.join(h.root, ...CREDITS_REL),
+    JSON.stringify({ title: '感谢声明', items: [{ name: '甲', contribution: '架构' }, { name: '乙', contribution: '测试' }] }));
+  assert.deepEqual(read_credits().items.map(i => i.name), ['甲', '乙']);
+
+  // 异常数据不得打崩界面：非法条目丢弃、字段裁剪、条数截断
+  put(path.join(h.root, ...CREDITS_REL), JSON.stringify({ items: [
+    { name: '  丙  ', contribution: '  脚本  ' },
+    { name: '', contribution: '无名字' },
+    { name: 42, contribution: '类型错误' },
+    { contribution: '缺名字' },
+    ...Array.from({ length: 150 }, (_, i) => ({ name: 'X' + i, contribution: 'C' })),
+  ] }));
+  const cleaned = read_credits();
+  assert.deepEqual(cleaned.items[0], { name: '丙', contribution: '脚本' }, '首尾空白被裁剪');
+  assert.equal(cleaned.items.length, 100, '条数按上限截断（防异常数据撑爆界面）');
+
+  // 结构不合法 / JSON 损坏 → 空态（不抛异常、不显示半截名单）
+  put(path.join(h.root, ...CREDITS_REL), JSON.stringify({ items: 'not-an-array' }));
+  assert.equal(read_credits().ok, true);
+  assert.equal(read_credits().items, null);
+  put(path.join(h.root, ...CREDITS_REL), '{corrupted');
+  const broken = read_credits();
+  assert.equal(broken.ok, true, '损坏文件不报错，按空态处理');
+  assert.equal(broken.items, null);
+});
+
+test('settings thanks pane is wired above the danger entry', () => {
+  const html = read(path.join(__dirname, '../src/index.html'));
+  const preload = read(path.join(__dirname, '../preload.js'));
+  const nav = html.indexOf('id="btnNavThanks"');
+  assert.ok(nav > -1, '导航项 btnNavThanks 存在');
+  assert.ok(nav < html.indexOf('id="btnNavDanger"'), '感谢声明排在「请勿点击」上方');
+  assert.ok(nav > html.indexOf('id="btnNavNotice"'), '感谢声明排在「必读公告」下方');
+  const pane = html.indexOf('id="paneThanks"');
+  assert.ok(pane > html.indexOf('id="paneNotice"') && pane < html.indexOf('id="paneDanger"'), 'paneThanks 位于必读公告与请勿点击之间');
+  assert.ok(html.indexOf('id="thanksList"') > pane, '名单容器 thanksList 存在');
+  assert.match(renderer, /btnNavThanks'\)\.onclick = \(\) => \{ switchSettingsPane\('thanks'\); loadThanksPane\(\); \}/, 'renderer 绑定导航项并懒加载名单');
+  assert.match(renderer, /\$\('paneThanks'\)\.classList\.toggle\('active', name === 'thanks'\)/, 'switchSettingsPane 切换 paneThanks');
+  assert.match(preload, /readCredits: \(\) => ipcRenderer\.invoke\('read-credits'\)/, 'preload 暴露 readCredits');
+  const css = read(path.join(__dirname, '../src/style.css'));
+  for (const cls of ['.thanks-list', '.thanks-row', '.thanks-name', '.settings-nav-thanks']) {
+    assert.ok(css.includes(cls), '样式 ' + cls + ' 存在');
+  }
+});
