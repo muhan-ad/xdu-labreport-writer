@@ -180,6 +180,7 @@ ipcMain.on('app-confirm-close', () => {
 
 app.whenReady().then(() => {
   log(`app started | packaged=${app.isPackaged} | PROJECT_ROOT=${PROJECT_ROOT} | EXPERIMENTS_DIR=${EXPERIMENTS_DIR}`);
+  seedBuiltinSkills();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -253,8 +254,6 @@ function copyDirTo(src, dest, srcRoot, destRoot) {
   }
 }
 
-let lastCommonSyncAt = 0;   // common 公共库上次同步时间（节流）
-
 // 用户数据隔离：写操作前若实验目录仍在安装目录（builtin），先镜像/同步到 userData 并返回新路径。
 // - userData 无该实验：整目录镜像（含 data.json/variants.json 出厂值）
 // - 已有副本：按热更新合并语义刷新（data.json 与用户改过的 variants.json 永不覆盖、报告 docx 不动）
@@ -273,15 +272,10 @@ function ensureUserCopy(expPath) {
     const src = ensureInside(path.join(builtinRoot, name), builtinRoot);
     if (!fs.existsSync(src)) return p;
     const dst = ensureInside(path.join(udRootRes, name), udRootRes);
-    // 同步公共库 common（generate.py 依赖 from common import *；10 分钟节流，进程重启即强制同步，
-    // 保证重装新版本后 common 与 generate.py 匹配）
-    const builtinCommon = ensureInside(path.join(builtinRoot, 'common'), builtinRoot);
-    const udCommon = ensureInside(path.join(udRootRes, 'common'), udRootRes);
-    if (fs.existsSync(builtinCommon) && Date.now() - lastCommonSyncAt > 10 * 60 * 1000) {
-      fs.rmSync(udCommon, { recursive: true, force: true });
-      copyDirTo(builtinCommon, udCommon, builtinRoot, udRootRes);
-      lastCommonSyncAt = Date.now();
-    }
+    // 同步公共库 common（修 fresh-migration 那一档：userData 还没有这个实验时，
+    // 整目录镜像不会带 common 过来，这里补上）。steady-state 那一档见
+    // syncCommonToUserCopy() 的注释 —— 它是另一条路，别再挪回来。
+    syncCommonToUserCopy(builtinRoot, udRootRes);
     if (!fs.existsSync(dst)) {
       fs.mkdirSync(dst, { recursive: true });
       copyDirTo(src, dst, builtinRoot, udRootRes);
@@ -293,6 +287,84 @@ function ensureUserCopy(expPath) {
   } catch (e) {
     return path.resolve(expPath);   // 迁移失败退化为原路径，保持可写
   }
+}
+
+// 打开实验 / 生成报告前，把安装目录里的「出厂文件」同步到用户副本。
+//
+// 为什么必须单独干这件事：实验一旦镜像到 userData，scan-experiments 就只返回 userData
+// 那条路径，而 ensureUserCopy() 对「已在 userData」的路径会立刻 return —— 于是出厂
+// 模板改过之后，用户副本永远不会被刷新，装再多新版本也没用。
+// （mergeDataTree() 本意就是干这个的，但它的调用点也在 ensureUserCopy 里，同样够不到。）
+//
+// 判据是「谁拥有这个文件」，而不是列文件名单 —— 列名单正是上次栽跟头的原因：
+// 原版只同步 schema.json，于是 generate.py 停在镜像那天的版本，改在出厂、跑在副本，
+// 改一百遍也不生效。所以这里按归属走：
+//   用户拥有 → 一律不碰：data.json（实验数据）、variants.json（自建变体）、
+//              .lab_sections.json（章节缓存）、原始数据照片.*（识图落盘的原图，见
+//              save-table-image）、*.docx（已生成的报告）
+//   其余     → 出厂文件，覆盖安全：generate.py / schema.json / sample.json / run.bat /
+//              rag 资料。app 里没有任何地方能编辑它们。
+const USER_OWNED_FILE_RE = /^(data\.json|variants\.json|\.lab_sections\.json|原始数据照片\.)/i;
+
+function syncBuiltinFilesToUserCopy(expPath) {
+  try {
+    const p = path.resolve(expPath);
+    const { udRoot } = getDataRoots();
+    const udRootRes = path.resolve(udRoot);
+    const builtinRoot = path.resolve(EXPERIMENTS_DIR);
+    if (!p.startsWith(udRootRes + path.sep)) return;          // 不是用户副本，不管
+    syncCommonToUserCopy(builtinRoot, udRootRes);             // 公共库也走这条（见其注释）
+    const name = path.relative(udRootRes, p).split(path.sep).shift();
+    if (!name || name === 'common' || name.startsWith('.')) return;
+    const src = ensureInside(path.join(builtinRoot, name), builtinRoot);
+    const dst = ensureInside(path.join(udRootRes, name), udRootRes);
+    if (!fs.existsSync(src)) return;                          // 出厂没有就不动
+    copyBuiltinFiles(src, dst, udRootRes);
+  } catch (e) { /* 同步失败不影响读取，退回读旧副本 */ }
+}
+
+// 递归把 src 下的出厂文件覆盖到 dst。只写内容真的不同的文件，避免每次打开实验都改写 mtime。
+function copyBuiltinFiles(src, dst, udRootRes) {
+  for (const entry of fs.readdirSync(src)) {
+    if (entry === '__pycache__') continue;                    // 字节码缓存，没有同步价值
+    if (USER_OWNED_FILE_RE.test(entry)) continue;             // 用户数据 / 自建变体 / 章节缓存
+    if (entry.startsWith('~$') || entry.includes('.~saving')) continue;  // Word 属主与中间文件
+    if (/\.docx$/i.test(entry)) continue;                     // 已生成的报告
+    const s = path.join(src, entry);
+    const d = ensureInside(path.join(dst, entry), udRootRes);
+    if (fs.statSync(s).isDirectory()) {
+      if (!fs.existsSync(d)) copyDirTo(s, d, src, udRootRes);
+      else copyBuiltinFiles(s, d, udRootRes);
+      continue;
+    }
+    if (fs.existsSync(d) && fs.readFileSync(d).equals(fs.readFileSync(s))) continue;  // 一样就不写
+    fs.copyFileSync(s, d);
+  }
+}
+
+// 同步公共库 common（generate.py 依赖 `from common import *`，必须与出厂同版本）。
+//
+// ★ 为什么要单独成函数、而且必须从 syncBuiltinFilesToUserCopy() 里再调一次：
+// 这段逻辑原先只写在 ensureUserCopy() 里，可在它上面两行就是
+//     if (p.startsWith(udRootRes + path.sep)) return p;   // 已在 userData
+// 而 read-schema / run-generate 传进来的**永远是 userData 路径**（scan-experiments
+// 的优先级决定），于是每次都在那儿早退 —— 这段同步**从来没有执行过**。
+// 注释写对了、代码也写对了，被更靠前的一句 return 挡死。
+//
+// 代价实测过：改完出厂 docx_report.py 之后 26 个实验的报告生成全报
+// `AttributeError: 'DocxReportWriter' object has no attribute 'add_data_photo'`
+// —— generate.py 同步过去了（它走 copyBuiltinFiles），common 没过去。
+// 所以凡是「改出厂不生效」的症状，都先来这条路径上找。
+//
+// 不节流、也不整目录 rm：copyBuiltinFiles 只写内容真的不同的文件，便宜到可以每次
+// 开实验都跑。这同时消掉了原先那个「改了出厂、但 10 分钟内不生效」的窗口 ——
+// 开发时改 common 然后立刻点生成，是最容易撞上它的用法。
+function syncCommonToUserCopy(builtinRoot, udRootRes) {
+  const src = ensureInside(path.join(builtinRoot, 'common'), builtinRoot);
+  if (!fs.existsSync(src)) return;                            // 出厂没有就不动
+  const dst = ensureInside(path.join(udRootRes, 'common'), udRootRes);
+  fs.mkdirSync(dst, { recursive: true });
+  copyBuiltinFiles(src, dst, udRootRes);
 }
 
 function scanDirEntry(d, source) {
@@ -347,6 +419,7 @@ ipcMain.on('window-close', () => { if (mainWindow) mainWindow.close(); });
 
 // ── IPC: 读取 schema.json（方式三：表单模式）──
 ipcMain.handle('read-schema', (_, expPath) => {
+  syncBuiltinFilesToUserCopy(expPath);   // 出厂文件更新过就同步到用户副本（见上方函数注释）
   try {
     const p = path.join(expPath, 'schema.json');
     if (!fs.existsSync(p)) return { ok: true, schema: null };
@@ -405,6 +478,33 @@ function getSkillsDir() {
   const dir = path.join(app.getPath('userData'), 'skills');
   try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { /* 忽略 */ }
   return dir;
+}
+
+// 出厂技能播种：把 PROJECT_ROOT/skills 里缺失的文件补进 userData/skills。
+//
+// 为什么需要：技能此前只有 userData 一个来源（getSkillsDir 指向那里，仓库里没有副本），
+// 于是《物理实验报告写作规范》是台孤儿文件 —— 清一次 userData、换台机器、或照
+// 《复刻指南》重做一版，规范就没了，AI 生成的新变体立刻退回学长原版的措辞。
+//
+// 与 copyBuiltinFiles 的「出厂文件一律覆盖」刻意不同：那边管的是 app 里改不了的文件，
+// 这边管的是用户能改的（技能页能导入/删除、能打开目录手工编辑）—— 所以**只补不覆盖**，
+// 已有的同名文件一律留着用户的版本。代价是出厂技能后续更新不会自动下发，
+// 需要用户自己删掉旧文件让它重新播种。
+function seedBuiltinSkills() {
+  try {
+    const src = path.join(PROJECT_ROOT, 'skills');
+    if (!fs.existsSync(src)) return;                     // 出厂没有这个目录（如旧打包版）就不管
+    const dst = getSkillsDir();
+    let n = 0;
+    for (const f of fs.readdirSync(src)) {
+      if (!/\.(md|markdown|txt)$/i.test(f)) continue;
+      const d = path.join(dst, f);
+      if (fs.existsSync(d)) continue;                    // 已存在 —— 用户可能改过，不碰
+      fs.copyFileSync(path.join(src, f), d);
+      n++;
+    }
+    if (n) log(`已播种出厂技能 ${n} 个 -> ${dst}`);
+  } catch (e) { /* 播种失败不影响启动，只是技能少一个 */ }
 }
 
 // 解析 SKILL.md frontmatter（--- name/description ---）；无 frontmatter 时用文件名兜底
@@ -1392,9 +1492,13 @@ ipcMain.handle('open-file', (_, filePath) => {
 // ── IPC: 运行 generate.py 生成报告 ──
 // variants.compose 向 stdout 打印的章节原文标记（供应用侧按章节润色/导入重生成）
 const SECTIONS_MARKER = '.LAB_SECTIONS_JSON:';
-ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish) => {
+ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish, embedPhoto) => {
   // 生成报告属写操作：迁移/复用 userData 副本，报告与章节缓存不再落入安装目录
   expPath = ensureUserCopy(expPath);
+  // 生成前再同步一次出厂文件。read-schema 已经同步过，但生成依赖 generate.py 与 common，
+  // 是这条链上最不能容忍旧版本的一步 —— 上一版就是因为副本里的 generate.py 停在旧版本，
+  // 修在出厂、跑在副本，导致必填校验一直按旧判据误报。
+  syncBuiltinFilesToUserCopy(expPath);
   const generatePy = path.join(expPath, 'generate.py');
   if (!fs.existsSync(generatePy)) {
     return { ok: false, error: 'generate.py 不存在', logs: [] };
@@ -1419,6 +1523,13 @@ ipcMain.handle('run-generate', async (_, expPath, studentInfo, variants, polish)
   // AI 润色导入（{章节: Markdown 文本}），由 compose() 注入覆盖对应变体章节
   if (polish && typeof polish === 'object' && Object.keys(polish).length > 0) {
     env.LAB_POLISH = JSON.stringify(polish);
+  }
+  // 原始数据记录照片：交给 generate.py 的 add_data_photo() 嵌进「一、原始数据记录」。
+  // 没传 embedPhoto（老渲染层）按开处理 —— 有照片就该嵌，是默认行为。
+  // env 里没有 LAB_DATA_PHOTO 时 Python 侧自动退回原来的占位文字，行为不变。
+  if (embedPhoto !== false) {
+    const dataPhoto = findDataPhoto(expPath);   // expPath 此处已是 userData 副本路径
+    if (dataPhoto) env.LAB_DATA_PHOTO = dataPhoto;
   }
 
   // 解析真实可用的 python.exe 直接 spawn（优先 Store Python，排除沙箱路径，不依赖 cmd.exe）
@@ -1562,6 +1673,24 @@ const AI_PROVIDERS = {
     baseUrl: '',
     model: 'gpt-4o',
   },
+  // 识图专用：硅基流动（OpenAI 兼容，Qwen3-VL 支持图片输入）
+  siliconflow: {
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    model: 'Qwen/Qwen3-VL-32B-Instruct',
+  },
+  // 识图专用：阿里云百炼（DashScope 兼容，学生可用学校代金券白嫖）
+  bailian: {
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    model: 'qwen3-vl-plus',
+  },
+};
+
+// 识图模型的兜底（用户没填 visionModel 时，按 provider 猜一个能看图的模型）
+const VISION_FALLBACK = {
+  siliconflow: 'Qwen/Qwen3-VL-32B-Instruct',
+  bailian: 'qwen3-vl-plus',
+  qwen: 'qwen-vl-max',
+  custom: 'gpt-4o',
 };
 
 // ── IPC: AI 对话（requestId 支持取消：ai-chat-cancel 中止对应请求）──
@@ -1622,6 +1751,83 @@ ipcMain.on('ai-chat-cancel', (_, requestId) => {
   if (c) {
     try { c.abort(); } catch (e) { /* 忽略 */ }
     aiAbortControllers.delete(String(requestId || ''));
+  }
+});
+
+// ── IPC: 选择数据表照片并读为 dataURL（供识图录入功能）──
+const IMG_MIME = {
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+  '.webp': 'image/webp', '.bmp': 'image/bmp',
+};
+const IMG_MAX_BYTES = 20 * 1024 * 1024;
+
+ipcMain.handle('pick-table-image', async () => {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: '选择数据表照片',
+      filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp'] }],
+      properties: ['openFile'],
+    });
+    if (canceled || !filePaths || !filePaths.length) return { ok: true, canceled: true };
+    const p = filePaths[0];
+    const st = fs.statSync(p);
+    if (st.size > IMG_MAX_BYTES) {
+      return { ok: false, error: `图片 ${(st.size / 1048576).toFixed(1)}MB 超过 20MB 上限，请先压缩` };
+    }
+    const mime = IMG_MIME[path.extname(p).toLowerCase()] || 'image/jpeg';
+    return {
+      ok: true,
+      dataUrl: `data:${mime};base64,${fs.readFileSync(p).toString('base64')}`,
+      name: path.basename(p),
+    };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// ── IPC: 把识图用的原图落到实验目录（生成报告时自动嵌入「原始数据记录」）──
+// 为什么落在识图入口：选图/拖拽/粘贴三条路都汇进 startRecognition()，且那里拿到的
+// 还是压缩之前的原始字节 —— 正是"喂给 OCR 的那张"。渲染层只此一处改动。
+//
+// 取名「原始数据照片.<ext>」是刻意的：它必须避开 USER_OWNED_FILE_RE 里已有的几个名字
+// （那是用户数据，同步永不覆盖），也必须避开出厂目录里的任何文件名 —— 否则
+// copyBuiltinFiles() 将来遇到同名出厂文件时会把用户这张照片盖掉。
+const PHOTO_BASENAME = '原始数据照片';
+const PHOTO_MIME_EXT = {
+  'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/bmp': '.bmp',
+};
+// 认不出的 MIME 就用子类型本身当扩展名（image/heic → .heic），别一律写 .jpg ——
+// 文件名是排查问题时唯一的线索，写错了等于把线索毁掉。
+function photoExtFor(mime) {
+  const known = PHOTO_MIME_EXT[String(mime).toLowerCase()];
+  if (known) return known;
+  const sub = String(mime).split('/')[1].toLowerCase().replace(/[^a-z0-9]/g, '');
+  return sub ? '.' + sub : '.jpg';
+}
+
+function findDataPhoto(expPath) {
+  try {
+    const f = fs.readdirSync(expPath).find(n => n.startsWith(PHOTO_BASENAME + '.'));
+    return f ? path.join(expPath, f) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+ipcMain.handle('save-table-image', (_, expPath, dataUrl) => {
+  try {
+    const m = /^data:(image\/[a-z+.-]+);base64,(.+)$/i.exec(String(dataUrl || ''));
+    if (!m) return { ok: false, error: '图片数据无效' };
+    const p = ensureUserCopy(expPath);
+    // 先清掉可能存在的旧照片：换图或换格式时不留下两张，否则生成时无法判定用哪张
+    for (const n of fs.readdirSync(p)) {
+      if (n.startsWith(PHOTO_BASENAME + '.')) fs.unlinkSync(path.join(p, n));
+    }
+    const name = PHOTO_BASENAME + photoExtFor(m[1]);
+    fs.writeFileSync(path.join(p, name), Buffer.from(m[2], 'base64'));
+    return { ok: true, file: name };
+  } catch (err) {
+    return { ok: false, error: err.message };
   }
 });
 

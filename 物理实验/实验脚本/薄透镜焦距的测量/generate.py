@@ -18,8 +18,36 @@ from common.variants import compose
 # ── 物理常数与仪器参数（按教材） ──
 DELTA_INSTRUMENT = 0.05  # cm, Δ_仪 = 0.5 × 0.1cm（光具座最小分度 0.1cm）
 
+MIN_CONJ_ROWS = 3  # 共轭法至少测几次（少于这个数视为填得不够，不出报告）
+
 
 # （方式三：_create_template 已移除，数据真相为 data.json）
+
+
+def _read_conj(conjugate_raw, missing: list):
+    """读取共轭法数据（data["conjugate"] 的定长矩阵，每行 [X₃, X₁, X₂]）。
+
+    schema 把容器定死在 8 行，学生填几次算几次 —— 所以：
+      整行全空 → 视为未使用的行，直接跳过（不算缺失）；
+      只有部分格空 → 记入 missing（这才是真漏填）。
+    返回 [(序号, X₃, X₁, X₂), ...]，序号是原始行号，从 1 起。
+    """
+    rows = []
+    if not isinstance(conjugate_raw, list):
+        return rows
+    for i, raw in enumerate(conjugate_raw):
+        idx = i + 1
+        cells = list(raw)[:3] if isinstance(raw, list) else [raw]
+        cells += [None] * (3 - len(cells))
+        x3, x1, x2 = cells
+        if x3 is None and x1 is None and x2 is None:
+            continue  # 未使用的行
+        for lbl, v in zip(("X₃", "X₁", "X₂"), (x3, x1, x2)):
+            if v is None:
+                missing.append(f"共轭法 第 {idx} 行「{lbl}」")
+        if x3 is not None and x1 is not None and x2 is not None:
+            rows.append((idx, float(x3), float(x1), float(x2)))
+    return rows
 
 
 def _compute(data: dict) -> dict:
@@ -34,16 +62,17 @@ def _compute(data: dict) -> dict:
     u_raw = data["u"]                 # 物距像距法：物距 u
     v_raw = data["v"]                 # 物距像距法：8 次像距 v
     x0_raw = data["x0"]               # 共轭法：物屏位置 X0
-    conjugate_raw = data["conjugate"] # 共轭法：3 行 × [X3, X1, X2]
+    conjugate_raw = data["conjugate"] # 共轭法：定长 8 行，每行 [X3, X1, X2]
 
     # ── 类型转换 ──
     f_auto = [float(v) for v in f_auto_raw]
     u = float(u_raw)
     v_vals = [float(v) for v in v_raw]
     x0 = float(x0_raw)
-    x3_vals = [float(conjugate_raw[i][0]) for i in range(3)]
-    x1_vals = [float(conjugate_raw[i][1]) for i in range(3)]
-    x2_vals = [float(conjugate_raw[i][2]) for i in range(3)]
+    _conj = _read_conj(conjugate_raw, [])   # 已过必填校验，这里只取回非空行
+    x3_vals = [r[1] for r in _conj]
+    x1_vals = [r[2] for r in _conj]
+    x2_vals = [r[3] for r in _conj]
 
     # ── 自准法 ──
     f_auto_bar = mean(f_auto)
@@ -101,7 +130,7 @@ def _compute(data: dict) -> dict:
     d_vals = []
     dd_vals = []
     f_conj_vals = []
-    for i in range(3):
+    for i in range(len(x3_vals)):
         di = abs(x3_vals[i] - x0)
         ddi = abs(x2_vals[i] - x1_vals[i])
         fi = (di ** 2 - ddi ** 2) / (4 * di)
@@ -147,16 +176,21 @@ def _generate_docx(data: dict, output_path: str):
         return v if isinstance(v, list) else [v]
 
     missing = []
-    for k in ("f_auto", "u", "v", "x0", "conjugate"):
+    for k in ("f_auto", "u", "v", "x0"):
         v = data.get(k)
         if v is None:
             missing.append(k)
         elif isinstance(v, list) and any(x is None for x in _flat(v)):
             missing.append(k)
+    # 共轭法走定长容器：整行空 = 未使用的行，只有部分空才算漏填
+    conj = _read_conj(data.get("conjugate"), missing)
     if missing:
         print("以下必填数据未填写，请补齐后重新运行：")
         for m in missing:
             print(f"  - {m}")
+        return
+    if len(conj) < MIN_CONJ_ROWS:
+        print(f"[错误] 共轭法至少需要 {MIN_CONJ_ROWS} 次测量（当前填了 {len(conj)} 次），请补齐后重新运行。")
         return
 
     # ═══════════════════════════════════════════
@@ -203,7 +237,7 @@ def _generate_docx(data: dict, output_path: str):
     # 一、原始记录数据
     # ═══════════════════════════════════════════
     doc.add_heading("一、原始记录数据", level=1)
-    doc.add_paragraph("（请在此处粘贴原始数据记录照片）")
+    doc.add_data_photo("（请在此处粘贴原始数据记录照片）")
 
     # 1. 自准法
     doc.add_heading("1. 自准法测量凸透镜焦距", level=2)
@@ -232,7 +266,7 @@ def _generate_docx(data: dict, output_path: str):
 
     conj_headers = ["次数$n$", "$X_3$ / cm", "$X_1$ / cm", "$X_2$ / cm", "$D$ / cm", "$d$ / cm", "$f$ / cm"]
     conj_rows = []
-    for i in range(3):
+    for i in range(len(x3_vals)):
         conj_rows.append([
             str(i + 1),
             f"{x3_vals[i]:.2f}",

@@ -41,6 +41,10 @@
         "to": "python-runtime"
       },
       {
+        "from": "skills",
+        "to": "skills"
+      },
+      {
         "from": "物理实验",
         "to": "物理实验",
         "filter": [

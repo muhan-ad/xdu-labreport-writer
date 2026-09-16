@@ -161,7 +161,7 @@ def _generate_docx(data: dict, output_path: str):
         doc.add_paragraph_rich(variants["实验方法"])
 
     doc.add_heading("一、原始数据记录", level=1)
-    doc.add_paragraph("请在下方粘贴原始数据记录照片。")
+    doc.add_data_photo("请在下方粘贴原始数据记录照片。")
 
     doc.add_heading("二、数据处理", level=1)
     doc.add_paragraph("采用电流换向法消除不等位电压的影响，霍尔电压为")

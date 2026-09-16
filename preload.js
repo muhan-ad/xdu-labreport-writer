@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('labAPI', {
   scanExperiments: () => ipcRenderer.invoke('scan-experiments'),
   openFile: (filePath) => ipcRenderer.invoke('open-file', filePath),
-  runGenerate: (expPath, studentInfo, variants, polish) => ipcRenderer.invoke('run-generate', expPath, studentInfo, variants, polish),
+  runGenerate: (expPath, studentInfo, variants, polish, embedPhoto) => ipcRenderer.invoke('run-generate', expPath, studentInfo, variants, polish, embedPhoto),
   cancelGenerate: () => ipcRenderer.invoke('cancel-generate'),
   onGenerateLog: (callback) => {
     ipcRenderer.on('generate-log', (_, data) => callback(data));
@@ -53,6 +53,10 @@ contextBridge.exposeInMainWorld('labAPI', {
   },
   // AI 对话（requestId 支持取消）
   aiChat: (params) => ipcRenderer.invoke('ai-chat', params),
+  // 数据表照片识别：选图片 → dataURL（压缩在渲染层做）
+  pickTableImage: () => ipcRenderer.invoke('pick-table-image'),
+  // 把识图用的原图落到实验目录，生成报告时自动嵌入「原始数据记录」（开关在设置页）
+  saveTableImage: (expPath, dataUrl) => ipcRenderer.invoke('save-table-image', expPath, dataUrl),
   aiChatCancel: (requestId) => ipcRenderer.send('ai-chat-cancel', requestId),
   // 变体组合
   loadVariants: (expPath) => ipcRenderer.invoke('load-variants', expPath),

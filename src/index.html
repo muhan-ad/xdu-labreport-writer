@@ -209,6 +209,10 @@
                 <div class="card-header">
                   <h4>测量数据</h4>
                   <div class="card-header-actions">
+                    <button class="btn btn-sm btn-outline" id="btnRecognize">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;vertical-align:-2px;margin-right:4px;"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                      识别图片
+                    </button>
                     <button class="btn btn-sm btn-outline" id="btnClearFormData" disabled>清除数据</button>
                     <button class="btn btn-sm btn-outline" id="btnFillDefaultData">填入默认数据</button>
                     <button class="btn btn-sm btn-primary" id="btnSaveData" disabled>保存修改</button>
@@ -423,6 +427,74 @@
     </div>
   </div>
 
+  <!-- 数据表识别弹窗 -->
+  <div class="modal-overlay" id="recognizeModal">
+    <div class="modal modal-xwide">
+      <div class="modal-header">
+        <h3>识别数据表</h3>
+        <button class="modal-close" id="btnCloseRecognize">×</button>
+      </div>
+      <div class="modal-body">
+
+        <!-- 阶段一：选图 -->
+        <div id="recogPick">
+          <div class="recog-drop" id="recogDrop">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            <div class="recog-drop-title">点击选择图片，或按 Ctrl+V 粘贴</div>
+            <div class="recog-drop-hint">支持 jpg / png / webp / bmp，20MB 以内</div>
+          </div>
+          <label class="recog-check-row">
+            <input type="checkbox" id="recogStudent" />
+            <span>同时识别学生信息（姓名 / 学号 / 班级）</span>
+          </label>
+          <label class="recog-check-row">
+            <input type="checkbox" id="recogScan" checked />
+            <span>增强扫描效果（去印章/阴影，推荐）</span>
+          </label>
+          <div class="recog-privacy">开启后会把你照片中的姓名、学号一并发送至所配置的 AI 服务商，默认关闭。</div>
+        </div>
+
+        <!-- 阶段二：识别中 -->
+        <div id="recogLoading" style="display:none;">
+          <div class="recog-loading">
+            <div class="recog-spinner"></div>
+            <div class="recog-loading-text" id="recogLoadingText">正在识别数据表…</div>
+          </div>
+        </div>
+
+        <!-- 阶段三：核对 -->
+        <div id="recogResult" style="display:none;">
+          <div class="recog-toolbar">
+            <div class="recog-summary" id="recogSummary"></div>
+            <div class="recog-legend">
+              <span class="recog-badge ok">✓ 已识别</span>
+              <span class="recog-badge warn">⚠ 建议核对</span>
+              <span class="recog-badge fail">✗ 未识别</span>
+            </div>
+          </div>
+          <div class="recog-split">
+            <div class="recog-image-pane" id="recogImagePane" title="点击放大原图">
+              <img id="recogImg" alt="数据表原图" />
+              <div class="recog-image-hint">点击放大</div>
+            </div>
+            <div class="recog-fields" id="recogFields"></div>
+          </div>
+          <div class="recog-note" id="recogNote"></div>
+        </div>
+
+      </div>
+      <div class="modal-footer">
+        <label class="recog-only-empty">
+          <input type="checkbox" id="recogOnlyEmpty" />
+          <span>只填空字段（不覆盖已填内容）</span>
+        </label>
+        <span class="recog-caveat">AI 抄录可能读错，绿色「已识别」不等于数值正确 —— 填入前请对照左侧原图核对</span>
+        <button class="btn btn-ghost" id="btnCancelRecognize">取消</button>
+        <button class="btn btn-primary" id="btnApplyRecognize" disabled>填入所选</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 设置弹窗 -->
   <div class="modal-overlay" id="settingsModal">
     <div class="modal modal-wide">
@@ -499,10 +571,30 @@
               </div>
             </div>
             <div class="settings-section">
+              <h4>识图模型（数据表识别）</h4>
+              <div class="form-group">
+                <label>识图提供商</label>
+                <select id="selectVisionProvider">
+                  <option value="inherit">跟随上方提供商（需支持图片输入）</option>
+                  <option value="siliconflow">硅基流动（Qwen3-VL 免费额度）</option>
+                  <option value="bailian">阿里云百炼（学生代金券白嫖）</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>识图模型名称（留空使用预设）</label>
+                <input type="text" id="inputVisionModel" placeholder="Qwen/Qwen3-VL-32B-Instruct" />
+              </div>
+              <div class="form-hint">识图复用上面的 API Key。选「硅基流动」或「百炼」时，请把上方 API Key 换成对应服务商的 key。</div>
+            </div>
+            <div class="settings-section">
               <h4>生成选项</h4>
               <div class="form-row">
                 <label class="checkbox-label"><input type="checkbox" id="chkAiPolish" /> 生成后自动 AI 润色</label>
               </div>
+              <div class="form-row">
+                <label class="checkbox-label"><input type="checkbox" id="chkEmbedPhoto" checked /> 生成报告时自动嵌入原始数据记录照片</label>
+              </div>
+              <div class="form-hint">识图时用的那张原图会自动存进实验目录，生成报告时嵌进「一、原始数据记录」，不用再手动粘贴。关掉则连图都不存，报告里保留占位文字。</div>
             </div>
           </div>
           <!-- 技能页 -->

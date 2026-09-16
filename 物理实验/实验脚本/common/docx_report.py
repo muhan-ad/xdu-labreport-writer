@@ -629,6 +629,25 @@ class DocxReportWriter:
         self._sel.Collapse(Direction=wdCollapseEnd)
         self._goto_end()
 
+    def add_data_photo(self, fallback_text: str = "（请在此处粘贴原始数据记录照片。）", width_cm: float = 14.0):
+        """插入原始数据记录照片（生成报告时由环境变量 LAB_DATA_PHOTO 指定）。
+
+        没有照片时退回占位文字，保持原行为 —— 这一步不能省：add_image() 在文件
+        缺失时只打印 WARNING 就返回，直接调它会留下一节空白且没有任何报错。
+
+        读取失败同样退回占位文字：照片是用户丢进来的任意文件，格式可能 python-docx
+        根本不认（如 .heic）。不让它把整篇报告炸掉 —— 这条路径以前一直是好的，
+        不能因为加了嵌图反而变脆。
+        """
+        photo = os.environ.get("LAB_DATA_PHOTO")
+        if photo and os.path.exists(photo):
+            try:
+                self.add_image(photo, width_cm=width_cm)
+                return
+            except Exception as e:
+                print(f"[警告] 原始数据照片插入失败（{e}），改用占位文字：{photo}")
+        self.add_paragraph(fallback_text)
+
     def add_page_break(self):
         """插入分页符。"""
         self._goto_end()

@@ -128,7 +128,7 @@ def _generate_docx(data: dict, output_path: str):
     # 一、原始数据记录
     # ════════════════════════════════
     doc.add_heading("一、原始数据记录", level=1)
-    doc.add_paragraph("请在下方粘贴劈尖干涉条纹原始数据记录照片。")
+    doc.add_data_photo("请在下方粘贴劈尖干涉条纹原始数据记录照片。")
 
     doc.add_heading("1.1 实验数据记录表", level=2)
 

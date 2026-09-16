@@ -18,7 +18,7 @@
       "name": "共轭法",
       "fields": [
         {"key": "x0", "label": "物屏位置 X₀", "type": "number", "unit": "cm", "required": true},
-        {"key": "conjugate", "label": "共轭法数据（3 次 × [X₃, X₁, X₂]）", "type": "matrix", "rows": 3, "cols": 3, "rowLabels": ["第1次", "第2次", "第3次"], "colLabels": ["X₃/cm", "X₁/cm", "X₂/cm"], "unit": "cm", "required": true}
+        {"key": "conjugate", "label": "共轭法数据（逐次填 [X₃, X₁, X₂]，至少 3 次）", "type": "matrix", "rows": 8, "cols": 3, "colLabels": ["X₃/cm", "X₁/cm", "X₂/cm"], "unit": "cm", "required": true}
       ]
     }
   ]
