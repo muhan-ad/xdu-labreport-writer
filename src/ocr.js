@@ -38,14 +38,47 @@ async function loadOcrSettingsForm() {
 function updateVisionFields() {
   const inherited = $('selectVisionProvider').value === 'inherit';
   $('inputVisionApiKey').disabled = inherited;
-  $('inputVisionApiUrl').disabled = inherited;
   $('btnClearVisionApiKey').disabled = inherited;
+  const urlInput = $('inputVisionApiUrl');
+  const hint = $('visionApiUrlHint');
+  urlInput.disabled = inherited;
+  if (inherited) {
+    // 继承：地址栏灰显并自动填入"上方 AI 服务"的真实地址（由主进程解析，含服务商预设）
+    urlInput.dataset.ownValue = urlInput.dataset.ownValue || loadSettings().visionApiUrl || '';
+    if (hint) hint.textContent = '继承上方 AI 服务：地址自动填充，不可修改。';
+    refreshVisionInheritedUrl();
+  } else {
+    // 切回独立服务：恢复用户自己填过的地址（不要把继承来的地址留在框里）
+    urlInput.value = urlInput.dataset.ownValue || loadSettings().visionApiUrl || '';
+    urlInput.dataset.ownValue = urlInput.value;   // 保持备份与当前值一致
+    if (hint) hint.textContent = '专用密钥使用系统安全存储，并与服务地址绑定。';
+  }
+}
+
+// 继承态下把主 API 的真实地址同步到识图地址栏（切提供商 / 改主地址时调用）
+async function refreshVisionInheritedUrl() {
+  const sel = $('selectVisionProvider');
+  if (!sel || sel.value !== 'inherit') return;
+  const settings = loadSettings();
+  try {
+    const r = await window.labAPI.resolveEndpoints({
+      provider: settings.provider || 'deepseek',
+      apiUrl: $('inputApiUrl') ? $('inputApiUrl').value.trim() : (settings.apiUrl || ''),
+    });
+    $('inputVisionApiUrl').value = (r && r.chat) || '';
+  } catch (e) { /* 地址不合法时留空，保存时会给出提示 */ }
 }
 
 async function saveOcrSettings(settings) {
   settings.visionProvider = $('selectVisionProvider').value;
   settings.visionModel = $('inputVisionModel').value.trim();
-  settings.visionApiUrl = $('inputVisionApiUrl').value.trim();
+  // 继承态下地址栏显示的是主 API 地址（只读），不能把它写进用户自己的识图地址，
+  // 否则切回独立服务时会丢掉用户上次填的地址
+  if (settings.visionProvider === 'inherit') {
+    settings.visionApiUrl = $('inputVisionApiUrl').dataset.ownValue || settings.visionApiUrl || '';
+  } else {
+    settings.visionApiUrl = $('inputVisionApiUrl').value.trim();
+  }
   settings.embedDataPhoto = $('chkEmbedDataPhoto').checked;
   if (settings.visionProvider === 'custom' && !/^https:\/\//i.test(settings.visionApiUrl)) {
     showToast('error', '识图地址无效', '自定义识图服务必须使用 HTTPS');
@@ -55,7 +88,7 @@ async function saveOcrSettings(settings) {
   if (key) {
     const stored = await window.labAPI.saveVisionCredential({
       provider: settings.visionProvider,
-      apiUrl: settings.visionApiUrl,
+      visionApiUrl: settings.visionApiUrl,   // 与识图请求同名字段：保证密钥绑定的地址一致
       key,
     });
     if (!stored.ok) {
@@ -76,6 +109,7 @@ function openRecognizeModal() {
     showToast('warning', '无法识别', '该实验尚未迁移，暂不支持表单录入');
     return;
   }
+  cancelRecognition();          // 上一次残留的识别请求先作废
   recogState = null;
   const pane = $('recogImagePane');
   if (pane) pane.classList.remove('zoomed');
@@ -302,19 +336,8 @@ function parseLooseJson(text) {
 }
 
 // ── 数值宽容转换：模型可能回 "1.05 Ω"、"2.7×10^-9" 这类字符串 ──
-function coerceNum(v) {
-  if (typeof v === 'number') return isFinite(v) ? v : null;
-  if (typeof v !== 'string') return null;
-  let s = v.trim();
-  if (!s) return null;
-  s = s.replace(/[×*xX]\s*10\s*\^?\s*([+\-−]?\d+)/g, 'e$1')   // 2.7×10^-9 → 2.7e-9
-       .replace(/[−–—]/g, '-')
-       .replace(/\s+/g, '');
-  const m = s.match(/^[+\-]?(\d+\.?\d*|\.\d+)([eE][+\-]?\d+)?/);
-  if (!m) return null;
-  const n = parseFloat(m[0]);
-  return isFinite(n) ? n : null;
-}
+// 数值解析实现在 src/shared/ocr-number.js（整串严格匹配，渲染层与 Node 单测共用）
+const coerceNum = (window.ocrNumber || {}).coerceNum || (() => null);
 
 // ── 从 schema 默认数组推导出「数据形状」规律（只判形状，不判数值）──
 function deriveArrayPattern(def) {
@@ -618,6 +641,22 @@ function updateApplyBtn() {
   btn.textContent = n ? `填入所选（${n}）` : '填入所选';
 }
 
+// 识别会话：绑定「实验 ID + 请求 ID」。关闭弹窗/换图/换实验后，晚到的结果一律丢弃，
+// 否则会把上一个实验（或上一次识图）的数据写进当前状态（历史缺陷 R13）。
+let recogSession = null;
+let recogSeq = 0;         // requestId 的自增后缀（无 crypto.randomUUID 时使用）
+
+function cancelRecognition(reason) {
+  if (!recogSession || !recogSession.requestId) return;
+  recogSession.cancelled = true;
+  try { window.labAPI.ocrCancel(recogSession.requestId); } catch (e) { /* 忽略 */ }
+  recogSession = null;
+  if (reason) {
+    $('recogLoading').style.display = 'none';
+    $('recogPick').style.display = '';
+  }
+}
+
 // ── 选图 → 压缩 → 识别 ──
 async function startRecognition(dataUrl, name) {
   if (!currentSchema) { showToast('warning', '无法识别', '该实验尚未迁移'); return; }
@@ -634,13 +673,12 @@ async function startRecognition(dataUrl, name) {
   $('recogLoadingText').textContent = '正在压缩图片…';
   $('btnApplyRecognize').disabled = true;
 
-  // 识图用的这张原图顺手落盘，生成报告时嵌进「一、原始数据记录」。
-  // 放在压缩之前：要的是原图（设置项选的就是原图），压缩版只喂给模型。
-  // 不 await —— 落盘失败或慢都不该拖住识图；currentExp 必须判空，
-  // 「换一张」路径没有 currentSchema 那种守卫。
-  if (photoEmbedEnabled() && currentExp && currentExp.path) {
-    window.labAPI.saveTableImage(currentExp.path, dataUrl).catch(() => {});
-  }
+  // 原图先留在内存里，等用户确认识别结果后再落盘（历史缺陷 R13）：
+  // 旧实现是在识别前就异步保存、且失败静默，取消或识别失败也会把原图替换掉。
+  const originalDataUrl = dataUrl;
+  const requestId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `recog-${Date.now()}-${(recogSeq += 1)}`;
+  const expId = (currentExp && currentExp.id) || '';
+  recogSession = { requestId, expId, cancelled: false };
 
   const includeStudent = $('recogStudent').checked;
   const compressed = await compressImage(dataUrl);
@@ -669,6 +707,7 @@ async function startRecognition(dataUrl, name) {
   let result;
   try {
     result = await window.labAPI.ocrRecognize({
+      requestId,
       visionProvider: vProvider,
       provider: settings.provider || 'deepseek',
       apiUrl: settings.apiUrl || '',
@@ -681,7 +720,17 @@ async function startRecognition(dataUrl, name) {
     result = { ok: false, error: err.message };
   }
 
+  // 会话校验：这次结果是否仍属于「同一个实验 + 同一次识图」
+  if (!recogSession || recogSession.requestId !== requestId || recogSession.cancelled) return;
+  if (((currentExp && currentExp.id) || '') !== expId) {
+    recogSession = null;
+    $('recogLoading').style.display = 'none';
+    $('recogPick').style.display = '';
+    showToast('warning', '已忽略过期的识别结果', '识别期间切换了实验，本次结果未填入', 6000);
+    return;
+  }
   if (!result || !result.ok) {
+    recogSession = null;
     $('recogLoading').style.display = 'none';
     $('recogPick').style.display = '';
     showToast('error', '识别失败', (result && result.error) || '未知错误', 8000);
@@ -697,7 +746,9 @@ async function startRecognition(dataUrl, name) {
   }
 
   recogState = {
-    dataUrl: compressed,
+    dataUrl: compressed,          // 喂给模型的那张（核对界面显示用）
+    originalDataUrl,              // 原图：确认后再落盘成「原始数据照片」
+    expId,
     name: name || '',
     includeStudent,
     student: parsed.student || null,
@@ -729,8 +780,8 @@ function collectRecogValues() {
         const rowArr = [];
         for (let c = 0; c < (f.cols || 0); c++) {
           const inp = row.querySelector(`input[data-rrow="${r}"][data-rcol="${c}"]`);
-          const n = inp && inp.value.trim() !== '' ? parseFloat(inp.value) : NaN;
-          rowArr.push(isFinite(n) ? n : null);
+          const n = inp && inp.value.trim() !== '' ? coerceNum(inp.value) : null;
+          rowArr.push(n);
         }
         m.push(rowArr);
       }
@@ -753,7 +804,7 @@ function collectRecogValues() {
 }
 
 // ── 填入表单 ──
-function applyRecognition() {
+async function applyRecognition() {
   if (!recogState || !currentSchema) return;
   const onlyEmpty = $('recogOnlyEmpty').checked;
   const picked = collectRecogValues();
@@ -801,6 +852,18 @@ function applyRecognition() {
   refreshFormCheck();
   closeModal('recognizeModal');
 
+  // 确认后才保存原图（历史缺陷 R13）：失败必须可见，否则用户以为报告里会有照片
+  if (photoEmbedEnabled() && recogState.originalDataUrl && recogState.expId
+      && currentExp && currentExp.id === recogState.expId && currentExp.path) {
+    try {
+      const saved = await window.labAPI.saveTableImage(currentExp.path, recogState.originalDataUrl);
+      if (saved && saved.ok === false) throw Error(saved.error || '保存失败');
+    } catch (e) {
+      showToast('warning', '照片未保存', '识别结果已填入，但原始数据照片保存失败（' + ((e && e.message) || e) + '），如需嵌入报告请重新选图', 9000);
+    }
+  }
+  recogSession = null;
+
   const bits = [`已填入 ${filled} 个字段`];
   if (skipped) bits.push(`跳过 ${skipped} 个已有值`);
   if (blank) bits.push(`${blank} 个无有效值`);
@@ -815,8 +878,10 @@ function bindRecognizeEvents() {
   if (btn) btn.onclick = openRecognizeModal;
   if (!$('recognizeModal')) return;
 
-  $('btnCloseRecognize').onclick = () => closeModal('recognizeModal');
-  $('btnCancelRecognize').onclick = () => closeModal('recognizeModal');
+  // 关闭弹窗即取消进行中的识别请求：既省一次 API 调用，也避免晚到结果污染状态
+  const closeAndCancel = () => { cancelRecognition(); closeModal('recognizeModal'); };
+  $('btnCloseRecognize').onclick = closeAndCancel;
+  $('btnCancelRecognize').onclick = closeAndCancel;
   $('btnApplyRecognize').onclick = applyRecognition;
 
   // 原图点击放大/还原（核对时手写数字要看得清）
@@ -891,7 +956,7 @@ function bindRecognizeEvents() {
   $('btnClearVisionApiKey').onclick = async () => {
     const s = loadSettings();
     const r = await window.labAPI.saveVisionCredential({
-      provider: s.visionProvider || 'custom', apiUrl: s.visionApiUrl || '', key: '',
+      provider: s.visionProvider || 'custom', visionApiUrl: s.visionApiUrl || '', key: '',
     });
     if (!r.ok) return showToast('error', '清除失败', r.error);
     s.hasVisionApiKey = false; saveSettings(s);

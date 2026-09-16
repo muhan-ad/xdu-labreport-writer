@@ -432,26 +432,68 @@
   <!-- 数据表识别弹窗 -->
   <div class="modal-overlay" id="recognizeModal">
     <div class="modal modal-xwide">
-      <div class="modal-header"><h3>识别数据表</h3><button class="modal-close" id="btnCloseRecognize">×</button></div>
+      <div class="modal-header">
+        <h3>识别数据表</h3>
+        <button class="modal-close" id="btnCloseRecognize">×</button>
+      </div>
       <div class="modal-body">
+
+        <!-- 阶段一：选图 -->
         <div id="recogPick">
           <div class="recog-drop" id="recogDrop">
-            <div class="recog-drop-icon">▣</div>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
             <div class="recog-drop-title">点击选择图片，或拖入、按 Ctrl+V 粘贴</div>
-            <div class="recog-drop-hint">支持 jpg / png / webp，20MB 以内</div>
+            <div class="recog-drop-hint">支持 jpg / png / webp / bmp，20MB 以内</div>
           </div>
-          <label class="recog-check-row"><input type="checkbox" id="recogStudent" /><span>同时识别学生信息（姓名 / 学号 / 班级）</span></label>
-          <label class="recog-check-row"><input type="checkbox" id="recogScan" checked /><span>增强扫描效果（去阴影和偏色）</span></label>
-          <div class="recog-privacy">图片会发送到你配置的 AI 服务；学生信息识别默认关闭。</div>
+          <label class="recog-check-row">
+            <input type="checkbox" id="recogStudent" />
+            <span>同时识别学生信息（姓名 / 学号 / 班级）</span>
+          </label>
+          <label class="recog-check-row">
+            <input type="checkbox" id="recogScan" checked />
+            <span>增强扫描效果（去印章/阴影，推荐）</span>
+          </label>
+          <div class="recog-privacy">开启后会把你照片中的姓名、学号一并发送至所配置的 AI 服务商，默认关闭。</div>
         </div>
-        <div id="recogLoading" style="display:none;"><div class="recog-loading"><div class="recog-spinner"></div><div id="recogLoadingText">正在识别数据表…</div></div></div>
+
+        <!-- 阶段二：识别中 -->
+        <div id="recogLoading" style="display:none;">
+          <div class="recog-loading">
+            <div class="recog-spinner"></div>
+            <div class="recog-loading-text" id="recogLoadingText">正在识别数据表…</div>
+          </div>
+        </div>
+
+        <!-- 阶段三：核对 -->
         <div id="recogResult" style="display:none;">
-          <div class="recog-toolbar"><div id="recogSummary"></div><div class="recog-legend"><span class="recog-badge ok">✓ 已识别</span><span class="recog-badge warn">⚠ 建议核对</span><span class="recog-badge fail">✗ 未识别</span></div></div>
-          <div class="recog-split"><div class="recog-image-pane" id="recogImagePane" title="点击放大原图"><img id="recogImg" alt="数据表原图" /><div class="recog-image-hint">点击放大</div></div><div class="recog-fields" id="recogFields"></div></div>
+          <div class="recog-toolbar">
+            <div class="recog-summary" id="recogSummary"></div>
+            <div class="recog-legend">
+              <span class="recog-badge ok">✓ 已识别</span>
+              <span class="recog-badge warn">⚠ 建议核对</span>
+              <span class="recog-badge fail">✗ 未识别</span>
+            </div>
+          </div>
+          <div class="recog-split">
+            <div class="recog-image-pane" id="recogImagePane" title="点击放大原图">
+              <img id="recogImg" alt="数据表原图" />
+              <div class="recog-image-hint">点击放大</div>
+            </div>
+            <div class="recog-fields" id="recogFields"></div>
+          </div>
           <div class="recog-note" id="recogNote"></div>
         </div>
+
       </div>
-      <div class="modal-footer"><label class="recog-only-empty"><input type="checkbox" id="recogOnlyEmpty" /><span>只填空字段</span></label><span class="recog-caveat">识别结果必须对照原图核对</span><button class="btn btn-ghost" id="btnCancelRecognize">取消</button><button class="btn btn-primary" id="btnApplyRecognize" disabled>填入所选</button></div>
+      <div class="modal-footer">
+        <label class="recog-only-empty">
+          <input type="checkbox" id="recogOnlyEmpty" />
+          <span>只填空字段（不覆盖已填内容）</span>
+        </label>
+        <span class="recog-caveat">AI 抄录可能读错，绿色「已识别」不等于数值正确 —— 填入前请对照左侧原图核对</span>
+        <button class="btn btn-ghost" id="btnCancelRecognize">取消</button>
+        <button class="btn btn-primary" id="btnApplyRecognize" disabled>填入所选</button>
+      </div>
     </div>
   </div>
 
@@ -508,10 +550,22 @@
         </div>
         <!-- 模块内容 -->
         <div class="settings-panes">
-          <!-- AI 服务页 -->
+          <!-- AI 服务页：页面上只放两个配置入口 + 两个生成选项开关，
+               具体配置项点按钮就地展开（同一时刻只展开一组），保持页面清爽 -->
           <div class="settings-pane active" id="paneAi">
             <div class="settings-section">
               <h4>AI 服务</h4>
+              <div class="ai-config-actions">
+                <button type="button" class="btn btn-outline btn-block" id="btnOpenApiConfig">API 配置</button>
+                <button type="button" class="btn btn-outline btn-block" id="btnOpenVisionConfig">识图模型配置</button>
+              </div>
+              <div class="form-row ai-config-checks">
+                <label class="checkbox-label"><input type="checkbox" id="chkAiPolish" /> 生成后自动 AI 润色</label>
+                <label class="checkbox-label"><input type="checkbox" id="chkEmbedDataPhoto" /> 在报告中插入识别原图</label>
+              </div>
+            </div>
+            <div class="settings-section ai-config-panel" id="panelApiConfig" hidden>
+              <h4>API 配置</h4>
               <div class="form-group">
                 <label>API 提供商</label>
                 <select id="selectProvider">
@@ -527,7 +581,7 @@
               </div>
               <div class="form-group">
                 <label>模型名称（留空使用默认）</label>
-                <input type="text" id="inputModel" placeholder="如 deepseek-v4-pro / doubao-seed-2-1-pro-260628 / qwen-plus" />
+                <input type="text" id="inputModel" placeholder="如 mimo-v2.5 / deepseek-v4-pro / qwen-plus" />
                 <div class="model-quick-select" id="modelQuickSelect"></div>
               </div>
               <div class="form-group">
@@ -535,19 +589,12 @@
                 <input type="text" id="inputApiUrl" placeholder="https://api.example.com/v1" />
               </div>
             </div>
-            <div class="settings-section">
-              <h4>生成选项</h4>
-              <div class="form-row">
-                <label class="checkbox-label"><input type="checkbox" id="chkAiPolish" /> 生成后自动 AI 润色</label>
-                <label class="checkbox-label"><input type="checkbox" id="chkEmbedDataPhoto" /> 在报告中插入识别原图</label>
-              </div>
-            </div>
-            <div class="settings-section">
-              <h4>图片识别</h4>
+            <div class="settings-section ai-config-panel" id="panelVisionConfig" hidden>
+              <h4>识图模型配置</h4>
               <div class="form-group"><label>识图服务</label><select id="selectVisionProvider"><option value="inherit">继承上方 AI 服务</option><option value="siliconflow">硅基流动</option><option value="bailian">阿里云百炼</option><option value="custom">OpenAI 兼容</option></select></div>
               <div class="form-group"><label>识图专用 API Key</label><input type="password" id="inputVisionApiKey" autocomplete="off" /><button type="button" id="btnClearVisionApiKey" class="btn btn-ghost">清除识图密钥</button></div>
               <div class="form-group"><label>识图模型（留空使用默认）</label><input type="text" id="inputVisionModel" placeholder="如 Qwen/Qwen3-VL-32B-Instruct" /></div>
-              <div class="form-group"><label>自定义识图 API 地址</label><input type="text" id="inputVisionApiUrl" placeholder="https://api.example.com/v1" /></div>
+              <div class="form-group"><label>自定义识图 API 地址</label><input type="text" id="inputVisionApiUrl" placeholder="https://api.example.com/v1" /><div class="form-hint" id="visionApiUrlHint"></div></div>
               <div class="form-hint">专用密钥使用系统安全存储，并与服务地址绑定。</div>
             </div>
           </div>
@@ -642,11 +689,11 @@
               <h4 class="notice-title">⚠ 必读公告</h4>
               <ol class="notice-list">
                 <li>本应用目前仍处于测试阶段。生成实验报告后，请务必根据自己的实验数据和老师的具体要求认真检查，尤其注意数据格式、有效数字、单位和报告排版。</li>
-                <li>如果报告中的公式无法正常生成或显示，请确认电脑已安装 Microsoft Word。本应用暂不支持 WPS Office，建议使用 Microsoft Word 2016 或更高版本。</li>
+                <li>如果报告中的公式无法正常生成或显示，请确认电脑已安装并激活了 Microsoft Word。本应用暂不支持 WPS Office，建议使用 Microsoft Word 2016 或更高版本。</li>
                 <li>部分实验在不同学期可能采用不同内容。例如，声速测量可能分为空气中测量和水中测量，薄透镜焦距测量可能使用凸透镜或凹透镜。如果应用中的模板与实际实验不一致，请及时提交问题反馈，帮助我们针对性调整。</li>
-                <li>做实验时，欢迎顺手拍摄实验桌面上的二维码并上传。这些图片对完善实验资料非常重要。上传步骤为：选择对应实验 → 点击「贡献数据」→ 选择「贡献实验报告」→ 选择图片 → 上传。（分数可以按照10分选）</li>
                 <li>如果你有功能建议，或者在使用过程中遇到问题，欢迎通过「问题反馈」告诉我们。</li>
                 <li>应用功能或整体架构发生较大调整时，我们会通过「版本更新」发布；实验模板、实验内容等资料发生变化时，则会通过「实验数据更新」推送。建议每次使用前检查应用版本和实验数据是否为最新。</li>
+                <li>如果你发现某些实验有错误，比如实验表格的参数与实验不匹配，请通过「问题反馈」告诉我们。</li>
                 <li>某些实验报告要求图片需标注学生信息，如果有此类要求，直接在 Word 编辑图片添加即可。</li>
               </ol>
             </div>
@@ -925,6 +972,7 @@
   <div class="toast-container" id="toastContainer"></div>
 
   <script src="shared/data-validation.js"></script>
+  <script src="shared/ocr-number.js"></script>
   <script src="renderer.js"></script>
   <script src="ocr.js"></script>
 </body>

@@ -1798,6 +1798,7 @@ function updateAiStatus() {
 function getDefaultModel(provider) {
   const defaults = {
     deepseek: 'deepseek-v4-pro',
+    mimo: 'mimo-v2.5',
     doubao: 'doubao-seed-2-1-pro-260628',
     qwen: 'qwen-plus',
     custom: 'gpt-4o',
@@ -1813,8 +1814,8 @@ const POPULAR_MODELS = {
     { name: 'deepseek-chat', desc: '旧版兼容' },
   ],
   mimo: [
-    { name: 'MiMo-VL-7B-RL', desc: '视觉理解' },
-    { name: 'MiMo-Flash-Preview', desc: '快速版' },
+    { name: 'mimo-v2.5', desc: '默认' },
+    { name: 'mimo-v2.5-pro', desc: '专业版' },
   ],
   custom: [
     { name: 'gpt-4o', desc: 'GPT-4o' },
@@ -2013,7 +2014,15 @@ function bindEvents() {
   $('selectProvider').onchange = () => {
     renderModelChips();
     autoFillApiUrl();
+    // 识图处于"继承"时，地址栏跟着主 API 地址走
+    if (typeof refreshVisionInheritedUrl === 'function') refreshVisionInheritedUrl();
   };
+  // AI 服务页的两个配置入口（就地展开/收起）
+  $('btnOpenApiConfig').onclick = () => toggleAiConfigPanel('api');
+  $('btnOpenVisionConfig').onclick = () => toggleAiConfigPanel('vision');
+  if ($('inputApiUrl')) $('inputApiUrl').addEventListener('input', () => {
+    if (typeof refreshVisionInheritedUrl === 'function') refreshVisionInheritedUrl();
+  });
 
   // 批量生成（预留）
   $('btnBatch').onclick = runBatchGenerate;
@@ -2210,9 +2219,30 @@ function saveStudent() {
   showToast('success', '已保存', '学生信息已更新');
 }
 
+// AI 服务页：两个配置面板就地展开/收起（同一时刻只展开一组，进入页面时都收起）
+function toggleAiConfigPanel(which) {
+  const api = $('panelApiConfig'), vision = $('panelVisionConfig');
+  if (!api || !vision) return;
+  const showApi = which === 'api' ? api.hidden : false;
+  const showVision = which === 'vision' ? vision.hidden : false;
+  api.hidden = !showApi;
+  vision.hidden = !showVision;
+  $('btnOpenApiConfig').classList.toggle('active', showApi);
+  $('btnOpenVisionConfig').classList.toggle('active', showVision);
+  if (showVision && typeof updateVisionFields === 'function') updateVisionFields();
+}
+function collapseAiConfigPanels() {
+  const api = $('panelApiConfig'), vision = $('panelVisionConfig');
+  if (api) api.hidden = true;
+  if (vision) vision.hidden = true;
+  if ($('btnOpenApiConfig')) $('btnOpenApiConfig').classList.remove('active');
+  if ($('btnOpenVisionConfig')) $('btnOpenVisionConfig').classList.remove('active');
+}
+
 // ── 加载设置表单 ──
 // 设置模块导航切换
 function switchSettingsPane(name) {
+  if (name === 'ai') collapseAiConfigPanels();   // 每次进入 AI 服务页都回到"只有两个按钮"的初始态
   $('btnNavAi').classList.toggle('active', name === 'ai');
   $('paneAi').classList.toggle('active', name === 'ai');
   $('btnNavSkills').classList.toggle('active', name === 'skills');

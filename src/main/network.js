@@ -27,8 +27,11 @@ function lookup(host, options, callback) {
 async function response(raw, options = {}, redirects = 0) {
   const url = publicUrl(raw);
   if (options.allowedHost && url.hostname !== options.allowedHost) throw Error('下载来源不在允许列表');
+  // 空闲超时可单独配置：大模型（识图/对话）可能在首字节前安静思考几十秒，
+  // 用固定的 15 秒会给"总期限还有富余"的请求误报网络超时（历史缺陷 R14）
+  const idleMs = Number(options.idleTimeoutMs) > 0 ? Number(options.idleTimeoutMs) : 15000;
   const res = await new Promise((resolve, reject) => {
-    const req = https.request(url, { ...options, lookup, timeout: 15000, headers: { 'User-Agent': 'labreport-writer', ...options.headers } }, resolve);
+    const req = https.request(url, { ...options, lookup, timeout: idleMs, headers: { 'User-Agent': 'labreport-writer', ...options.headers } }, resolve);
     req.on('error', reject);
     req.on('timeout', () => req.destroy(Error('网络连接超时')));
     req.end(options.body);
@@ -46,7 +49,7 @@ async function response(raw, options = {}, redirects = 0) {
 async function json(url, options = {}) {
   const timeout = AbortSignal.timeout(options.timeoutMs || 30000);
   const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
-  const res = await response(url, { ...options, signal });
+  const res = await response(url, { ...options, signal, idleTimeoutMs: options.idleTimeoutMs });
   const chunks = []; let size = 0;
   for await (const chunk of res) {
     size += chunk.length;

@@ -1602,6 +1602,10 @@ body {
   z-index: 100;
   align-items: center;
   justify-content: center;
+  /* 窗口比弹窗矮时（如设置弹窗固定 560px）也要能看到并滚到弹窗底部：
+     遮罩层可滚动 + 弹窗用 auto 外边距居中（居中不裁剪的标准写法） */
+  overflow-y: auto;
+  padding: 24px 16px;
   animation: fadeIn 0.2s ease;
 }
 .modal-overlay.show { display: flex; }
@@ -1613,6 +1617,7 @@ body {
   max-width: 90vw;
   box-shadow: 0 20px 50px rgba(0,0,0,0.2), 0 0 0 1px rgba(0,0,0,0.05);
   overflow: hidden;
+  margin: auto;                 /* 居中但不裁剪：弹窗高于视口时由遮罩层滚动 */
   animation: modalIn 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 @keyframes modalIn {
@@ -1725,7 +1730,12 @@ body {
 #settingsModal .modal-body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 0;
+  /* 左右 20px 与 .modal-header（16px 20px）/ .modal-footer（14px 20px）对齐：
+     此前这里是 padding: 0，把 .settings-center 的 20px 内距覆盖掉了（ID 选择器
+     优先级高于类选择器），导致导航与各页按钮/文字贴住弹窗左右边框。
+     只加水平内距：垂直方向保持原样，避免缩小各页的可用高度（底部留白交给
+     .settings-panes 的 padding-bottom，那部分计入滚动区域，不会被裁） */
+  padding: 0 20px;
   overflow: hidden;
   display: flex;
 }
@@ -1860,6 +1870,22 @@ body {
 
 .settings-section { margin-bottom: 20px; }
 .settings-section:last-child { margin-bottom: 0; }
+
+/* AI 服务页：两个配置入口按钮 + 生成选项 + 就地展开的配置面板 */
+.ai-config-actions { display: flex; gap: 10px; }
+.ai-config-actions .btn { flex: 1; }
+.ai-config-actions .btn.active {
+  border-color: var(--accent); color: var(--accent-dark);
+  background: var(--accent-soft, rgba(26,86,50,.08));
+}
+.ai-config-checks { margin-top: 14px; gap: 6px; }
+.ai-config-panel {
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  animation: ai-panel-in .16s ease-out;
+}
+.ai-config-panel[hidden] { display: none; }
+@keyframes ai-panel-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 .settings-section h4 {
   font-size: 12px;
   font-weight: 600;
@@ -1873,7 +1899,8 @@ body {
 .settings-center {
   display: flex;
   gap: 20px;
-  padding: 20px;
+  /* 内距统一由 #settingsModal .modal-body 负责（ID 选择器优先级更高，
+     写在这里不会生效——曾经因此让内容贴住弹窗边框） */
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
@@ -1908,7 +1935,8 @@ body {
   color: var(--accent);
   font-weight: 600;
 }
-.settings-panes { flex: 1 1 auto; min-width: 0; min-height: 0; overflow-y: auto; }
+/* 滚动容器的底部留白计入滚动区域：滚到底时最后一行按钮不贴弹窗底边 */
+.settings-panes { flex: 1 1 auto; min-width: 0; min-height: 0; overflow-y: auto; padding-bottom: 18px; }
 
 /* 报告管理：操作按钮悬浮固定在可视区底部，列表滚动任意位置都可删除 */
 #paneReports .skill-actions {

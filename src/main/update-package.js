@@ -13,9 +13,16 @@ function compare(a, b) {
   return 0;
 }
 function canonical(m) {
+  const files = Object.fromEntries(Object.entries(m.files || {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+  const removed = Array.isArray(m.removed)
+    ? [...new Set(m.removed.filter(x => typeof x === 'string'))].sort() : [];
+  if (removed.length) {
+    // 下架清单仅在其非空时进入签名载荷：不带 removed 的包 canonical 与旧版逐字节一致
+    return JSON.stringify({ dataVersion: m.dataVersion, minAppVersion: m.minAppVersion, url: m.url,
+      size: m.size, sha256: m.sha256, notes: m.notes || '', removed, files });
+  }
   return JSON.stringify({ dataVersion: m.dataVersion, minAppVersion: m.minAppVersion, url: m.url,
-    size: m.size, sha256: m.sha256, notes: m.notes || '',
-    files: Object.fromEntries(Object.entries(m.files || {}).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) });
+    size: m.size, sha256: m.sha256, notes: m.notes || '', files });
 }
 function verify(m, key, appVersion, currentVersion, host) {
   if (!m || typeof m !== 'object' || typeof m.signature !== 'string') throw Error('更新清单缺少发布签名，请维护者使用新版发布工具重新发布');
@@ -23,6 +30,12 @@ function verify(m, key, appVersion, currentVersion, host) {
   if (compare(appVersion, m.minAppVersion) < 0) throw Error('请先更新应用，再更新实验数据');
   if (publicUrl(m.url).hostname !== host) throw Error('更新包来源不正确');
   if (!Number.isSafeInteger(m.size) || m.size < 1 || m.size > MAX_PACKAGE || !/^[a-f0-9]{64}$/.test(m.sha256)) throw Error('更新包大小或摘要无效');
+  if (m.removed !== undefined) {
+    if (!Array.isArray(m.removed) || m.removed.length > 200 ||
+        m.removed.some(x => typeof x !== 'string' || !x || x.length > 100 || /[\\/:*?"<>|\x00-\x1f]/.test(x))) {
+      throw Error('更新包下架清单无效');
+    }
+  }
   const entries = Object.entries(m.files || {});
   if (!entries.length || entries.length > 4096) throw Error('更新包文件数量无效');
   const seen = new Set();

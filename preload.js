@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('labAPI', {
   saveCredential: (payload) => ipcRenderer.invoke('credential-save', payload),
   visionCredentialStatus: () => ipcRenderer.invoke('vision-credential-status'),
   saveVisionCredential: (payload) => ipcRenderer.invoke('vision-credential-save', payload),
+  resolveEndpoints: (payload) => ipcRenderer.invoke('resolve-endpoints', payload),
   pickTableImage: () => ipcRenderer.invoke('pick-table-image'),
   saveTableImage: (expPath, dataUrl) => ipcRenderer.invoke('save-table-image', expPath, dataUrl),
   ocrRecognize: (params) => ipcRenderer.invoke('ocr-recognize', params),
@@ -64,6 +65,7 @@ contextBridge.exposeInMainWorld('labAPI', {
   // AI 对话（requestId 支持取消：ai-chat-cancel 中止对应请求；onAiChunk 实时增量显示）
   aiChat: (params) => ipcRenderer.invoke('ai-chat', params),
   aiChatCancel: (requestId) => ipcRenderer.send('ai-chat-cancel', requestId),
+  ocrCancel: (requestId) => ipcRenderer.send('ocr-cancel', requestId),
   onAiChunk: (cb) => {
     ipcRenderer.removeAllListeners('ai-chat-chunk');
     ipcRenderer.on('ai-chat-chunk', (_e, d) => { try { cb(d); } catch (e) { /* 忽略 */ } });

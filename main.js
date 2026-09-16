@@ -483,6 +483,8 @@ function scanDirEntry(d, source, builtinExpDir) {
 handle('scan-experiments', () => {
   syncInstalledResources();
   const { roots } = getDataRoots();
+  // 云端下架清单（隐藏式：保留用户数据文件，仅从列表/生成入口屏蔽）
+  const removedSet = new Set(((readLocalDataManifest() || {}).removed) || []);
   const results = [];
   const warnings = [];
   const seen = new Set();
@@ -491,6 +493,7 @@ handle('scan-experiments', () => {
     try { dirs = fs.readdirSync(root.dir, { withFileTypes: true }); } catch (e) { continue; }
     for (const d of dirs) {
       if (!d.isDirectory() || d.name === 'common' || d.name.startsWith('.') || seen.has(d.name)) continue;
+      if (removedSet.has(d.name)) continue;   // 已下架实验：列表隐藏（不删除任何用户数据）
       try {
         const r = scanDirEntry({ dir: root.dir, name: d.name }, root.source, EXPERIMENTS_DIR);
         if (r.warning) warnings.push(r.warning);
@@ -1285,8 +1288,13 @@ handle('apply-data-package', async (_, payload) => {
         if (path.basename(rel) === 'variants.json') bases[rel.split('/').join(path.sep)] = fs.readFileSync(path.join(staging, file), 'utf8');
       }
       state.variantBases = bases;
+      // 下架清单以清单为准：发布端每次都下发完整累计列表，为空时省略字段
+      // （省略即「当前无下架实验」，因此这里必须清空，否则恢复上架无法生效）
+      const removedList = Array.isArray(manifest.removed)
+        ? [...new Set(manifest.removed)].sort() : [];
       resourceStore.writeState(candidate, { ...state, manifest: {
         dataVersion: version, notes, updatedAt: new Date().toISOString(),
+        ...(removedList.length ? { removed: removedList } : {}),
       } });
     });
     downloadedPackage = null;
@@ -1846,6 +1854,11 @@ const AI_PROVIDERS = {
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     model: 'qwen-plus',
   },
+  // 小米 MiMo：此前这里缺条目，模型留空时会回退成 custom 的 gpt-4o 发往小米接口
+  mimo: {
+    baseUrl: 'https://api.xiaomimimo.com/v1',
+    model: 'mimo-v2.5',
+  },
   custom: {
     baseUrl: '',
     model: 'gpt-4o',
@@ -1861,12 +1874,31 @@ function aiEndpoint(params) {
   return url.href.replace(/\/+$/, '');
 }
 function visionEndpoint(params) {
+  // 跟随主聊天：用主聊天地址与密钥
   if (params.visionProvider === 'inherit') return aiEndpoint(params);
+  // 独立识图服务：只能用独立地址或该服务的预设地址。
+  // 旧实现会在独立地址为空时回退到主聊天地址 apiUrl，导致"独立预设 + 空地址"的用户
+  // 把请求（和独立密钥）发到主聊天服务上——密钥绑定地址校验会直接报错（历史缺陷 R10）。
   const preset = ocr.visionPreset(params.visionProvider);
-  const url = network.publicUrl(String(params.visionApiUrl || params.apiUrl || preset.baseUrl).replace(/\/+$/, ''));
+  const endpoint = String(params.visionApiUrl || preset.baseUrl || '').replace(/\/+$/, '');
+  if (!endpoint) throw Error('未配置独立识图服务地址（自定义服务必须填写），或改用「跟随主聊天」');
+  const url = network.publicUrl(endpoint);
   if (url.search || url.hash) throw Error('API 地址不能包含查询参数或片段');
   return url.href.replace(/\/+$/, '');
 }
+// 解析当前设置会用到的真实接口地址（供设置页"继承"时灰显自动填充）
+// 复用 aiEndpoint/visionEndpoint，避免渲染层重复实现地址与校验规则
+handle('resolve-endpoints', (_, params) => {
+  // 与设置页一致：未指定识图服务时按"继承"处理（设置页默认项）
+  const p = { visionProvider: 'inherit', ...(params || {}) };
+  const out = { ok: true, chat: '', vision: '' };
+  try { out.chat = aiEndpoint(p); }
+  catch (e) { out.ok = false; out.error = e.message; }
+  try { out.vision = visionEndpoint(p); }
+  catch (e) { out.ok = false; out.visionError = e.message; }
+  return out;
+});
+
 handle('credential-status', () => ({ ok: true, ...keyStore.status() }));
 handle('credential-save', (_, payload) => {
   try { return { ok: true, ...keyStore.save(payload.key, payload.key ? aiEndpoint(payload) : '') }; }
@@ -1902,10 +1934,10 @@ handle('ocr-recognize', async (_, params) => {
       ],
     });
     const payload = await network.json(baseUrl + '/chat/completions', {
-      method: 'POST', signal: controller.signal, timeoutMs: 120000, maxBytes: 2 * 1024 * 1024,
+      method: 'POST', signal: controller.signal, timeoutMs: 120000, idleTimeoutMs: 90000, maxBytes: 2 * 1024 * 1024,
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey }, body,
     });
-    return { ok: true, content: ocr.extractContent(payload), usage: payload.usage };
+    return { ok: true, content: ocr.extractContent(payload), usage: payload.usage, requestId };
   } catch (e) {
     return { ok: false, cancelled: controller.signal.aborted, error: controller.signal.aborted ? '已取消识别' : e.message };
   } finally { aiAbortControllers.delete(requestId); }
@@ -1941,25 +1973,20 @@ handle('ai-chat', async (event, params) => {
     const apiKey = keyStore.get(baseUrl);
     // 流式请求：增量通过 ai-chat-chunk 推给渲染层（实时显示生成过程），
     // invoke 仍返回完整文本（渲染层 await 后照常使用）
-    const response = await fetch(baseUrl + '/chat/completions', {
-      method: 'POST', signal: controller.signal,
+    // 走统一安全网络层（历史缺陷 R15）：仅公网 HTTPS、DNS 解析后固定连接地址、
+    // 非 GET 不允许重定向、响应总量有上限、空闲超时可单独放宽（流式生成首包可能较慢）
+    const response = await network.response(baseUrl + '/chat/completions', {
+      method: 'POST', signal: controller.signal, idleTimeoutMs: 90000,
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
       body: JSON.stringify({ model: model || (AI_PROVIDERS[provider] || AI_PROVIDERS.custom).model,
         messages, temperature, stream: true }),
     });
-    if (!response.ok) {
-      let errText = '';
-      try { errText = (await response.text()).slice(0, 300); } catch (e) { /* 忽略 */ }
-      throw Error('AI 接口返回 ' + response.status + (errText ? '：' + errText : ''));
-    }
-    if (!response.body) throw Error('AI 接口未返回流');
-    const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8');
-    let content = '', carry = '';
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const text = carry + decoder.decode(value, { stream: true });
+    let content = '', carry = '', total = 0;
+    for await (const chunk of response) {
+      total += chunk.length;
+      if (total > 2 * 1024 * 1024) { response.destroy(); throw Error('AI 响应内容过大'); }
+      const text = carry + decoder.decode(chunk, { stream: true });
       const lines = text.split('\n');
       carry = lines.pop() || '';
       for (const line of lines) {
@@ -1976,6 +2003,16 @@ handle('ai-chat', async (event, params) => {
 
 // 取消一次进行中的 AI 请求
 listen('ai-chat-cancel', (_, requestId) => {
+  const c = aiAbortControllers.get(String(requestId || ''));
+  if (c) {
+    try { c.abort(); } catch (e) { /* 忽略 */ }
+    aiAbortControllers.delete(String(requestId || ''));
+  }
+});
+
+// 取消一次进行中的识图请求：关闭弹窗/换图/换实验时调用，
+// 否则晚到的识别结果会写进已经变化的当前状态（历史缺陷 R13）
+listen('ocr-cancel', (_, requestId) => {
   const c = aiAbortControllers.get(String(requestId || ''));
   if (c) {
     try { c.abort(); } catch (e) { /* 忽略 */ }

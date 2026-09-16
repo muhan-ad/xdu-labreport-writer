@@ -254,10 +254,11 @@ function mainHarness(t, failUpdateCopy = false) {
   const mockedRequire = name => name === 'electron' ? fakeElectron : name === 'child_process' ? childTools : name === 'fs' ? fileTools : nativeRequire(name);
   const controls = new Function('require', '__dirname', read(mainFile) + '\nreturn { unzipScript: UNZIP_SCRIPT, extractDelta: extractDeltaFromSSELine, setPackage: value => { downloadedPackage = value; }, merge: (stage, target, bases) => { const warnings = []; mergeDataTree(stage, target, EXPERIMENTS_DIR, warnings, true, bases); return warnings; } };')(mockedRequire, path.dirname(mainFile));
   ready();
-  const authorize = (zip, files) => {
+  const authorize = (zip, files, removed, version) => {
     const crypto = require('node:crypto');
-    const manifest = { dataVersion: '2.0.0', minAppVersion: '1.7.5', url: 'https://labreport-1485394950.cos.ap-guangzhou.myqcloud.com/test.zip', size: fs.statSync(zip).size,
+    const manifest = { dataVersion: version || '2.0.0', minAppVersion: '1.7.5', url: 'https://labreport-1485394950.cos.ap-guangzhou.myqcloud.com/test.zip', size: fs.statSync(zip).size,
       sha256: crypto.createHash('sha256').update(fs.readFileSync(zip)).digest('hex'), files, notes: 'test' };
+    if (removed) manifest.removed = removed;
     manifest.signature = crypto.sign(null, Buffer.from(require('../src/main/update-package').canonical(manifest)), testKeys.privateKey).toString('base64');
     controls.setPackage({ path: zip, manifest });
   };
@@ -353,6 +354,95 @@ test('successive official variant updates use the prior official baseline and pr
   put(path.join(stage, key), '["v3"]');
   assert.equal(h.merge(stage, target, { [key]: '["v2"]' }).length, 1);
   assert.equal(read(path.join(target, key)), '["personal"]');
+});
+
+test('removed experiments are hidden from scan while user data is kept', async t => {
+  const h = mainHarness(t), dataRoot = path.join(h.root, '实验数据');
+  const victim = path.join(dataRoot, '实验脚本', '要下架实验');
+  put(path.join(victim, 'generate.py'), 'print(1)');
+  put(path.join(victim, 'data.json'), '{"a":1}');   // 用户已填数据（B 方案：必须保留）
+  const zip = path.join(dataRoot, '_package.zip');
+  put(zip, 'mock archive');
+  const sha = require('node:crypto').createHash('sha256').update('x').digest('hex');
+  h.authorize(zip, { '实验脚本/common/core.py': sha }, ['要下架实验']);   // 带下架清单的更新包
+  const pending = h.handlers.get('apply-data-package')({}, { filePath: zip, version: '2', notes: 'test' });
+  put(path.join(dataRoot, '_staging/实验脚本/common/core.py'), 'x');
+  h.children[0].emit('close', 0);
+  const result = await pending;
+  assert.equal(result.ok, true, result.error);
+  const scan = h.handlers.get('scan-experiments')();
+  assert.ok(!scan.experiments.some(e => e.name === '要下架实验'), '下架实验应从列表隐藏');
+  assert.equal(read(path.join(victim, 'data.json')), '{"a":1}');          // 隐藏式下架：数据保留
+  assert.ok(fs.existsSync(path.join(victim, 'generate.py')));             // 文件不删除
+});
+
+test('restored experiments reappear once a package omits the removal list', async t => {
+  const h = mainHarness(t), dataRoot = path.join(h.root, '实验数据');
+  const target = path.join(dataRoot, '实验脚本', '回归上架实验');
+  put(path.join(target, 'generate.py'), 'print(1)');
+  put(path.join(target, 'data.json'), '{"a":1}');
+  const zip = path.join(dataRoot, '_package.zip');
+  const sha = require('node:crypto').createHash('sha256').update('x').digest('hex');
+
+  put(zip, 'mock archive 1');
+  h.authorize(zip, { '实验脚本/common/core.py': sha }, ['回归上架实验']);      // 第一包：带下架清单
+  const first = h.handlers.get('apply-data-package')({}, { filePath: zip, version: '2', notes: 't' });
+  put(path.join(dataRoot, '_staging/实验脚本/common/core.py'), 'x');
+  h.children[0].emit('close', 0);
+  assert.equal((await first).ok, true);
+  assert.ok(!h.handlers.get('scan-experiments')().experiments.some(e => e.name === '回归上架实验'), '下架后应隐藏');
+
+  put(zip, 'mock archive 2');
+  h.authorize(zip, { '实验脚本/common/core.py': sha }, null, '2.0.1');        // 第二包：省略下架清单 = 无下架实验
+  const second = h.handlers.get('apply-data-package')({}, { filePath: zip, version: '2.1', notes: 't' });
+  put(path.join(dataRoot, '_staging/实验脚本/common/core.py'), 'x');
+  h.children[1].emit('close', 0);
+  assert.equal((await second).ok, true);
+  assert.ok(h.handlers.get('scan-experiments')().experiments.some(e => e.name === '回归上架实验'), '恢复上架后应重新可见');
+  const state = JSON.parse(read(path.join(dataRoot, '实验脚本', '.resource-state.json')));
+  assert.ok(!state.manifest || !state.manifest.removed, '恢复后本地下架名单应清空');
+});
+
+test('independent vision service never falls back to the chat endpoint', t => {
+  // 审查报告 R10：独立识图模式下 visionApiUrl 为空时，旧实现会回退到主聊天地址 apiUrl，
+  // 把独立密钥发到另一个服务（随后被"密钥绑定地址"拦下报错）。
+  const h = mainHarness(t);
+  const save = h.handlers.get('vision-credential-save');
+  // 保存路径：provider 即识图服务，识图地址走 visionApiUrl（与识图请求同名，保证密钥绑定地址一致）
+  const independentNoUrl = save({}, {
+    key: 'sk-test', provider: 'custom', visionApiUrl: '', apiUrl: 'https://chat.example.com/v1',
+  });
+  assert.equal(independentNoUrl.ok, false);
+  assert.match(independentNoUrl.error, /独立识图服务地址/, '自定义独立服务缺地址时应明确报错，而不是静默用主聊天地址');
+  const independentWithUrl = save({}, {
+    key: 'sk-test', provider: 'custom', visionApiUrl: 'https://vision.example.com/v1', apiUrl: 'https://chat.example.com/v1',
+  });
+  assert.ok(!/独立识图服务地址/.test(independentWithUrl.error || ''), '填了独立地址后不应再报地址缺失');
+  const presetMode = save({}, {
+    key: 'sk-test', provider: 'siliconflow', visionApiUrl: '', apiUrl: 'https://chat.example.com/v1',
+  });
+  assert.ok(!/独立识图服务地址/.test(presetMode.error || ''), '独立预设（自带地址）不受影响');
+});
+
+test('resolve-endpoints 解析真实接口地址（小米/继承/独立服务）', async t => {
+  const h = mainHarness(t);
+  const resolve = h.handlers.get('resolve-endpoints');
+  // 小米：地址取自预设（此前 AI_PROVIDERS 缺 mimo，模型留空会回退自定义服务的 gpt-4o）
+  const mimo = resolve({}, { provider: 'mimo', apiUrl: '' });
+  assert.equal(mimo.ok, true, JSON.stringify(mimo));
+  assert.equal(mimo.chat, 'https://api.xiaomimimo.com/v1');
+  assert.equal(mimo.vision, 'https://api.xiaomimimo.com/v1', '未指定识图服务时按继承处理，地址与主对话一致');
+  // 继承 + 自定义主地址：识图跟随主地址
+  const inheritCustom = resolve({}, { provider: 'custom', apiUrl: 'https://chat.example.com/v1', visionProvider: 'inherit' });
+  assert.equal(inheritCustom.vision, 'https://chat.example.com/v1');
+  // 独立识图 + 有地址：用独立地址，不受主地址影响
+  const independent = resolve({}, { provider: 'custom', apiUrl: 'https://chat.example.com/v1', visionProvider: 'custom', visionApiUrl: 'https://vision.example.com/v1' });
+  assert.equal(independent.vision, 'https://vision.example.com/v1');
+  assert.equal(independent.chat, 'https://chat.example.com/v1');
+  // 独立识图 + 无地址：报错而不是回退主地址（R10）
+  const broken = resolve({}, { provider: 'custom', apiUrl: 'https://chat.example.com/v1', visionProvider: 'custom', visionApiUrl: '' });
+  assert.equal(broken.ok, false);
+  assert.match(String(broken.visionError), /独立识图服务地址/);
 });
 
 test('startup restores a resource tree interrupted between renames', t => {
