@@ -103,7 +103,7 @@ electron-builder NSIS 安装包：应用代码打包为 asar；`物理实验` �
 
 ### 普通用户（推荐：安装包）
 
-1. 前往 [Releases](https://github.com/muhan-ad/xdu-labreport-writer/releases) 下载 `实验报告编写 Setup x.x.x.exe`；
+1. 前往 [Releases](https://github.com/muhan-ad/xdu-labreport-writer/releases) 下载安装包（`labreport-setup-x.x.x.exe`，与 `SHA256SUMS.txt` 一并提供，可自行校验）；
 2. 双击安装（用户级安装，免管理员权限），从桌面/开始菜单启动；
 3. 配置学生信息（左下角）→ 选择实验 → 填写测量数据 → 保存修改 → 生成报告；
 4. 如需 AI 润色：设置中配置 API 提供商与 Key（存储于本机，见"隐私与数据"）。
