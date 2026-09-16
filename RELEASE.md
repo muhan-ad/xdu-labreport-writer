@@ -5,14 +5,14 @@
 ## 一、安装包：网盘分发，COS 只做版本校对
 
 1. 运行 `npm run verify`；在 Windows/Word 环境按需运行 `tests/electron_smoke.js`、`tests/word_integration.js`。
-2. **先递增版本号**（`package.json` 与 `package-lock.json` 两处，如 `1.7.8`），再 `npm run build:win`。
+2. **先递增版本号**（`package.json` 与 `package-lock.json` 两处，如 `2.0.1`；必须是 `x.y.z` 三段式，应用内版本比较与数据包的 `minAppVersion` 都按三段式解析），再 `npm run build:win`。
    同一版本号不要出现两份不同内容的构建——用户端只按版本号判断新旧，同号无法发现修复。
 3. 把安装包（建议用英文名副本 `labreport-setup-<版本>.exe`）放到网盘，并记下新链接与提取码。
 4. 更新本地清单模板 `dist/latest.json`，再**上传覆盖 COS 上的 `latest.json`**（对象名固定，不带版本号）：
 
 ```json
 {
-  "version": "1.7.8",
+  "version": "2.0.0",
   "notes": "本次更新说明（展示在用户端）",
   "downloads": [
     {"name": "百度网盘", "url": "https://pan.baidu.com/s/…实际分享链接", "hint": "提取码 xxxx"},
