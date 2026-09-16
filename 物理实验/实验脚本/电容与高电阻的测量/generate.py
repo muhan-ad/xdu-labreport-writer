@@ -190,7 +190,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # ---- 一、原始数据记录 ----
     doc.add_heading("一、原始数据记录", level=1)
-    doc.add_paragraph("（请在此处粘贴原始数据记录照片。）")
+    doc.add_data_photo("（请在此处粘贴原始数据记录照片。）")
 
     # ---- 二、数据处理 ----
     doc.add_heading("二、数据处理", level=1)
@@ -280,32 +280,51 @@ def _generate_docx(data: dict, output_path: str):
     # ---- 三、思考题 ----
     doc.add_heading("三、思考题", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_heading(
         "1. 在冲击法测量高阻实验中，标准电容的单位为 μC，"
         "这个数量级是否会影响最终的测量结果？", level=2)
-    doc.add_paragraph("")
-    doc.add_run("不会。由公式 ")
-    doc.add_inline_math(r"|k| = \left| \frac{\ln Q_{0} - \ln Q_{t}}{t_{0} - t_{t}} \right|")
-    doc.add_run(" 化简变形可得 ")
-    doc.add_inline_math(r"|k| = \left| \frac{\ln \frac{Q_{0}}{Q_{t}}}{t_{0} - t_{t}} \right|")
-    doc.add_run("，")
-    doc.add_inline_math(r"Q_{0}")
-    doc.add_run(" 和 ")
-    doc.add_inline_math(r"Q_{t}")
-    doc.add_run(" 上下比值相消，不影响最终的测量结果。")
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph("")
+        doc.add_run("不会。由公式 ")
+        doc.add_inline_math(r"|k| = \left| \frac{\ln Q_{0} - \ln Q_{t}}{t_{0} - t_{t}} \right|")
+        doc.add_run(" 化简变形可得 ")
+        doc.add_inline_math(r"|k| = \left| \frac{\ln \frac{Q_{0}}{Q_{t}}}{t_{0} - t_{t}} \right|")
+        doc.add_run("，")
+        doc.add_inline_math(r"Q_{0}")
+        doc.add_run(" 和 ")
+        doc.add_inline_math(r"Q_{t}")
+        doc.add_run(" 上下比值相消，不影响最终的测量结果。")
 
     doc.add_heading("2. 放电法测量高阻阻值，最长放电时间的选择依据是什么？", level=2)
-    doc.add_paragraph("")
-    doc.add_inline_math(r"\ln Q = -\frac{t}{RC} + \ln Q_{0}")
-    doc.add_run("，当 ")
-    doc.add_inline_math(r"\ln Q = 0")
-    doc.add_run(" 时，")
-    doc.add_inline_math(r"t = RC \cdot \ln Q_{0}")
-    doc.add_run("，且 ")
-    doc.add_inline_math(r"Q_{0} = C_{n} u")
-    doc.add_run("，故最长放电时间的选择依据是 t、")
-    doc.add_inline_math(r"C_{n}")
-    doc.add_run(" 和 u。应保证最长放电时间不超过 16~17 s。")
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph("")
+        doc.add_inline_math(r"\ln Q = -\frac{t}{RC} + \ln Q_{0}")
+        doc.add_run("，当 ")
+        doc.add_inline_math(r"\ln Q = 0")
+        doc.add_run(" 时，")
+        doc.add_inline_math(r"t = RC \cdot \ln Q_{0}")
+        doc.add_run("，且 ")
+        doc.add_inline_math(r"Q_{0} = C_{n} u")
+        doc.add_run("，故最长放电时间的选择依据是 t、")
+        doc.add_inline_math(r"C_{n}")
+        doc.add_run(" 和 u。应保证最长放电时间不超过 16~17 s。")
 
     doc.save()
     doc.close()

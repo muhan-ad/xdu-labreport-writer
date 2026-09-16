@@ -316,7 +316,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # ---- 一、原始数据记录 ----
     doc.add_heading("一、原始数据记录", level=1)
-    doc.add_paragraph("（请在此处粘贴原始数据记录照片。）")
+    doc.add_data_photo("（请在此处粘贴原始数据记录照片。）")
 
     # ---- 二、数据处理 ----
     doc.add_heading("二、数据处理", level=1)
@@ -441,30 +441,49 @@ def _generate_docx(data: dict, output_path: str):
     # ---- 三、课后思考题 ----
     doc.add_heading("三、课后思考题", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_heading("1. 夫琅禾费衍射的条件是什么？实验中是如何满足的？", level=2)
-    doc.add_paragraph("")
-    doc.add_run("答：夫琅禾费衍射的条件是光源和观察屏与衍射屏的距离均为无限远，"
-                "即照射到衍射屏上的入射光和离开衍射屏的衍射光都是平行光。"
-                "实验中，使用半导体激光器作为光源，"
-                "激光器发出的光束发散角很小，可近似为平行光直接照射在单缝上，"
-                "省去了准直透镜 L₁；"
-                "同时，单缝宽度 a 远小于单缝到探测器之间的距离 L（L > 80 cm），"
-                "衍射光传播到探测器时可视为平行光，"
-                "省去了会聚透镜 L₂。这样简化的实验装置即可满足夫琅禾费衍射条件。")
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph("")
+        doc.add_run("答：夫琅禾费衍射的条件是光源和观察屏与衍射屏的距离均为无限远，"
+                    "即照射到衍射屏上的入射光和离开衍射屏的衍射光都是平行光。"
+                    "实验中，使用半导体激光器作为光源，"
+                    "激光器发出的光束发散角很小，可近似为平行光直接照射在单缝上，"
+                    "省去了准直透镜 L₁；"
+                    "同时，单缝宽度 a 远小于单缝到探测器之间的距离 L（L > 80 cm），"
+                    "衍射光传播到探测器时可视为平行光，"
+                    "省去了会聚透镜 L₂。这样简化的实验装置即可满足夫琅禾费衍射条件。")
 
     doc.add_heading(
         "2. 如果激光器输出的单色光照射在一根头发丝上，将会产生怎样的衍射图样？",
         level=2)
-    doc.add_paragraph("")
-    doc.add_run("答：当激光照射在头发丝上时，会产生与单缝衍射相似的衍射图样——"
-                "一组明暗相间的平行条纹。根据巴比涅原理，"
-                "互补屏（单缝与相同宽度的细丝）的衍射图样相同，"
-                "因此头发丝的衍射图样与相同宽度的单缝衍射图样一致："
-                "中央为最亮的明条纹（主极大），"
-                "两侧对称分布亮度依次递减的明暗相间条纹。"
-                "通过测量暗纹间距，同样可利用公式 ")
-    doc.add_inline_math(r"a = \frac{Lk\lambda}{x_{k}}")
-    doc.add_run(" 计算头发丝的直径。")
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph("")
+        doc.add_run("答：当激光照射在头发丝上时，会产生与单缝衍射相似的衍射图样——"
+                    "一组明暗相间的平行条纹。根据巴比涅原理，"
+                    "互补屏（单缝与相同宽度的细丝）的衍射图样相同，"
+                    "因此头发丝的衍射图样与相同宽度的单缝衍射图样一致："
+                    "中央为最亮的明条纹（主极大），"
+                    "两侧对称分布亮度依次递减的明暗相间条纹。"
+                    "通过测量暗纹间距，同样可利用公式 ")
+        doc.add_inline_math(r"a = \frac{Lk\lambda}{x_{k}}")
+        doc.add_run(" 计算头发丝的直径。")
 
     doc.save()
     doc.close()

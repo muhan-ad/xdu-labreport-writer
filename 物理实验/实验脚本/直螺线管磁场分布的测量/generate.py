@@ -250,7 +250,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 一、原始数据记录 ──
     doc.add_heading("一、原始数据记录", level=1)
-    doc.add_paragraph("请在下方粘贴原始数据记录照片。")
+    doc.add_data_photo("请在下方粘贴原始数据记录照片。")
     doc.add_paragraph("（包括：实验电路接线图、标尺读数记录等）")
 
     # ── 二、数据处理 ──
@@ -422,28 +422,52 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_heading("三、课后思考题", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_heading("1. 实验中，对探测线圈有何要求？依据是什么？", level=2)
-    doc.add_paragraph("要求：① 线圈的匝数要适当，匝数过少则感应信号太弱，"
-                       "匝数过多则线圈尺寸增大，影响空间分辨率；"
-                       "② 线圈的尺寸要足够小，以准确探测局部的磁感应强度；"
-                       "③ 线圈的位置和方向要精确，确保线圈轴线与螺线管轴线重合。")
-    doc.add_paragraph("依据：法拉第电磁感应定律，探测线圈中的感应电动势与穿过线圈的"
-                       "磁通量变化率成正比。线圈的几何形状和匝数决定了其能感应到的磁场变化量，"
-                       "因此需要根据实验需求选择适当的线圈参数。")
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph("要求：① 线圈的匝数要适当，匝数过少则感应信号太弱，"
+                           "匝数过多则线圈尺寸增大，影响空间分辨率；"
+                           "② 线圈的尺寸要足够小，以准确探测局部的磁感应强度；"
+                           "③ 线圈的位置和方向要精确，确保线圈轴线与螺线管轴线重合。")
+        doc.add_paragraph("依据：法拉第电磁感应定律，探测线圈中的感应电动势与穿过线圈的"
+                           "磁通量变化率成正比。线圈的几何形状和匝数决定了其能感应到的磁场变化量，"
+                           "因此需要根据实验需求选择适当的线圈参数。")
 
     doc.add_heading("2. 为什么测量磁场的磁感应强度时，互感器的次级线圈仍要接入测量回路？", level=2)
-    doc.add_paragraph("互感器次级线圈仍接入测量回路，是为了保持冲击电流计回路的总电阻不变。"
-                       "标定 RKb 时，互感器次级已接入回路；若测量 B 时将其断开，回路总电阻改变，"
-                       "冲击常数 Kb 也随之改变（Kb 与回路总电阻有关），导致标定结果失效。"
-                       "保持次级线圈接入确保了标定和测量在相同回路条件下进行。")
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph("互感器次级线圈仍接入测量回路，是为了保持冲击电流计回路的总电阻不变。"
+                           "标定 RKb 时，互感器次级已接入回路；若测量 B 时将其断开，回路总电阻改变，"
+                           "冲击常数 Kb 也随之改变（Kb 与回路总电阻有关），导致标定结果失效。"
+                           "保持次级线圈接入确保了标定和测量在相同回路条件下进行。")
 
     doc.add_heading("3. 冲击电流计与灵敏电流计的主要区别是什么？", level=2)
-    doc.add_paragraph_rich("① 测量对象不同：冲击电流计测量短时间内脉冲电流所迁移的电量 Q（"
-                       "读取第一次最大偏转距离 dm）；灵敏电流计测量稳定电流的大小（读取稳定偏转距离 d）。"
-                       "② 结构不同：冲击电流计的线圈扁而宽，或配有惯性圆盘，转动惯量 J 大，"
-                       "自由振动周期 T₀ 达十几秒以上；灵敏电流计 T₀ 通常仅 1~2 秒。"
-                       r"③ 使用条件不同：冲击电流计要求电流脉冲持续时间 $\tau \ll T_0$，"
-                       "以保证电量全部通过后线圈才开始偏转。")
+    _o = _quiz.get("3") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph_rich("① 测量对象不同：冲击电流计测量短时间内脉冲电流所迁移的电量 Q（"
+                           "读取第一次最大偏转距离 dm）；灵敏电流计测量稳定电流的大小（读取稳定偏转距离 d）。"
+                           "② 结构不同：冲击电流计的线圈扁而宽，或配有惯性圆盘，转动惯量 J 大，"
+                           "自由振动周期 T₀ 达十几秒以上；灵敏电流计 T₀ 通常仅 1~2 秒。"
+                           r"③ 使用条件不同：冲击电流计要求电流脉冲持续时间 $\tau \ll T_0$，"
+                           "以保证电量全部通过后线圈才开始偏转。")
 
     doc.save()
     doc.close()

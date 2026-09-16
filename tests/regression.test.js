@@ -157,6 +157,62 @@ test('multi-section polishing uses the original snapshot after switching experim
   assert.ok(ui.lastPolishResults.every(r => r.expId === 'A'));
 });
 
+test('AI polish refuses quiz results that modify topics (strong constraint)', async () => {
+  const ui = uiContext();
+  Object.assign(ui, {
+    currentSections: {}, skillsCache: [],
+    loadSettings: () => ({ hasApiKey: true }), getAiStylePrompt: () => '', renderAiResults: () => {},
+    getReportText: async () => '1. 原题目文本\n答：原回答\n2. 第二题题目\n答：第二题回答',
+    extractSection: (t) => t,   // 提取段外函数：测试中直接透传全文
+    document: { querySelector: () => null, querySelectorAll: s => s.includes('aiScopeGroup') ? [{ value: 'quiz' }] : [] },
+    window: { labAPI: { aiChat: async () => ({ ok: true, content: '1. 被改写的题目\n新回答' }) } },
+  });
+  load(ui, 'async function runAiPolish()', '// 渲染多对象润色结果');
+  await ui.runAiPolish();
+  const r = ui.lastPolishResults[0];
+  assert.ok(r && !r.polished && /题目/.test(r.error || ''), '修改题目的结果应被拒绝：' + JSON.stringify(r));
+  // 对照组：题目逐字保留、只改回答 → 放行
+  ui.window.labAPI.aiChat = async () => ({ ok: true, content: '1. 原题目文本\n新回答1\n2. 第二题题目\n新回答2' });
+  ui.lastPolishResults = [];
+  await ui.runAiPolish();
+  assert.ok(ui.lastPolishResults[0] && !!ui.lastPolishResults[0].polished, '题目保留应放行');
+});
+
+test('AI polish restores original formulas and tolerates AI-added wrappers (strong constraint)', async () => {
+  const ui = uiContext();
+  Object.assign(ui, {
+    currentSections: { one: '原理公式为 $E = mc^2$ 且适用。' }, skillsCache: [],
+    loadSettings: () => ({ hasApiKey: true }), getAiStylePrompt: () => '', renderAiResults: () => {},
+    document: { querySelector: () => null, querySelectorAll: s => s.includes('aiScopeGroup') ? [{value:'sec:one'}] : [] },
+    window: { labAPI: { aiChat: async () => ({ ok: true, content: '原理公式为 $E = mc^2$，误差 $0.05$ 内完全适用。' }) } },   // 原文公式保留 + AI 给数字新增 $ 包裹
+  });
+  load(ui, 'async function runAiPolish()', '// 渲染多对象润色结果');
+  await ui.runAiPolish();
+  const r = ui.lastPolishResults[0];
+  assert.ok(r && !!r.polished, '原文公式未被删改时应放行：' + JSON.stringify(r));
+  assert.ok(r.polished.includes('$E = mc^2$'), '公式保持原文：' + r.polished);
+  assert.ok(r.polished.includes('完全适用'), '文字保留 AI 改写');
+  // 对照组：AI 修改了原文公式内容 → 拒绝
+  ui.window.labAPI.aiChat = async () => ({ ok: true, content: '原理公式为 $E = mc^3$ 且适用。' });
+  ui.lastPolishResults = [];
+  await ui.runAiPolish();
+  assert.ok(ui.lastPolishResults[0] && !ui.lastPolishResults[0].polished && /公式/.test(ui.lastPolishResults[0].error || ''), '修改原文公式应被拒绝：' + JSON.stringify(ui.lastPolishResults[0]));
+  // 对照组2：AI 删除了原文公式 → 拒绝，且诊断信息指出缺失的公式
+  ui.window.labAPI.aiChat = async () => ({ ok: true, content: '原理公式非常适用。' });
+  ui.lastPolishResults = [];
+  await ui.runAiPolish();
+  const r3 = ui.lastPolishResults[0];
+  assert.ok(r3 && !r3.polished && /公式/.test(r3.error || ''), '删除原文公式应被拒绝：' + JSON.stringify(r3));
+  assert.ok(r3.error.includes('$E = mc^2$'), '诊断应指出缺失的原文公式：' + r3.error);
+  // 对照组3：AI 保留公式但改了写法（\%→%、\left(→(）→ 归一化等价放行并回填原文写法
+  ui.window.labAPI.aiChat = async () => ({ ok: true, content: '原理公式为 $E = mc^2$，误差 $0.05\%$ 内适用。' });
+  ui.lastPolishResults = [];
+  await ui.runAiPolish();
+  const r4 = ui.lastPolishResults[0];
+  assert.ok(r4 && !!r4.polished, '写法差异应放行：' + JSON.stringify(r4));
+  assert.ok(r4.polished.includes('$0.05\%$'), '公式回填为原文写法：' + r4.polished);
+});
+
 function mainHarness(t, failUpdateCopy = false) {
   const root = fixture(t), handlers = new Map(), rawHandlers = new Map(), children = [], kills = [];
   let ready;
@@ -196,7 +252,7 @@ function mainHarness(t, failUpdateCopy = false) {
     fs.copyFileSync(from, to);
   } };
   const mockedRequire = name => name === 'electron' ? fakeElectron : name === 'child_process' ? childTools : name === 'fs' ? fileTools : nativeRequire(name);
-  const controls = new Function('require', '__dirname', read(mainFile) + '\nreturn { unzipScript: UNZIP_SCRIPT, setPackage: value => { downloadedPackage = value; }, merge: (stage, target, bases) => { const warnings = []; mergeDataTree(stage, target, EXPERIMENTS_DIR, warnings, true, bases); return warnings; } };')(mockedRequire, path.dirname(mainFile));
+  const controls = new Function('require', '__dirname', read(mainFile) + '\nreturn { unzipScript: UNZIP_SCRIPT, extractDelta: extractDeltaFromSSELine, setPackage: value => { downloadedPackage = value; }, merge: (stage, target, bases) => { const warnings = []; mergeDataTree(stage, target, EXPERIMENTS_DIR, warnings, true, bases); return warnings; } };')(mockedRequire, path.dirname(mainFile));
   ready();
   const authorize = (zip, files) => {
     const crypto = require('node:crypto');
@@ -205,7 +261,7 @@ function mainHarness(t, failUpdateCopy = false) {
     manifest.signature = crypto.sign(null, Buffer.from(require('../src/main/update-package').canonical(manifest)), testKeys.privateKey).toString('base64');
     controls.setPackage({ path: zip, manifest });
   };
-  return { root, handlers, rawHandlers, children, kills, authorize, merge: controls.merge, unzipScript: controls.unzipScript, copied };
+  return { root, handlers, rawHandlers, children, kills, authorize, merge: controls.merge, unzipScript: controls.unzipScript, copied, extractDelta: controls.extractDelta };
 }
 
 test('main process rejects concurrent generation and cleans only the reported Word instance', async t => {
@@ -324,9 +380,59 @@ test('actual ZIP extractor accepts normal resources and refuses traversal and co
 });
 
 
+test('SSE line parser extracts streaming deltas for AI polish preview', t => {
+  const h = mainHarness(t);
+  const ex = h.extractDelta;
+  assert.equal(ex('data: {"choices":[{"delta":{"content":"你"}}]}'), '你');
+  assert.equal(ex('data: {"choices":[{"delta":{"content":"好"}}]}'), '好');
+  assert.equal(ex('data: [DONE]'), '');
+  assert.equal(ex('data: {"choices":[{"delta":{}}]}'), '');
+  assert.equal(ex('event: ping'), '');
+  assert.equal(ex('data: not-json'), '');
+  assert.equal(ex(''), '');
+});
+
 test('copy link IPC accepts a share URL and refuses non-HTTPS clipboard payloads', t => {
   const h = mainHarness(t);
   assert.equal(h.handlers.get('copy-link')({}, 'https://pan.quark.cn/s/test').ok, true);
   assert.deepEqual(h.copied, ['https://pan.quark.cn/s/test']);
   assert.equal(h.handlers.get('copy-link')({}, 'file:///C:/private.txt').ok, false);
+});
+
+test('scan skips a corrupted experiment and reports it in warnings', t => {
+  const h = mainHarness(t);
+  const base = path.join(h.root, '实验数据', '实验脚本');
+  const mkExp = (name, schema, data) => {
+    const d = path.join(base, name);
+    put(path.join(d, 'generate.py'), 'print(1)');
+    put(path.join(d, 'schema.json'), JSON.stringify(schema));
+    put(path.join(d, 'data.json'), JSON.stringify(data));
+  };
+  const goodSchema = { groups: [{ fields: [{ key: 'a', type: 'number', required: true, label: 'A' }] }] };
+  mkExp('甲实验', goodSchema, { a: 1 });
+  mkExp('乙实验', goodSchema, 'not-an-object');   // 合法 JSON 但非对象 → validate 报「数据应为对象」
+  mkExp('丙实验', goodSchema, { a: 2 });
+  const r = h.handlers.get('scan-experiments')();
+  assert.ok(r && Array.isArray(r.experiments), 'scan 必须返回 {experiments, warnings}');
+  const names = r.experiments.map(e => e.name);
+  assert.ok(names.includes('甲实验') && names.includes('丙实验'), '正常实验应保留');
+  assert.ok(!names.includes('乙实验'), '损坏实验应被跳过而不是拖垮列表');
+  assert.ok(Array.isArray(r.warnings) && r.warnings.some(w => w.includes('乙实验')), 'warnings 应列出异常实验');
+});
+
+test('scan falls back to the builtin schema when a template is corrupted', t => {
+  const h = mainHarness(t);
+  const base = path.join(h.root, '实验数据', '实验脚本');
+  const name = '重力加速度的测量';   // 与安装目录同名实验：兜底读出厂 schema
+  // 预热：首次 scan 会触发 builtin→userData 同步（把出厂模板复制进 fixture），
+  // 之后再损坏 schema 才能测到兜底路径（否则损坏文件会被同步覆盖）
+  h.handlers.get('scan-experiments')();
+  const d = path.join(base, name);
+  put(path.join(d, 'generate.py'), 'print(1)');
+  put(path.join(d, 'schema.json'), '{corrupted');   // schema 损坏且无 .bak（出厂复制品必崩场景）
+  put(path.join(d, 'data.json'), '{}');
+  const r = h.handlers.get('scan-experiments')();
+  const names = r.experiments.map(e => e.name);
+  assert.ok(names.includes(name), '出厂 schema 兜底成功则该实验仍显示');
+  assert.ok(Array.isArray(r.warnings) && r.warnings.some(w => w.includes(name) && w.includes('模板损坏')), 'warnings 提示模板损坏');
 });

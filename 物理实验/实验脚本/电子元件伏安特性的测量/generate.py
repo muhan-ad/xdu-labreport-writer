@@ -339,7 +339,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
 
     # ---- 一、实验数据记录 ----
     doc.add_heading("一、实验数据记录", level=1)
-    doc.add_paragraph("（请在此处粘贴原始数据记录照片。）")
+    doc.add_data_photo("（请在此处粘贴原始数据记录照片。）")
 
     # ---- 二、数据处理 ----
     doc.add_heading("二、数据处理", level=1)
@@ -411,54 +411,78 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     # ---- 三、课后思考题 ----
     doc.add_heading("三、课后思考题", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_paragraph("1. 比较 100Ω 电阻与白炽灯的伏安特性曲线，可得出什么结论？")
-    doc.add_paragraph(
-        "答：100Ω 电阻是线性元件，其伏安特性曲线是过原点的直线，"
-        "表明电压与电流成正比，电阻值恒定为 100Ω。"
-    )
-    doc.add_paragraph(
-        "白炽灯灯丝，其伏安特性曲线是曲线。随着电压升高，电流增大，灯丝温度升高，"
-        "电阻率增大，电阻增大，即灯丝电阻随温度升高而增大。"
-    )
-    doc.add_paragraph(
-        "比较二者可得出：100Ω 电阻阻值不随电压、电流变化；"
-        "白炽灯电阻随电压、电流增大（灯丝温度升高）而增大，是非线性元件。"
-    )
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：100Ω 电阻是线性元件，其伏安特性曲线是过原点的直线，"
+            "表明电压与电流成正比，电阻值恒定为 100Ω。"
+        )
+        doc.add_paragraph(
+            "白炽灯灯丝，其伏安特性曲线是曲线。随着电压升高，电流增大，灯丝温度升高，"
+            "电阻率增大，电阻增大，即灯丝电阻随温度升高而增大。"
+        )
+        doc.add_paragraph(
+            "比较二者可得出：100Ω 电阻阻值不随电压、电流变化；"
+            "白炽灯电阻随电压、电流增大（灯丝温度升高）而增大，是非线性元件。"
+        )
 
     doc.add_paragraph("2. 试从钨丝灯泡的伏安特性曲线解释，为什么在开灯的时候容易烧坏？")
-    doc.add_paragraph(
-        "答：钨丝灯泡的伏安特性曲线表明其电阻随温度变化。开灯瞬间，钨丝温度低，"
-        "由伏安特性曲线可知此时电阻较小。"
-    )
-    doc.add_paragraph("")
-    doc.add_run("根据欧姆定律 ")
-    doc.add_inline_math(r"I = U/R")
-    doc.add_run("（家庭电路电压 U 基本恒定），电阻 R 小则电流 I 较大。")
-    doc.add_paragraph(
-        "较大的电流会在瞬间产生较多热量，使钨丝温度急剧上升，钨丝受到较大的热冲击，"
-        "加之此时钨丝温度低、韧性等物理性能相对较差，所以在开灯的时候容易烧坏。"
-    )
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：钨丝灯泡的伏安特性曲线表明其电阻随温度变化。开灯瞬间，钨丝温度低，"
+            "由伏安特性曲线可知此时电阻较小。"
+        )
+        doc.add_paragraph("")
+        doc.add_run("根据欧姆定律 ")
+        doc.add_inline_math(r"I = U/R")
+        doc.add_run("（家庭电路电压 U 基本恒定），电阻 R 小则电流 I 较大。")
+        doc.add_paragraph(
+            "较大的电流会在瞬间产生较多热量，使钨丝温度急剧上升，钨丝受到较大的热冲击，"
+            "加之此时钨丝温度低、韧性等物理性能相对较差，所以在开灯的时候容易烧坏。"
+        )
 
     doc.add_paragraph("3. 二极管反向电阻和正向电阻差异如此大，其物理原理是什么？")
-    doc.add_paragraph("答：二极管是由半导体材料制成，其内部结构包含一个 PN 结。")
-    doc.add_paragraph(
-        "从物理原理来看，正向导通时：当在二极管两端加上正向电压（P 区接高电位，"
-        "N 区接低电位），外电场方向与 PN 结内电场方向相反，削弱了内电场。"
-        "内电场原本会阻碍多子（P 区的空穴和 N 区的电子）的扩散运动，"
-        "内电场被削弱后，多子扩散运动加剧，大量的电子-空穴对复合，"
-        "形成较大的正向电流，此时二极管呈现出较小的电阻，即正向电阻较小。"
-    )
-    doc.add_paragraph(
-        "反向截止时：当在二极管两端加上反向电压（P 区接低电位，N 区接高电位），"
-        "外电场方向与 PN 结内电场方向相同，增强了内电场。"
-        "这使得多子的扩散运动难以进行，少子（P 区的电子和 N 区的空穴）"
-        "在电场作用下产生漂移运动，但由于少子数量很少，只能形成极其微弱的反向电流，"
-        "几乎可以忽略不计，此时二极管呈现出很大的电阻，即反向电阻很大。"
-    )
-    doc.add_paragraph(
-        "综上所述，由于 PN 结在不同外加电压下对多子和少子运动的影响不同，"
-        "导致了二极管反向电阻和正向电阻差异巨大。"
-    )
+    _o = _quiz.get("3") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph("答：二极管是由半导体材料制成，其内部结构包含一个 PN 结。")
+        doc.add_paragraph(
+            "从物理原理来看，正向导通时：当在二极管两端加上正向电压（P 区接高电位，"
+            "N 区接低电位），外电场方向与 PN 结内电场方向相反，削弱了内电场。"
+            "内电场原本会阻碍多子（P 区的空穴和 N 区的电子）的扩散运动，"
+            "内电场被削弱后，多子扩散运动加剧，大量的电子-空穴对复合，"
+            "形成较大的正向电流，此时二极管呈现出较小的电阻，即正向电阻较小。"
+        )
+        doc.add_paragraph(
+            "反向截止时：当在二极管两端加上反向电压（P 区接低电位，N 区接高电位），"
+            "外电场方向与 PN 结内电场方向相同，增强了内电场。"
+            "这使得多子的扩散运动难以进行，少子（P 区的电子和 N 区的空穴）"
+            "在电场作用下产生漂移运动，但由于少子数量很少，只能形成极其微弱的反向电流，"
+            "几乎可以忽略不计，此时二极管呈现出很大的电阻，即反向电阻很大。"
+        )
+        doc.add_paragraph(
+            "综上所述，由于 PN 结在不同外加电压下对多子和少子运动的影响不同，"
+            "导致了二极管反向电阻和正向电阻差异巨大。"
+        )
 
     doc.save()
     doc.close()

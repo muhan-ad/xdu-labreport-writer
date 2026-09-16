@@ -159,6 +159,43 @@ function saveSettings(settings) {
   localStorage.setItem('appSettings', JSON.stringify(settings));
 }
 
+// 扫描实验（主进程返回 {experiments, warnings}；此处归一为数组并携带 warnings 供提示）
+async function fetchExperiments() {
+  const r = await window.labAPI.scanExperiments();
+  if (Array.isArray(r)) return r;   // 兼容异常返回
+  const arr = (r && Array.isArray(r.experiments)) ? r.experiments : [];
+  arr.warnings = (r && Array.isArray(r.warnings)) ? r.warnings : [];
+  return arr;
+}
+
+// 扫描时被跳过的异常实验：提示用户（其余实验正常，异常项可导出诊断日志排查）
+function showScanWarnings(expList) {
+  const ws = expList && Array.isArray(expList.warnings) ? expList.warnings : [];
+  if (!ws.length) return;
+  showToast('warning', '部分实验数据异常', `已隐藏 ${ws.length} 个异常实验：${ws.slice(0, 3).join('；')}${ws.length > 3 ? '；…' : ''}`, 8000);
+}
+
+// ── AI 润色强约束：公式不可修改（程序化比对，不依赖模型自觉）──
+
+// 当前实验未填的必填字段数（诊断导出用）：null 值必填字段与数组/矩阵内的空元素计数；未选实验返回 -1
+function countMissingRequired(schema, data) {
+  if (!schema || !data || typeof data !== 'object') return -1;
+  let n = 0;
+  for (const group of schema.groups || []) {
+    for (const field of group.fields || []) {
+      if (!field.required) continue;
+      const v = data[field.key];
+      if (v == null) { n++; continue; }
+      if (field.type === 'array' && Array.isArray(v)) {
+        n += v.filter(x => x == null).length;
+      } else if (field.type === 'matrix' && Array.isArray(v)) {
+        for (const row of v) if (Array.isArray(row)) n += row.filter(x => x == null).length;
+      }
+    }
+  }
+  return n;
+}
+
 // ── 初始化 ──
 async function init() {
   const legacy = loadSettings();
@@ -171,8 +208,9 @@ async function init() {
   const settings = loadSettings();
   if (!settings.apiKey) { settings.hasApiKey = !!credentials.configured; saveSettings(settings); }
 
-  experiments = await window.labAPI.scanExperiments();
+  experiments = await fetchExperiments();
   experiments.forEach(e => { e.category = getCategory(e.name); });
+  showScanWarnings(experiments);
 
   updateCategoryCounts();
   applyDevUi();
@@ -299,6 +337,8 @@ async function exportDiagnostics() {
       queueState,
       queueSize: genQueue.length,
       updateInfo: updateInfo || null,
+      // 数据填写状态：当前实验未填必填字段数（-1=未选择实验）
+      pendingRequired: countMissingRequired(currentSchema, currentData),
     };
     const r = await window.labAPI.exportDiagnostics(payload);
     if (!r.ok) {
@@ -391,7 +431,16 @@ function renderList(keyword = '') {
 
 // ── 选中实验 ──
 async function selectExperiment(exp) {
-  if (currentExp?.id === exp.id || isSwitchingExperiment || isSavingData || isGenerating) return;
+  // 报告生成中或 AI 润色进行中禁止切换：避免生成日志/润色上下文与当前实验错位显示
+  const queueRunning = (typeof queueState !== 'undefined' && queueState === 'running');   // typeof 兜底：测试 vm 提取段无此模块级变量
+  const aiPolishBusy = (typeof isAiPolishing !== 'undefined' && isAiPolishing);
+  if (currentExp?.id === exp.id || isSwitchingExperiment || isSavingData || isGenerating || queueRunning || aiPolishBusy) {
+    if (isGenerating || queueRunning || aiPolishBusy) {
+      showToast('info', aiPolishBusy ? '润色进行中' : '正在生成报告',
+        aiPolishBusy ? 'AI 润色进行中，请等待完成后再切换实验' : '报告生成中，请等待完成后再切换实验', 3000);
+    }
+    return;
+  }
   isSwitchingExperiment = true;
   try {
   // 切换实验前若有未保存修改：保存并切换 / 取消则保留修改不切换（不静默丢弃）
@@ -527,7 +576,7 @@ async function pumpQueue() {
     renderQueue(); renderQueueControls(); updateQueueProgress();
     $('batchLog').textContent += `\n▶ ${getDisplayName(q.exp)}\n`;
     try {
-      const r = await window.labAPI.runGenerate(q.exp.path, studentInfo, null, expOverrides(q.exp.id));
+      const r = await window.labAPI.runGenerate(q.exp.path, studentInfo, null, expOverrides(q.exp.id), loadSettings().embedDataPhoto !== false);
       q.elapsed = (Date.now() - q.startedAt) / 1000;
       q.status = r.ok ? 'done' : (r.cancelled ? 'cancelled' : 'failed');
       if (!r.ok) q.error = r.error || ('exit ' + r.exitCode);
@@ -543,7 +592,7 @@ async function pumpQueue() {
   queueState = 'idle'; isBatchRunning = false; queueResume = null;
   renderQueue(); renderQueueControls(); updateQueueProgress(); updateBatchButton();
   try {
-    experiments = await window.labAPI.scanExperiments();
+    experiments = await fetchExperiments();
     experiments.forEach(e => { e.category = getCategory(e.name); });
     updateCategoryCounts(); updateEmptyStats(); renderList($('searchInput').value);
   } catch (e) { /* 刷新失败不影响队列结果 */ }
@@ -776,6 +825,8 @@ async function fillDefaultData() {
 function renderForm() {
   const wrap = $('dataTableWrap');
   if (!currentSchema) { wrap.innerHTML = ''; return; }
+  // 实验级样式挂载点（个别实验数据较长，需要更宽的数组格子）
+  wrap.dataset.exp = (currentExp && currentExp.id) || '';
   let html = '<div class="schema-form">';
   for (const group of (currentSchema.groups || [])) {
     html += '<div class="form-group">';
@@ -1024,6 +1075,7 @@ function extractSection(text, scope) {
   const patterns = {
     principle: ['实验原理', '实验目的', '实验原理与'],
     analysis: ['结果分析', '数据处理', '实验结果', '结果与分析', '数据记录与处理'],
+    quiz: ['思考题', '课后思考题', '问题讨论'],
   };
 
   const keywords = patterns[scope] || [];
@@ -1107,8 +1159,9 @@ async function refreshAiScopeOptions(keepValue) {
   if (currentSections) {
     for (const sec of Object.keys(currentSections)) add('sec:' + sec, sec + '（可导入）');
   }
-  add('analysis', '结果分析（取自报告 · 仅复制）');
-  add('full', '全文（仅复制）');
+  // 硬编码文本章节：源文取自已生成报告，能否导入由该实验的 generate.py 消费点决定（渲染结果时判定）
+  add('analysis', '结果分析（取自报告）');
+  add('quiz', '思考题（取自报告）');
   if (!prev.size) {
     const first = box.querySelector('input');
     if (first) first.checked = true;
@@ -1323,7 +1376,7 @@ function renderCustomVariantDetail() {
 async function refreshAfterCustomVariantChange() {
   await loadCustomVariantsList();
   try {
-    experiments = await window.labAPI.scanExperiments();
+    experiments = await fetchExperiments();
     experiments.forEach(e => { e.category = getCategory(e.name); });
     renderList();
     updateCategoryCounts();
@@ -1397,6 +1450,54 @@ async function importCustomVariantsFiles() {
 
 async function runAiPolish() {
   if (isAiPolishing || isSwitchingExperiment) return;
+  aiPolishCancelled = false;   // 本轮润色未被取消
+  aiPolishRequestId = null;
+  // 公式不可变校验（局部函数，随函数体被测试提取段完整包含）：
+  // 原文公式保护制——AI 不得删/改原文已有的公式；写法差异（\%→%、\left(→( 等）
+  // 归一化后视为等价并回填为原文写法；AI 新增的 $ 包裹保留。拒绝时返回诊断信息。
+  const extractFormulas = (text) => String(text || '').match(/\$\$[\s\S]*?\$\$|\$[^$\n]+\$/g) || [];
+  const normF = (f) => f.replace(/\s+/g, '')
+    .replace(/\\%/g, '%')
+    .replace(/\\left\(/g, '(').replace(/\\right\)/g, ')')
+    .replace(/\\left\[/g, '[').replace(/\\right\]/g, ']')
+    .replace(/\\left\{/g, '{').replace(/\\right\}/g, '}')
+    .replace(/\\(?:d|t|c)frac/g, '\\frac')
+    .replace(/\\cdot/g, '*').replace(/\\times/g, '*')
+    .replace(/\\mathrm\{([^}]*)\}/g, '$1').replace(/\\text\{([^}]*)\}/g, '$1');
+  const restoreFormulas = (original, polished) => {
+    const aRaw = extractFormulas(original);
+    const a = aRaw.map(normF);
+    if (!a.length) return { ok: true, content: String(polished || '') };   // 原文无公式：AI 新增 $ 包裹不拦截
+    const bRaw = extractFormulas(polished);
+    const b = bRaw.map(normF);
+    const used = new Set();
+    const matchIdx = new Map();   // b 下标 -> a 下标
+    const missing = [];
+    for (let j = 0; j < a.length; j++) {
+      let found = false;
+      for (let i = 0; i < b.length; i++) {
+        if (!used.has(i) && b[i] === a[j]) { used.add(i); matchIdx.set(i, j); found = true; break; }
+      }
+      if (!found) missing.push(aRaw[j]);   // 原文公式在 AI 输出中找不到（被删或写法差异过大）
+    }
+    if (missing.length) {
+      return { ok: false, missing, aiFormulas: bRaw };   // 诊断：具体哪条原文公式缺失
+    }
+    if (!bRaw.length) return { ok: true, content: String(polished || '') };
+    // 回填：AI 输出中匹配到的公式替换回原文写法（定界形式与内容以原文为准）；新增的保留
+    let out = String(polished || '');
+    for (let i = 0; i < bRaw.length; i++) {
+      if (matchIdx.has(i)) out = out.split(bRaw[i]).join(aRaw[matchIdx.get(i)]);
+    }
+    return { ok: true, content: out };
+  };
+  // 思考题题目不可变校验：原文每个题目片段（题号+题首）必须出现在结果中（空白差异放行）
+  const quizTopicsUnchanged = (original, polished) => {
+    const topics = (String(original || '').match(/\d+\.\s*[^\n。]{4,60}/g) || []).map(s => s.replace(/\s+/g, ''));
+    if (!topics.length) return true;
+    const p = String(polished || '').replace(/\s+/g, '');
+    return topics.every(t => p.includes(t));
+  };
   if (!currentExp || !currentExp.reportFile) {
     showToast('warning', '请先生成报告', '需要先生成报告才能进行 AI 润色');
     return;
@@ -1438,14 +1539,14 @@ async function runAiPolish() {
     .filter(Boolean)
     .map(s => `\n【技能·${s.name}（优先遵循）】${(s.content || '').slice(0, 2000)}`)
     .join('');
-  const formatBlock = '\n\n【输出格式硬性要求】只输出改写后的正文（Markdown）：任何数学表达（含 \\pi、\\Delta 等符号和上下标）一律用 $...$ 包裹，独立公式用单行 $$...$$（定界符与公式同一行）；不得输出裸的 \\frac、^、_ 等未包裹的 LaTeX；不得改变任何数值、单位与变量符号；不要输出章节编号标题（如"一、"），不要输出任何解释。';
+  const formatBlock = '\n\n【输出格式硬性要求】只输出改写后的正文（Markdown）：任何数学表达（含 \\pi、\\Delta 等符号和上下标）一律用 $...$ 包裹，独立公式用单行 $$...$$（定界符与公式同一行）；不得输出裸的 \\frac、^、_ 等未包裹的 LaTeX；不得改变任何数值、单位与变量符号；【公式不可修改·最高优先级】原文中的每一个 $...$ 或 $$...$$ 公式必须逐字原样保留（含变量名、上下标、运算符与整体结构），公式只能出现在不可修改区，只能改写公式之外的文字；【公式数量与定界形式必须与原文一致】不得新增 $...$ 包裹（包括给数字、单位、百分比等原文未包裹的内容加 $），不得拆分或合并公式，不得将公式改写为纯文本；不要输出章节编号标题（如"一、"），不要输出任何解释。';
 
   // 显示加载状态
   $('aiResultCard').style.display = 'none';
   $('aiLoadingCard').style.display = 'block';
   $('btnAiPolish').disabled = true;
 
-  // "结果分析/全文"取自 docx 纯文本，只提取一次
+  // "结果分析/思考题"取自 docx 纯文本，只提取一次（全文润色已取消）
   let fullText = '';
   if (scopeVals.some(v => !v.startsWith('sec:'))) {
     try { fullText = await getReportText(sourceExp); } catch (e) { fullText = ''; }
@@ -1456,6 +1557,8 @@ async function runAiPolish() {
     for (let i = 0; i < scopeVals.length; i++) {
       const scopeVal = scopeVals[i];
       $('aiLoadingText').textContent = `AI 正在润色中...（${i + 1}/${scopeVals.length}）`;
+      const pv = $('aiStreamPreview');
+      if (pv) pv.textContent = '';   // 每条目开始清空流式预览
 
       let sectionText = '', displayScope = '', section = null;
       if (scopeVal.startsWith('sec:')) {
@@ -1467,9 +1570,12 @@ async function runAiPolish() {
           continue;
         }
       } else {
-        displayScope = scopeVal === 'full' ? '全文' : '结果分析';
+        // 硬编码文本章节（结果分析/思考题）：源文取自已生成报告；是否可导入
+        // 由该实验 generate.py 是否有消费点决定（renderAiResults 中判定）
+        section = scopeVal === 'quiz' ? '思考题' : '结果分析';
+        displayScope = section;
         if (!fullText) {
-          results.push({ section: null, displayScope, error: '无法读取报告内容' });
+          results.push({ section, displayScope, error: '无法读取报告内容，请先生成一次报告' });
           continue;
         }
         sectionText = extractSection(fullText, scopeVal);
@@ -1478,7 +1584,7 @@ async function runAiPolish() {
       const messages = [
         {
           role: 'system',
-          content: `你是一个大学物理实验报告润色助手。${getAiStylePrompt(style)}${skillBlock}请对用户提供的实验报告内容进行个性化改写，保持科学准确性和数据真实性，避免与原文措辞重复，使报告更具个人特色，降低重复检测风险。只输出改写后的内容，不要输出解释或说明。${formatBlock}${kbBlock}`,
+          content: `你是一个大学物理实验报告润色助手。${getAiStylePrompt(style)}${skillBlock}请对用户提供的实验报告内容进行个性化改写，保持科学准确性和数据真实性，避免与原文措辞重复，使报告更具个人特色，降低重复检测风险。只输出改写后的内容，不要输出解释或说明。${formatBlock}${kbBlock}${scopeVal === 'quiz' ? '\n\n【思考题润色规则·最高优先级】题目（含题号，如"1. …"）是固定内容：必须逐字保留在输出中，严禁修改、删除或新增任何题目；只改写"答："之后的回答内容。输出格式：每问一行题目（与原文逐字一致）+ 下一行改写后的回答，按题号顺序排列。' : ''}`,
         },
         {
           role: 'user',
@@ -1487,16 +1593,42 @@ async function runAiPolish() {
       ];
 
       try {
+        if (aiPolishCancelled) break;   // 用户已取消：不再发起新的请求
+        // requestId 仅用于主进程定向中止当前请求；vm/旧环境无 crypto 时用时间戳+序号兜底
+        const rid = (typeof crypto !== 'undefined' && crypto.randomUUID)
+          ? crypto.randomUUID()
+          : ('r' + i + '-' + Date.now().toString(36));
+        aiPolishRequestId = rid;
         const result = await window.labAPI.aiChat({
           provider: settings.provider || 'deepseek',
           apiUrl: settings.apiUrl,
           model: settings.model,
           messages,
           temperature: 0.8,
+          requestId: rid,
         });
-        if (result.ok) results.push({ section, displayScope, original: sectionText, polished: result.content || '' });
+        if (aiPolishCancelled) continue;   // 取消后丢弃当前项结果
+        if (result.ok) {
+          // 公式强约束：AI 输出中的公式一律替换回原文公式（文字保留 AI 改写）；
+          // 仅当原文公式被 AI 删除/改写时拒绝，并给出诊断（具体缺失的公式与 AI 输出公式）
+          const restored = restoreFormulas(sectionText, result.content || '');
+          if (!restored.ok) {
+            const miss = (restored.missing || []).slice(0, 3).join('；');
+            const aiF = (restored.aiFormulas || []).slice(0, 3).join('、');
+            results.push({ section, displayScope, error: `AI 删改了公式：原文公式「${miss}」未在输出中找到。AI 输出中的公式：${aiF || '（无）'}（若只是写法差异请重试）` });
+            continue;
+          }
+          const content = restored.content;
+          // 思考题强约束：题目（含题号）必须逐字保留，只允许改写回答
+          if (section === '思考题' && !quizTopicsUnchanged(sectionText, content)) {
+            results.push({ section, displayScope, error: 'AI 修改了思考题题目，已拒绝该结果（题目必须原样保留，可重试）' });
+            continue;
+          }
+          results.push({ section, displayScope, original: sectionText, polished: content });
+        } else if (result.cancelled) continue;
         else results.push({ section, displayScope, error: result.error || '润色失败' });
       } catch (err) {
+        if (aiPolishCancelled) continue;
         results.push({ section, displayScope, error: err.message });
       }
     }
@@ -1505,7 +1637,9 @@ async function runAiPolish() {
     lastPolishResults = results;
     renderAiResults();
     const okCount = results.filter(r => r.polished).length;
-    if (okCount) {
+    if (aiPolishCancelled) {
+      showToast('info', '已取消', okCount ? `润色已中止，保留已完成 ${okCount} 项结果` : '润色已中止');
+    } else if (okCount) {
       showToast('success', '润色完成', `${okCount}/${results.length} 个对象完成，可导入章节支持一键重新生成`);
     } else {
       showToast('error', '润色失败', (results[0] && results[0].error) || '全部失败', 5000);
@@ -1516,6 +1650,9 @@ async function runAiPolish() {
     $('aiLoadingCard').style.display = 'none';
     $('aiLoadingText').textContent = 'AI 正在润色中...';
     $('btnAiPolish').disabled = false;
+    aiPolishRequestId = null;
+    const pv = $('aiStreamPreview');
+    if (pv) pv.textContent = '';
   }
   } finally {
     isAiPolishing = false;
@@ -1523,10 +1660,54 @@ async function runAiPolish() {
   }
 }
 
+// 思考题导入：按题号拆分 AI 结果 → 追加为该实验思考题回答变体（自动参与生成时的随机组合）
+async function importQuizAnswers(exp, polished) {
+  try {
+    const parts = String(polished || '').split(/\n(?=\d+\.\s)/);
+    const lr = await window.labAPI.loadVariants(exp.path);
+    const variants = (lr && lr.ok && lr.variants && typeof lr.variants === 'object') ? lr.variants : {};
+    const quiz = (variants['思考题'] && typeof variants['思考题'] === 'object') ? variants['思考题'] : {};
+    let added = 0;
+    for (const part of parts) {
+      const m = part.match(/^(\d+)\.\s*(.*)/s);
+      if (!m) continue;
+      const qno = m[1];
+      // 段内第一行为题目行（prompt 要求题目逐字保留并单独一行），其余为改写后的回答
+      const answer = part.split('\n').slice(1).join('\n').trim();
+      if (!answer) continue;
+      if (!Array.isArray(quiz[qno])) quiz[qno] = [];
+      if (quiz[qno].includes(answer)) continue;   // 与已有变体重复则跳过
+      quiz[qno].push(answer);
+      added++;
+    }
+    if (!added) {
+      showToast('warning', '未导入', '未能从润色结果中拆分出回答（需要"题目行+回答行"格式）');
+      return;
+    }
+    variants['思考题'] = quiz;
+    const sr = await window.labAPI.saveVariants(exp.path, variants);
+    if (!sr.ok) { showToast('error', '导入失败', sr.error, 5000); return; }
+    showToast('success', '已追加变体', `已为 ${added} 道思考题追加新回答变体，下次生成自动随机`);
+    if (currentExp && currentExp.id === exp.id) await loadVariantsUI(exp);
+  } catch (e) {
+    showToast('error', '导入异常', e.message, 5000);
+  }
+}
+
 // 渲染多对象润色结果（每项：原文/润色后对比 + 复制 + 可导入章节的导入按钮）
-function renderAiResults() {
+async function renderAiResults() {
   const wrap = $('aiResultsWrap');
   if (!wrap) return;
+  // 变体章节必然可导入；硬编码文本章节（结果分析/思考题等）由该实验 generate.py 消费点决定
+  const VARIANT_SECTIONS = ['实验原理', '实验方法', '误差分析', '结论', '实验结论'];
+  for (const r of lastPolishResults) {
+    if (r.section && !VARIANT_SECTIONS.includes(r.section) && r._importable === undefined) {
+      const exp = experiments.find(e => e.id === r.expId);
+      if (!exp) { r._importable = false; continue; }
+      const ir = await window.labAPI.sectionImportable(exp.path, r.section);
+      r._importable = !!(ir && ir.ok && ir.importable);
+    }
+  }
   wrap.innerHTML = '';
   let importable = 0;
   for (const r of lastPolishResults) {
@@ -1537,7 +1718,8 @@ function renderAiResults() {
     head.className = 'ai-result-head';
     const title = document.createElement('span');
     title.className = 'ai-result-title';
-    title.textContent = r.displayScope + (r.section ? '（可导入）' : '（仅复制）');
+    const canImport = r.section && (VARIANT_SECTIONS.includes(r.section) || r._importable);
+    title.textContent = r.displayScope + (canImport ? '（可导入）' : '（仅复制）');
     head.appendChild(title);
 
     if (r.error) {
@@ -1563,16 +1745,21 @@ function renderAiResults() {
     };
     head.appendChild(copyBtn);
 
-    if (r.section) {
+    if (canImport) {
       importable++;
       const impBtn = document.createElement('button');
       impBtn.type = 'button';
       impBtn.className = 'btn btn-sm btn-primary';
-      impBtn.textContent = '导入此章节';
-      impBtn.onclick = () => {
+      impBtn.textContent = '导入';
+      impBtn.onclick = async () => {
         if (!currentExp) return;
         if (r.expId && r.expId !== currentExp.id) {
           showToast('warning', '无法导入', `该结果来自实验「${r.expId}」，请先切回该实验再导入`);
+          return;
+        }
+        if (r.section === '思考题') {
+          // 思考题导入=按题号追加回答变体，自动参与生成时的随机组合
+          await importQuizAnswers(currentExp, r.polished);
           return;
         }
         setPolishOverride(currentExp.id, r.section, r.polished);
@@ -1883,6 +2070,19 @@ function bindEvents() {
 
   // AI 润色
   $('btnAiPolish').onclick = runAiPolish;
+  $('btnCancelAiPolish').onclick = () => {
+    // 润色进行中点击：中止当前请求，剩余章节不再发起
+    aiPolishCancelled = true;
+    if (aiPolishRequestId) window.labAPI.aiChatCancel(aiPolishRequestId);
+    $('aiLoadingText').textContent = '正在取消...';
+    showToast('info', '正在取消', '已发送中止请求，完成后保留已完成的润色结果');
+  };
+  // AI 润色流式预览：主进程按 requestId 推送增量文本，实时显示生成过程
+  window.labAPI.onAiChunk(({ requestId, delta }) => {
+    if (requestId !== aiPolishRequestId) return;
+    const el = $('aiStreamPreview');
+    if (el) el.textContent += delta;
+  });
   $('btnAiConfig').onclick = () => openModal('settingsModal');
   $('btnImportAi').onclick = importPolishAndRegenerate;
   $('btnClearOverrides').onclick = () => {
@@ -2108,8 +2308,9 @@ async function checkDataUpdate() {
     // 更新前的实验名集合（用于识别本次云端新增的实验）
     const oldNames = new Set(experiments.map(e => getDisplayName(e)));
     // 重新扫描实验（热更新后的实验列表与资源入口）
-    experiments = await window.labAPI.scanExperiments();
+    experiments = await fetchExperiments();
     experiments.forEach(e => { e.category = getCategory(e.name); });
+    showScanWarnings(experiments);
     const addedExps = experiments.filter(e => !oldNames.has(getDisplayName(e))).map(getDisplayName);
     updateCategoryCounts();
     renderList();
@@ -2588,7 +2789,7 @@ async function loadReportsList() {
 // 报告增删后同步：刷新管理列表 + 实验列表状态（角标/报告文件/预览可用性）
 async function refreshAfterReportChange() {
   await loadReportsList();
-  experiments = await window.labAPI.scanExperiments();
+  experiments = await fetchExperiments();
   experiments.forEach(e => { e.category = getCategory(e.name); });
   updateCategoryCounts();
   updateEmptyStats();
@@ -2649,6 +2850,7 @@ function loadSettingsForm() {
   $('chkKbOnly').checked = s.kbOnly !== false;
   loadSkillList();
   renderModelChips();
+  if (window.loadOcrSettingsForm) window.loadOcrSettingsForm();
 }
 
 // 渲染常用模型快速选择按钮
@@ -2692,12 +2894,13 @@ async function saveAppSettings() {
   settings.aiPolish = $('chkAiPolish').checked;
   settings.kbOnly = $('chkKbOnly').checked;
   settings.skillStates = getSkillStates();
+  if (settings.apiUrl && !/^https:\/\//i.test(settings.apiUrl)) { showToast('error', '地址无效', 'AI 服务必须使用 HTTPS'); return; }
+  if (window.saveOcrSettings && !(await window.saveOcrSettings(settings))) return;
   if (newKey) {
     const stored = await window.labAPI.saveCredential({ ...settings, key: newKey });
     if (!stored.ok) { showToast('error', '密钥未保存', stored.error, 6000); return; }
     settings.hasApiKey = stored.configured;
   }
-  if (settings.apiUrl && !/^https:\/\//i.test(settings.apiUrl)) { showToast('error', '地址无效', 'AI 服务必须使用 HTTPS'); return; }
   saveSettings(settings);
   closeModal('settingsModal');
   try { window.labAPI.logEvent(`saveAppSettings | provider=${settings.provider} model=${settings.model || '（默认）'}`); } catch (e) { /* 忽略 */ }
@@ -2802,13 +3005,13 @@ async function runGenerateReport(btn, genExpId) {
   document.querySelectorAll('.variant-select').forEach(sel => {
     const idx = parseInt(sel.value, 10);
     const sec = sel.dataset.section;
-    if (idx === -1 && currentVariants && currentVariants[sec]) {
+    if (idx === -1 && currentVariants && Array.isArray(currentVariants[sec])) {
       variantChoices[sec] = Math.floor(Math.random() * currentVariants[sec].length);
     } else {
       variantChoices[sec] = idx;
     }
   });
-  const result = await window.labAPI.runGenerate(genExp.path, studentInfo, variantChoices, expOverrides(genExp.id));
+  const result = await window.labAPI.runGenerate(genExp.path, studentInfo, variantChoices, expOverrides(genExp.id), loadSettings().embedDataPhoto !== false);
   if (result.cancelled) {
     $('logContent').textContent += '\n⏹ 生成已取消\n';
     showToast('info', '生成已取消', getDisplayName(genExp));
@@ -2819,7 +3022,7 @@ async function runGenerateReport(btn, genExpId) {
     if (result.reportFile) $('logContent').textContent += `📄 ${result.reportFile}\n`;
     showToast('success', '报告生成成功', getDisplayName(genExp));
     // 刷新实验列表
-    experiments = await window.labAPI.scanExperiments();
+    experiments = await fetchExperiments();
     experiments.forEach(e => { e.category = getCategory(e.name); });
     updateCategoryCounts();
     updateEmptyStats();
@@ -2880,6 +3083,7 @@ function renderVariantsPanel() {
   const expKey = currentExp ? currentExp.id : '';
   const savedForExp = saved[expKey] || {};
   for (const [section, texts] of Object.entries(currentVariants)) {
+    if (!Array.isArray(texts)) continue;   // dict 型章节（思考题按问变体）不进手动选择面板
     const row = document.createElement('div');
     row.className = 'variant-row';
 
@@ -2973,6 +3177,8 @@ function openVariantAI(section) {
 let aiGenerating = false;     // AI 生成进行中（防重复触发）
 let aiRequestId = null;       // 当前请求 ID（用于主进程中止）
 let aiCancelled = false;      // 用户已请求取消
+let aiPolishCancelled = false;   // AI 润色：用户已请求取消（中止剩余章节）
+let aiPolishRequestId = null;    // AI 润色：当前请求 ID（用于主进程中止）
 
 async function runVariantAI() {
   if (aiGenerating) return;

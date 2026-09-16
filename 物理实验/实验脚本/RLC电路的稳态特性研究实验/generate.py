@@ -373,7 +373,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
 
     # ---- 一、实验数据记录 ----
     doc.add_heading("一、实验数据记录", level=1)
-    doc.add_paragraph("（请在此处粘贴原始数据记录照片。）")
+    doc.add_data_photo("（请在此处粘贴原始数据记录照片。）")
 
     # ---- 二、数据处理 ----
     doc.add_heading("二、数据处理", level=1)
@@ -404,6 +404,10 @@ def _generate_docx(data: dict, output_path: str) -> bool:
 
     # ---- 三、实验结果分析 ----
     doc.add_heading("三、实验结果分析", level=1)
+
+    # 结果分析 AI 导入消费点：AI 润色导入的「结果分析」覆盖硬编码段落
+    if "结果分析" in variants:
+        doc.add_paragraph_rich(variants["结果分析"])
     doc.add_paragraph(
         "RLC 串联电路在谐振频率附近呈现明显的选频特性，电流达到最大，电压与电流同相。"
         "实验测得的谐振频率与理论值基本一致，误差在合理范围内。"
@@ -424,36 +428,50 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     # ---- 四、思考题 ----
     doc.add_heading("四、思考题", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_paragraph("1. RLC 串联电路中谐振时的特点是什么？")
-    doc.add_paragraph(
-        "答：RLC 串联电路的谐振频率是指电路呈现纯电阻性、总阻抗最小、电流最大的频率点。"
-        "此时电感与电容的阻抗相互抵消，电压与电流同相。"
-    )
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
 
-    doc.add_paragraph("")
-    doc.add_run("2. RLC 串联电路实验中 U 和 ")
-    doc.add_inline_math(r"U_{R}")
-    doc.add_run("、")
-    doc.add_inline_math(r"U_{C}")
-    doc.add_run(" 以及 ")
-    doc.add_inline_math(r"U_{L}")
-    doc.add_run(" 不是代数和的关系，请问原因是什么？")
+        doc.add_paragraph(
+            "答：RLC 串联电路的谐振频率是指电路呈现纯电阻性、总阻抗最小、电流最大的频率点。"
+            "此时电感与电容的阻抗相互抵消，电压与电流同相。"
+        )
 
-    doc.add_paragraph("")
-    doc.add_run("答：因为这些电压之间存在相位差。在交流电路中，电压和电流均为正弦量，"
-                "具有幅度和相位。由于电阻、电感和电容的特性不同：即电阻电压 ")
-    doc.add_inline_math(r"U_{R}")
-    doc.add_run(" 与电流同相位、电感电压 ")
-    doc.add_inline_math(r"U_{L}")
-    doc.add_run(" 超前电流 90°、电容电压 ")
-    doc.add_inline_math(r"U_{C}")
-    doc.add_run(" 滞后电流 90°。")
+        doc.add_paragraph("")
+        doc.add_run("2. RLC 串联电路实验中 U 和 ")
+        doc.add_inline_math(r"U_{R}")
+        doc.add_run("、")
+        doc.add_inline_math(r"U_{C}")
+        doc.add_run(" 以及 ")
+        doc.add_inline_math(r"U_{L}")
+        doc.add_run(" 不是代数和的关系，请问原因是什么？")
 
-    doc.add_paragraph(
-        "因此，三者瞬时值之和等于总电压瞬时值，但有效值之间不能直接相加。"
-        "它们的合成需采用相量加法，即总电压有效值为："
-    )
-    doc.add_math(r"U = \sqrt{U_{R}^{2} + (U_{L} - U_{C})^{2}}")
+        doc.add_paragraph("")
+        doc.add_run("答：因为这些电压之间存在相位差。在交流电路中，电压和电流均为正弦量，"
+                    "具有幅度和相位。由于电阻、电感和电容的特性不同：即电阻电压 ")
+        doc.add_inline_math(r"U_{R}")
+        doc.add_run(" 与电流同相位、电感电压 ")
+        doc.add_inline_math(r"U_{L}")
+        doc.add_run(" 超前电流 90°、电容电压 ")
+        doc.add_inline_math(r"U_{C}")
+        doc.add_run(" 滞后电流 90°。")
+
+        doc.add_paragraph(
+            "因此，三者瞬时值之和等于总电压瞬时值，但有效值之间不能直接相加。"
+            "它们的合成需采用相量加法，即总电压有效值为："
+        )
+        doc.add_math(r"U = \sqrt{U_{R}^{2} + (U_{L} - U_{C})^{2}}")
 
     doc.save()
     doc.close()

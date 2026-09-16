@@ -204,6 +204,11 @@ def compose(script_dir: str, data: dict) -> dict:
     for section, texts in variants.items():
         if section in disabled:
             continue   # 该实验此章节被禁用（应用"变体管理"），报告中不再出现
+        if section == "思考题":
+            # 思考题：按问回答变体字典原样透传（题目在 generate.py 写死，
+            # 生成器对每问随机选回答；LAB_POLISH 覆盖时下方循环替换为整段文本）
+            out[section] = texts
+            continue
         idx = -1
         if choices and section in choices:
             try:

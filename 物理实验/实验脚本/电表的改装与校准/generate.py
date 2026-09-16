@@ -123,7 +123,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 一、原始数据提交 ──
     doc.add_heading("一、原始数据提交（拍照上传）", level=1)
-    doc.add_paragraph("请在下方粘贴原始数据记录照片。")
+    doc.add_data_photo("请在下方粘贴原始数据记录照片。")
 
     # ── 二、数据处理 ──
     doc.add_heading("二、数据处理", level=1)
@@ -180,6 +180,10 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 三、实验结果分析 ──
     doc.add_heading("三、实验结果分析", level=1)
+
+    # 结果分析 AI 导入消费点：AI 润色导入的「结果分析」覆盖硬编码段落
+    if "结果分析" in variants:
+        doc.add_paragraph_rich(variants["结果分析"])
     doc.add_paragraph("")
     doc.add_run("电流表校正最大修正值 ")
     doc.add_inline_math(f"\\Delta I_{{max}} = {format_number(r['max_i_corr'])} mA")
@@ -204,33 +208,57 @@ def _generate_docx(data: dict, output_path: str):
     # ── 四、思考题 ──
     doc.add_heading("四、思考题", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_heading("1. 为什么电流表改装要用并联电阻？", level=2)
-    doc.add_paragraph(
-        "答：电流表本质是微安表头，内阻较大，只能通过很小的电流。"
-        "要扩大电流量程，必须并联一个分流电阻，使大部分被测电流从分流电阻流过，"
-        "表头只流过与其内阻成反比的份额，从而保证表头工作在额定电流范围内。"
-    )
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：电流表本质是微安表头，内阻较大，只能通过很小的电流。"
+            "要扩大电流量程，必须并联一个分流电阻，使大部分被测电流从分流电阻流过，"
+            "表头只流过与其内阻成反比的份额，从而保证表头工作在额定电流范围内。"
+        )
 
     doc.add_heading("2. 电压表改装为什么串联大电阻？", level=2)
-    doc.add_paragraph(
-        "答：电压表要求内阻很大，测量时几乎不分流被测电路电流。"
-        "扩大量程时需串联分压电阻，使绝大部分电压降落在分压电阻上，"
-        "表头只承担额定电压降，同时使改装表的总内阻按量程成比例增大（欧姆/伏特）。"
-    )
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：电压表要求内阻很大，测量时几乎不分流被测电路电流。"
+            "扩大量程时需串联分压电阻，使绝大部分电压降落在分压电阻上，"
+            "表头只承担额定电压降，同时使改装表的总内阻按量程成比例增大（欧姆/伏特）。"
+        )
 
     doc.add_heading("3. 校正时发现改装表读数普遍偏大，说明什么？", level=2)
-    doc.add_paragraph(
-        "答：读数普遍偏大说明表头支路电流偏大，即分流/分压电阻取值偏大（或表头内阻标定偏小），"
-        "导致流过表头的电流超过额定值。应适当减小分流电阻（电流表）或减小分压电阻（电压表），"
-        "并重新校正，使各点修正值尽量减小且正负对称。"
-    )
+    _o = _quiz.get("3") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
 
-    # ── 变体章节：实验结论（置于思考题之后） ──
-    if "实验结论" in variants:
-        doc.add_heading("实验结论", level=1)
-        doc.add_paragraph_rich(variants["实验结论"])
+        doc.add_paragraph(
+            "答：读数普遍偏大说明表头支路电流偏大，即分流/分压电阻取值偏大（或表头内阻标定偏小），"
+            "导致流过表头的电流超过额定值。应适当减小分流电阻（电流表）或减小分压电阻（电压表），"
+            "并重新校正，使各点修正值尽量减小且正负对称。"
+        )
 
-    # ── 保存 ──
+        # ── 变体章节：实验结论（置于思考题之后） ──
+        if "实验结论" in variants:
+            doc.add_heading("实验结论", level=1)
+            doc.add_paragraph_rich(variants["实验结论"])
+
+        # ── 保存 ──
     doc.save()
     doc.close()
 

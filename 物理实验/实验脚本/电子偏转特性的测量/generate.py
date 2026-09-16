@@ -165,7 +165,7 @@ def _generate_docx(data: dict, output_path: str):
         doc.add_paragraph_rich(variants["实验方法"])
 
     doc.add_heading("一、原始数据记录", level=1)
-    doc.add_paragraph("请在下方粘贴原始数据记录照片。")
+    doc.add_data_photo("请在下方粘贴原始数据记录照片。")
 
     doc.add_heading("二、数据处理", level=1)
 
@@ -267,31 +267,55 @@ def _generate_docx(data: dict, output_path: str):
         doc.add_paragraph_rich(variants["结论"])
 
     doc.add_heading("三、课后思考题", level=1)
+
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
     doc.add_paragraph("1. 由电偏转灵敏度的计算结果，能得出 ")
-    doc.add_inline_math(r"\varepsilon")
-    doc.add_run(" 与 ")
-    doc.add_inline_math(r"U_{2}")
-    doc.add_run(" 有什么关系？")
-    doc.add_paragraph("答：由式")
-    doc.add_math(r"\varepsilon = k_{e}\frac{1}{U_{2}}")
-    doc.add_paragraph("知，")
-    doc.add_inline_math(r"U_{2}")
-    doc.add_run(" 越大，")
-    doc.add_inline_math(r"\varepsilon")
-    doc.add_run(" 越小，即 ")
-    doc.add_inline_math(r"\varepsilon")
-    doc.add_run(" 与 ")
-    doc.add_inline_math(r"U_{2}")
-    doc.add_run(" 成反比关系。")
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_inline_math(r"\varepsilon")
+        doc.add_run(" 与 ")
+        doc.add_inline_math(r"U_{2}")
+        doc.add_run(" 有什么关系？")
+        doc.add_paragraph("答：由式")
+        doc.add_math(r"\varepsilon = k_{e}\frac{1}{U_{2}}")
+        doc.add_paragraph("知，")
+        doc.add_inline_math(r"U_{2}")
+        doc.add_run(" 越大，")
+        doc.add_inline_math(r"\varepsilon")
+        doc.add_run(" 越小，即 ")
+        doc.add_inline_math(r"\varepsilon")
+        doc.add_run(" 与 ")
+        doc.add_inline_math(r"U_{2}")
+        doc.add_run(" 成反比关系。")
 
     doc.add_paragraph("2. 偏转量的大小与光点的亮度是否有关？为什么？")
-    doc.add_paragraph("答：有关，偏转量的大小会影响聚焦，从而影响光点亮度。")
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph("答：有关，偏转量的大小会影响聚焦，从而影响光点亮度。")
 
     doc.add_paragraph("3. 地球表面的磁场对电子显像管中电子的运动有多大影响？能否忽略？")
-    doc.add_paragraph("答：地磁场强度为 ")
-    doc.add_inline_math(r"(2.5 \sim 6.5) \times 10^{-5}\,\mathrm{T}")
-    doc.add_run("，与电子显像管中磁场相比，磁场强度很弱，因此地磁场对电子显像管中"
-                "电子的运动影响很小，从而可以忽略。")
+    _o = _quiz.get("3") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph("答：地磁场强度为 ")
+        doc.add_inline_math(r"(2.5 \sim 6.5) \times 10^{-5}\,\mathrm{T}")
+        doc.add_run("，与电子显像管中磁场相比，磁场强度很弱，因此地磁场对电子显像管中"
+                    "电子的运动影响很小，从而可以忽略。")
 
     doc.save()
     doc.close()

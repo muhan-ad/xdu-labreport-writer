@@ -13,12 +13,14 @@ const security = require('./src/main/security');
 const network = require('./src/main/network');
 const updatePackage = require('./src/main/update-package');
 const { createKeyStore } = require('./src/main/key-store');
+const ocr = require('./src/main/ocr');
 const { pathToFileURL } = require('url');
 const crypto = require('crypto');
 // Keep the legacy top-level origin so existing student/settings storage is preserved.
 const APP_URL = pathToFileURL(path.join(__dirname, 'src/index.html')).href;
 protocol.registerSchemesAsPrivileged([{ scheme: 'labapp', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 const keyStore = createKeyStore(app.getPath('userData'), safeStorage);
+const visionKeyStore = createKeyStore(path.join(app.getPath('userData'), 'vision'), safeStorage);
 function handle(name, fn) {
   ipcMain.handle(name, (event, ...args) => {
     if (!security.trustedSender(event, mainWindow?.webContents, APP_URL)) return { ok: false, error: '拒绝不可信的调用来源' };
@@ -286,7 +288,8 @@ function getCustomVariantsDir() {
   return dir;
 }
 
-// 自建变体库认可的标准章节名（"实验结论"兼容 26 个实验中的键名差异）
+// 自建变体库认可的标准章节名（官方 variants 已统一用「结论」；「实验结论」仅保留兼容
+// 此前入库的旧自建变体数据，不做迁移）
 const CUSTOM_SECTION_NAMES = ['实验原理', '实验方法', '误差分析', '结论', '实验结论'];
 
 // 实验名 → 自建库文件绝对路径；非法名返回 null
@@ -376,6 +379,45 @@ function ensureUserCopy(expPath) {
     return dst;
 }
 
+const PHOTO_BASENAME = '原始数据照片';
+const PHOTO_EXTENSIONS = Object.freeze({ 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' });
+function findDataPhoto(expPath) {
+  try {
+    const name = fs.readdirSync(expPath).find(item => /^原始数据照片\.(?:jpe?g|png|webp)$/i.test(item));
+    return name ? security.inside(path.join(expPath, name), expPath) : null;
+  } catch (_) { return null; }
+}
+
+handle('pick-table-image', async () => {
+  const picked = await dialog.showOpenDialog(mainWindow, {
+    title: '选择数据表照片',
+    filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp'] }],
+    properties: ['openFile'],
+  });
+  if (picked.canceled || !picked.filePaths?.length) return { ok: true, canceled: true };
+  const file = path.resolve(picked.filePaths[0]);
+  const stat = fs.statSync(file);
+  if (!stat.isFile() || stat.size > 20 * 1024 * 1024) throw Error('图片不存在或超过 20MB 上限');
+  const mime = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' }[path.extname(file).toLowerCase()];
+  if (!mime) throw Error('不支持的图片格式');
+  return { ok: true, dataUrl: `data:${mime};base64,${fs.readFileSync(file).toString('base64')}`, name: path.basename(file) };
+});
+
+handle('save-table-image', (_, expPath, dataUrl) => {
+  const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(String(dataUrl || ''));
+  if (!match) throw Error('图片数据无效');
+  const bytes = Buffer.from(match[2], 'base64');
+  if (!bytes.length || bytes.length > 20 * 1024 * 1024) throw Error('图片为空或超过 20MB 上限');
+  if (!ocr.hasImageSignature(match[1], bytes)) throw Error('图片内容与声明格式不一致');
+  const dir = ensureUserCopy(expPath);
+  for (const name of fs.readdirSync(dir)) {
+    if (/^原始数据照片\.(?:jpe?g|png|webp)$/i.test(name)) fs.unlinkSync(security.inside(path.join(dir, name), dir));
+  }
+  const file = security.inside(path.join(dir, PHOTO_BASENAME + PHOTO_EXTENSIONS[match[1]]), dir);
+  atomic.writeFile(file, bytes, undefined, false);
+  return { ok: true, file: path.basename(file) };
+});
+
 function experimentPath(raw) {
   if (typeof raw !== 'string') throw Error('无效实验路径');
   const p = path.resolve(raw);
@@ -395,29 +437,45 @@ function reportPath(raw) {
   return p;
 }
 
-function scanDirEntry(d, source) {
+function scanDirEntry(d, source, builtinExpDir) {
   const expPath = path.join(d.dir, d.name);
   const generatePy = security.inside(path.join(expPath, 'generate.py'), expPath);
-  const errors = dataValidation.validate(atomic.readJson(security.inside(path.join(expPath, 'schema.json'), expPath)),
-    atomic.readJson(security.inside(path.join(expPath, 'data.json'), expPath)));
+  let schema = null, schemaWarning = null;
+  try {
+    // 扫描只做结构校验（schema/data.json 可解析、类型形状正确）：必填值校验
+    // 由生成阶段（run-generate）负责——用户没填完的数据不应让整个实验列表失灵。
+    schema = atomic.readJson(security.inside(path.join(expPath, 'schema.json'), expPath));
+  } catch (e) {
+    // 模板 schema 是出厂复制品（无 .bak 兜底）：损坏时用安装目录出厂副本继续本次检测，
+    // 并提示用户通过「检查实验数据更新」恢复；出厂副本也不可用则把异常抛给调用方跳过。
+    const builtin = builtinExpDir ? security.inside(path.join(builtinExpDir, d.name, 'schema.json'), builtinExpDir) : null;
+    if (!builtin || !fs.existsSync(builtin)) throw e;
+    schema = atomic.readJson(builtin);
+    schemaWarning = `${d.name}：实验模板损坏，已用出厂模板检测（请通过「检查实验数据更新」恢复）`;
+  }
+  const errors = dataValidation.validate(schema,
+    atomic.readJson(security.inside(path.join(expPath, 'data.json'), expPath)), false);
   if (errors.length) throw Error(errors.join('；'));
-  if (!fs.existsSync(generatePy)) return null;
+  if (!fs.existsSync(generatePy)) return { entry: null, warning: schemaWarning };
   const files = fs.readdirSync(expPath);
   const hasDataJson = files.includes('data.json');
   const hasSchemaJson = files.includes('schema.json');
   const docx = files.find(f => f.endsWith('.docx') && !f.startsWith('~$') && !f.includes('.~saving'));
   return {
-    id: d.name,
-    name: d.name,
-    path: expPath,
-    hasData: hasDataJson || hasSchemaJson,
-    hasReport: !!docx,
-    dataFile: hasDataJson
-      ? security.inside(path.join(expPath, 'data.json'), expPath)
-      : (hasSchemaJson ? security.inside(path.join(expPath, 'schema.json'), expPath) : null),
-    reportFile: docx ? path.join(expPath, docx) : null,
-    source,
-    hasCustomVariants: hasCustomVariantsFor(d.name),
+    entry: {
+      id: d.name,
+      name: d.name,
+      path: expPath,
+      hasData: hasDataJson || hasSchemaJson,
+      hasReport: !!docx,
+      dataFile: hasDataJson
+        ? security.inside(path.join(expPath, 'data.json'), expPath)
+        : (hasSchemaJson ? security.inside(path.join(expPath, 'schema.json'), expPath) : null),
+      reportFile: docx ? path.join(expPath, docx) : null,
+      source,
+      hasCustomVariants: hasCustomVariantsFor(d.name),
+    },
+    warning: schemaWarning,
   };
 }
 
@@ -426,18 +484,28 @@ handle('scan-experiments', () => {
   syncInstalledResources();
   const { roots } = getDataRoots();
   const results = [];
+  const warnings = [];
   const seen = new Set();
   for (const root of roots) {
     let dirs = [];
     try { dirs = fs.readdirSync(root.dir, { withFileTypes: true }); } catch (e) { continue; }
     for (const d of dirs) {
       if (!d.isDirectory() || d.name === 'common' || d.name.startsWith('.') || seen.has(d.name)) continue;
-      const entry = scanDirEntry({ dir: root.dir, name: d.name }, root.source);
-      if (entry) { seen.add(d.name); results.push(entry); }
+      try {
+        const r = scanDirEntry({ dir: root.dir, name: d.name }, root.source, EXPERIMENTS_DIR);
+        if (r.warning) warnings.push(r.warning);
+        if (r.entry) results.push(r.entry);
+      } catch (e) {
+        // 单实验数据损坏不应拖垮整个列表：跳过并提示（生成时会再次校验并给出具体错误）
+        warnings.push(`${d.name}：${String(e.message || e).slice(0, 120)}`);
+        log(`scan | 跳过异常实验 ${d.name} | ${String(e.message || e).slice(0, 200)}`);
+      }
+      // 无论成败都占位：数据区异常时不应回退到安装目录的同名出厂实验
+      seen.add(d.name);
     }
   }
   results.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
-  return results;
+  return { experiments: results, warnings };
 });
 
 // ── IPC: 窗口控制 ──
@@ -1389,6 +1457,91 @@ handle('report-text', async (_, filePath) => {
   catch (e) { return { ok: false, error: e.message }; }
 });
 
+// ── 诊断增强：Word 环境 / 数据现场 / 网络探测（全部只读，失败降级不阻塞导出）──
+const DIAG_PROBE_MARKER = '###DIAGNOSTIC_PROBE###';
+
+function probeWordEnv() {
+  // 用生成同款 python + pywin32 探测：注册表存在性/文件版本/COM 冒烟/进程数/WPS/代码页。
+  // 探测脚本为独立文件 src/main/word-probe.py，源码经 stdin 喂给 python
+  // （asar 内文件不是真实路径，不能直接作为 python 入口）。
+  return new Promise((resolve) => {
+    let proc = null;
+    const timer = setTimeout(() => { try { if (proc && proc.exitCode === null) proc.kill(); } catch (e) { /* 忽略 */ } resolve(null); }, 25000);
+    try {
+      const probeFile = path.join(__dirname, 'src', 'main', 'word-probe.py');
+      const source = fs.readFileSync(probeFile, 'utf8');
+      proc = spawn(resolvePythonExe() || 'python', ['-B', '-X', 'utf8', '-'], {
+        windowsHide: true,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+      });
+      let out = '';
+      proc.stdout.setEncoding('utf8');
+      proc.stdout.on('data', (d) => { out += d; });
+      proc.on('error', () => { clearTimeout(timer); resolve(null); });
+      proc.on('close', () => {
+        clearTimeout(timer);
+        try {
+          const line = out.split('\n').find(l => l.includes(DIAG_PROBE_MARKER));
+          if (!line) return resolve(null);
+          return resolve(JSON.parse(line.slice(line.indexOf(DIAG_PROBE_MARKER) + DIAG_PROBE_MARKER.length)));
+        } catch (e) {
+          return resolve(null);
+        }
+      });
+      proc.stdin.write(source);
+      proc.stdin.end();
+    } catch (e) {
+      clearTimeout(timer);
+      resolve(null);
+    }
+  });
+}
+
+function probeDataScene() {
+  // 实验清单：总数 / 缺 data.json 的模板 / 启用了章节禁用的实验
+  const out = { count: 0, missingData: [], sectionDisabled: [] };
+  try {
+    const { roots } = getDataRoots();
+    const seen = new Set();
+    for (const root of roots) {
+      let dirs = [];
+      try { dirs = fs.readdirSync(root.dir, { withFileTypes: true }); } catch (e) { continue; }
+      for (const d of dirs) {
+        if (!d.isDirectory() || d.name === 'common' || d.name.startsWith('.') || seen.has(d.name)) continue;
+        seen.add(d.name);
+        out.count++;
+        const expDir = path.join(root.dir, d.name);
+        if (!fs.existsSync(path.join(expDir, 'data.json'))) out.missingData.push(d.name);
+        try {
+          const cfg = atomic.readJson(path.join(expDir, 'sections-config.json'));
+          if (Array.isArray(cfg && cfg.disabled) && cfg.disabled.length) {
+            out.sectionDisabled.push(`${d.name}：${cfg.disabled.join('、')}`);
+          }
+        } catch (e) { /* 无配置文件即全部启用 */ }
+      }
+    }
+    out.missingData.sort((a, b) => a.localeCompare(b, 'zh'));
+    out.sectionDisabled.sort((a, b) => a.localeCompare(b, 'zh'));
+  } catch (e) { /* 扫描失败保持空结果 */ }
+  return out;
+}
+
+function probeDataManifest() {
+  // data-manifest.json 可达性（HEAD，5s 超时）——诊断"检查不到更新"
+  return new Promise((resolve) => {
+    try {
+      const req = https.get(DATA_MANIFEST_URL, { timeout: 5000, method: 'HEAD' }, (res) => {
+        resolve({ status: res.statusCode });
+        res.resume();
+      });
+      req.on('error', (e) => resolve({ error: String(e.message).slice(0, 120) }));
+      req.on('timeout', () => { req.destroy(); resolve({ error: '超时（5s）' }); });
+    } catch (e) {
+      resolve({ error: String(e.message).slice(0, 120) });
+    }
+  });
+}
+
 // ── IPC: 导出诊断日志（设置-开发者调试；单 .txt，统一脱敏）──
 handle('export-diagnostics', async (_, payload) => {
   try {
@@ -1399,6 +1552,22 @@ handle('export-diagnostics', async (_, payload) => {
     } catch (e) { /* 读失败按无日志处理 */ }
     const { udRoot } = getDataRoots();
     const manifest = readLocalDataManifest();
+    const dataScene = probeDataScene();
+    const netProbe = await probeDataManifest();
+    const proxySet = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY']
+      .filter(k => process.env[k] !== undefined && String(process.env[k]).trim() !== '');
+    const wordEnv = await probeWordEnv();   // 由下方定义；失败返回 null
+    const sys = (wordEnv && typeof wordEnv === 'object') ? wordEnv : {};
+    const systemEnv = {
+      acp: sys.acp !== undefined ? sys.acp : '（未获取）',
+      lcid: sys.lcid !== undefined ? sys.lcid : '（未获取）',
+      preferredEncoding: sys.preferredEncoding !== undefined ? sys.preferredEncoding : '（未获取）',
+      pythonVersion: sys.pythonVersion !== undefined ? sys.pythonVersion : '（未获取）',
+      pythonExe: resolvePythonExe() || '（未找到，生成时将回退 PATH python）',
+      recentWordInstances: generationLogBuffer.map(g => `${g.exp}：${g.wordInstances === null || g.wordInstances === undefined ? '未知' : g.wordInstances} 个`),
+    };
+    const netEnv = { proxySet, dataManifest: netProbe };
+
     const sources = {
       appVersion: app.getVersion(),
       packaged: app.isPackaged,
@@ -1419,6 +1588,10 @@ handle('export-diagnostics', async (_, payload) => {
       renderErrors: Array.isArray(p.renderErrors) ? p.renderErrors : [],
       runLog,
       generationLogs: generationLogBuffer,
+      wordEnv,
+      systemEnv,
+      dataScene,
+      netEnv,
     };
     const doc = diagnostics.buildDiagnostics(sources);
     const knownRoots = [EXPERIMENTS_DIR, udRoot, app.getPath('userData'), PROJECT_ROOT];
@@ -1443,7 +1616,7 @@ handle('export-diagnostics', async (_, payload) => {
 // ── IPC: 运行 generate.py 生成报告 ──
 // variants.compose 向 stdout 打印的章节原文标记（供应用侧按章节润色/导入重生成）
 const SECTIONS_MARKER = '.LAB_SECTIONS_JSON:';
-handle('run-generate', async (_, expPath, studentInfo, variants, polish) => {
+handle('run-generate', async (_, expPath, studentInfo, variants, polish, embedDataPhoto = true) => {
   if (generationBusy || resourceUpdating) return { ok: false, error: '已有任务正在运行，请稍后重试' };
   syncInstalledResources();
   generationBusy = true;
@@ -1475,6 +1648,9 @@ handle('run-generate', async (_, expPath, studentInfo, variants, polish) => {
     if (studentInfo.class) env.LAB_STUDENT_CLASS = studentInfo.class;
     if (studentInfo.date) env.LAB_STUDENT_DATE = studentInfo.date;
   }
+  const dataPhoto = embedDataPhoto ? findDataPhoto(expPath) : null;
+  if (dataPhoto) env.LAB_DATA_PHOTO = dataPhoto;
+  else delete env.LAB_DATA_PHOTO;
   const jobInput = JSON.stringify({ variants: variants || {}, polish: polish || {}, disabledSections: readSectionsConfig(expPath).disabled });
   if (Buffer.byteLength(jobInput) > 512 * 1024) throw Error('润色与变体内容过长，请减少后重试');
   job.inputFile = path.join(expPath, '.job-' + crypto.randomUUID() + '.json');
@@ -1570,7 +1746,30 @@ handle('run-generate', async (_, expPath, studentInfo, variants, polish) => {
       const ok = !job.cancelled && code === 0 && !!reportFile;
       log(`generate | 结束 | 实验=${genExpName} exit=${code} ok=${ok}${reportFile ? ' 报告=' + path.basename(reportFile) : ''} | ${Date.now() - genT0}ms`);
       try {
-        pushGenerationLog({ exp: genExpName, exitCode: code, ok, logs: (logs || []).join('') });
+        // 诊断现场：job 摘要（变体/润色覆盖章节名/禁用章节，不含文本）+ 报告文件信息 + 章节缓存存在性
+        let jobSummary = {};
+        try {
+          const j = JSON.parse(jobInput);
+          jobSummary = {
+            variants: (j.variants && typeof j.variants === 'object') ? j.variants : null,
+            polishSections: (j.polish && typeof j.polish === 'object') ? Object.keys(j.polish) : [],
+            disabledSections: Array.isArray(j.disabledSections) ? j.disabledSections : [],
+          };
+        } catch (e) { /* 解析失败按空处理 */ }
+        let reportInfo = null;
+        if (reportFile) {
+          try {
+            const st = fs.statSync(reportFile);
+            reportInfo = { name: path.basename(reportFile), size: st.size, mtime: st.mtime.toISOString() };
+          } catch (e) { /* 报告被删/不可读时缺失 */ }
+        }
+        let sectionsCache = false;
+        try { sectionsCache = fs.existsSync(path.join(expPath, '.lab_sections.json')); } catch (e) { /* 忽略 */ }
+        pushGenerationLog({
+          exp: genExpName, exitCode: code, ok, logs: (logs || []).join(''),
+          wordInstances: job.wordHandles ? job.wordHandles.size : null,
+          job: jobSummary, report: reportInfo, sectionsCache,
+        });
       } catch (e) { /* 缓冲失败不影响结果 */ }
       // Only publish section sources belonging to a successfully saved report.
       if (ok && capturedSections && typeof capturedSections === 'object') {
@@ -1661,12 +1860,72 @@ function aiEndpoint(params) {
   if (url.search || url.hash) throw Error('API 地址不能包含查询参数或片段');
   return url.href.replace(/\/+$/, '');
 }
+function visionEndpoint(params) {
+  if (params.visionProvider === 'inherit') return aiEndpoint(params);
+  const preset = ocr.visionPreset(params.visionProvider);
+  const url = network.publicUrl(String(params.visionApiUrl || params.apiUrl || preset.baseUrl).replace(/\/+$/, ''));
+  if (url.search || url.hash) throw Error('API 地址不能包含查询参数或片段');
+  return url.href.replace(/\/+$/, '');
+}
 handle('credential-status', () => ({ ok: true, ...keyStore.status() }));
 handle('credential-save', (_, payload) => {
   try { return { ok: true, ...keyStore.save(payload.key, payload.key ? aiEndpoint(payload) : '') }; }
   catch (e) { return { ok: false, error: e.message }; }
 });
-handle('ai-chat', async (_, params) => {
+handle('vision-credential-status', () => ({ ok: true, ...visionKeyStore.status() }));
+handle('vision-credential-save', (_, payload) => {
+  try { return { ok: true, ...visionKeyStore.save(payload.key, payload.key ? visionEndpoint({ ...payload, visionProvider: payload.provider }) : '') }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+handle('ocr-recognize', async (_, params) => {
+  const requestId = String(params?.requestId || crypto.randomUUID());
+  if (!params || typeof params.prompt !== 'string' || Buffer.byteLength(params.prompt) > 128 * 1024)
+    return { ok: false, error: '识别字段说明无效或过大' };
+  if (aiAbortControllers.size >= 2 || aiAbortControllers.has(requestId)) return { ok: false, error: 'AI 请求正在处理，请稍后重试' };
+  const controller = new AbortController();
+  aiAbortControllers.set(requestId, controller);
+  try {
+    const image = ocr.parseImageDataUrl(params.imageDataUrl);
+    const baseUrl = visionEndpoint(params);
+    const apiKey = params.visionProvider === 'inherit' ? keyStore.get(baseUrl) : visionKeyStore.get(baseUrl);
+    const preset = params.visionProvider === 'inherit'
+      ? (AI_PROVIDERS[params.provider] || AI_PROVIDERS.custom)
+      : ocr.visionPreset(params.visionProvider);
+    const model = String(params.model || preset.model || '').trim();
+    if (!model || model.length > 200) throw Error('识图模型名称无效');
+    const body = JSON.stringify({
+      model, temperature: 0.1, stream: false,
+      messages: [
+        { role: 'system', content: '你是严谨的实验数据抄录助手。只抄写照片中真实存在的内容，不推算、不补齐，只输出 JSON。' },
+        { role: 'user', content: [{ type: 'text', text: params.prompt }, { type: 'image_url', image_url: { url: image.dataUrl } }] },
+      ],
+    });
+    const payload = await network.json(baseUrl + '/chat/completions', {
+      method: 'POST', signal: controller.signal, timeoutMs: 120000, maxBytes: 2 * 1024 * 1024,
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey }, body,
+    });
+    return { ok: true, content: ocr.extractContent(payload), usage: payload.usage };
+  } catch (e) {
+    return { ok: false, cancelled: controller.signal.aborted, error: controller.signal.aborted ? '已取消识别' : e.message };
+  } finally { aiAbortControllers.delete(requestId); }
+});
+// SSE 行解析：`data: {...}` → delta.content；非数据行返回 ''（纯函数便于单测）
+function extractDeltaFromSSELine(line) {
+  const s = String(line || '').trim();
+  if (!s.startsWith('data:')) return '';
+  const payload = s.slice(5).trim();
+  if (!payload || payload === '[DONE]') return '';
+  try {
+    const j = JSON.parse(payload);
+    return (j.choices && j.choices[0] && j.choices[0].delta && typeof j.choices[0].delta.content === 'string')
+      ? j.choices[0].delta.content : '';
+  } catch (e) {
+    return '';
+  }
+}
+
+handle('ai-chat', async (event, params) => {
   if (!params || !Array.isArray(params.messages) || params.messages.length > 30 || Buffer.byteLength(JSON.stringify(params.messages)) > 256 * 1024)
     return { ok: false, error: 'AI 请求内容无效或过大' };
   const { provider, model, messages, temperature = 0.7 } = params;
@@ -1674,18 +1933,42 @@ handle('ai-chat', async (_, params) => {
   if (aiAbortControllers.size >= 2 || aiAbortControllers.has(requestId)) return { ok: false, error: 'AI 请求正在处理，请稍后重试' };
   const controller = new AbortController();
   aiAbortControllers.set(requestId, controller);
+  const pushChunk = (delta) => {
+    try { event.sender.send('ai-chat-chunk', { requestId, delta }); } catch (e) { /* 窗口已关闭忽略 */ }
+  };
   try {
     const baseUrl = aiEndpoint(params);
     const apiKey = keyStore.get(baseUrl);
-    const data = await network.json(baseUrl + '/chat/completions', {
-      method: 'POST', signal: controller.signal, timeoutMs: 120000, maxBytes: 2 * 1024 * 1024,
+    // 流式请求：增量通过 ai-chat-chunk 推给渲染层（实时显示生成过程），
+    // invoke 仍返回完整文本（渲染层 await 后照常使用）
+    const response = await fetch(baseUrl + '/chat/completions', {
+      method: 'POST', signal: controller.signal,
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
       body: JSON.stringify({ model: model || (AI_PROVIDERS[provider] || AI_PROVIDERS.custom).model,
-        messages, temperature, stream: false }),
+        messages, temperature, stream: true }),
     });
-    const content = data.choices?.[0]?.message?.content;
-    if (typeof content !== 'string' || !content.trim()) throw Error('AI 返回了空内容');
-    return { ok: true, content, usage: data.usage };
+    if (!response.ok) {
+      let errText = '';
+      try { errText = (await response.text()).slice(0, 300); } catch (e) { /* 忽略 */ }
+      throw Error('AI 接口返回 ' + response.status + (errText ? '：' + errText : ''));
+    }
+    if (!response.body) throw Error('AI 接口未返回流');
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let content = '', carry = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const text = carry + decoder.decode(value, { stream: true });
+      const lines = text.split('\n');
+      carry = lines.pop() || '';
+      for (const line of lines) {
+        const delta = extractDeltaFromSSELine(line);
+        if (delta) { content += delta; pushChunk(delta); }
+      }
+    }
+    if (!content.trim()) throw Error('AI 返回了空内容');
+    return { ok: true, content, usage: undefined };
   } catch (e) {
     return { ok: false, cancelled: controller.signal.aborted, error: controller.signal.aborted ? '已取消生成' : e.message };
   } finally { aiAbortControllers.delete(requestId); }
@@ -1761,6 +2044,20 @@ handle('write-sections-config', async (_, expPath, disabled) => {
     atomic.writeFile(security.inside(path.join(p, 'sections-config.json'), p),
       JSON.stringify({ disabled: clean }, null, 1), 'utf-8');
     return { ok: true, path: p };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// ── AI 润色导入判定：该实验的 generate.py 是否有此章节的导入消费点 ──
+// 变体章节（实验原理/实验方法/误差分析/结论等）必然可导入；非变体章节
+// （如「结果分析」是部分实验的硬编码段落）需要 generate.py 含消费点才可导入。
+handle('section-importable', async (_, expPath, section) => {
+  try {
+    expPath = experimentPath(expPath);
+    const p = security.inside(path.join(expPath, 'generate.py'), expPath);
+    const src = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
+    return { ok: true, importable: src.includes('"' + String(section) + '" in variants') };
   } catch (err) {
     return { ok: false, error: err.message };
   }

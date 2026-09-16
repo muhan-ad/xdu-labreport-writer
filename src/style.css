@@ -2626,3 +2626,43 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   cursor: pointer;
 }
 .sections-config-list input[type="checkbox"] { accent-color: var(--accent); }
+
+/* ── 长数据实验：数组格子加宽（数据位数多/元素多，66px 起步容纳 0.00558 类 7 位小数）── */
+#dataTableWrap[data-exp="劈尖干涉"] .array-grid,
+#dataTableWrap[data-exp="平凸透镜曲率半径的测量"] .array-grid,
+#dataTableWrap[data-exp="低电阻的测量"] .array-grid,
+#dataTableWrap[data-exp="电容与高电阻的测量"] .array-grid,
+#dataTableWrap[data-exp="声速的测量（水中）"] .array-grid {
+  max-width: 900px;
+  grid-template-columns: repeat(auto-fill, minmax(66px, 1fr));
+}
+
+/* ── 长数据实验：特宽档（用户反馈 66px 档仍不够）── */
+#dataTableWrap[data-exp="低电阻的测量"] .array-grid,
+#dataTableWrap[data-exp="长度与体积的测量"] .array-grid {
+  max-width: 1100px;
+  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+}
+
+/* ── 中长数据实验：稍微增大档 ── */
+#dataTableWrap[data-exp="扭摆法测量钢丝切变模量"] .array-grid {
+  max-width: 760px;
+  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
+}
+
+/* ── AI 润色流式预览区：生成过程实时显示 ── */
+.ai-stream-preview {
+  margin-top: 10px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px dashed var(--border-hover);
+  border-radius: 6px;
+  background: var(--bg-hover);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.ai-stream-preview:empty { display: none; }

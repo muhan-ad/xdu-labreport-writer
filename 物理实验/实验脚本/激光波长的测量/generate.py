@@ -164,7 +164,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 一、实验数据记录 ──
     doc.add_heading("一、实验数据记录", level=1)
-    doc.add_paragraph("请在下方粘贴原始数据记录照片。")
+    doc.add_data_photo("请在下方粘贴原始数据记录照片。")
 
     # ═══════════════════════════════════════════════
     # ── 二、数据处理 ──
@@ -276,6 +276,10 @@ def _generate_docx(data: dict, output_path: str):
     # ═══════════════════════════════════════════════
     doc.add_heading("三、实验结果分析", level=1)
 
+    # 结果分析 AI 导入消费点：AI 润色导入的「结果分析」覆盖硬编码段落
+    if "结果分析" in variants:
+        doc.add_paragraph_rich(variants["结果分析"])
+
     if in_range:
         doc.add_paragraph(
             f"测量值{bias_word}，相对误差为 {eta:.2f}%，"
@@ -326,32 +330,56 @@ def _generate_docx(data: dict, output_path: str):
     # ═══════════════════════════════════════════════
     doc.add_heading("四、思考题", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_paragraph(
         "1. 在什么条件下产生等倾干涉条纹？在什么条件下产生等厚干涉条纹？"
     )
-    doc.add_paragraph(
-        "答：等倾干涉条纹要求两镜严格垂直，形成同心圆条纹；"
-        "等厚干涉条纹要求两镜有微小夹角，形成直线条纹。本实验应追求等倾条件。"
-    )
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：等倾干涉条纹要求两镜严格垂直，形成同心圆条纹；"
+            "等厚干涉条纹要求两镜有微小夹角，形成直线条纹。本实验应追求等倾条件。"
+        )
 
     doc.add_paragraph(
         "2. 迈克尔逊干涉仪产生的等倾干涉条纹与牛顿环有何不同？"
     )
-    doc.add_paragraph(
-        "答：迈克尔逊干涉仪产生的是等倾干涉，条纹定域在无穷远；"
-        "牛顿环是等厚干涉，条纹定域在接触点。"
-    )
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：迈克尔逊干涉仪产生的是等倾干涉，条纹定域在无穷远；"
+            "牛顿环是等厚干涉，条纹定域在接触点。"
+        )
 
     doc.add_paragraph(
         "3. 调节迈克尔逊干涉仪时，看到的亮点为什么是两排而不是两个？"
         "两排亮点是怎样形成的？"
     )
-    doc.add_paragraph(
-        "答：两排亮点是由于分光板和后镜的反射像不重合，"
-        "调节时应使两排亮点重合，从而形成干涉条纹。"
-    )
+    _o = _quiz.get("3") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
 
-    # ── 保存 ──
+        doc.add_paragraph(
+            "答：两排亮点是由于分光板和后镜的反射像不重合，"
+            "调节时应使两排亮点重合，从而形成干涉条纹。"
+        )
+
+        # ── 保存 ──
     doc.save()
     doc.close()
     print(f"报告已生成: {output_path}")

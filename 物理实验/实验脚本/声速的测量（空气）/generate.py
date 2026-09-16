@@ -278,7 +278,7 @@ def _generate_docx(data: dict, output_path: str):
     # 一、原始数据提交（拍照上传）
     # ════════════════════════════════════════
     doc.add_heading("一、原始数据提交（拍照上传）", level=1)
-    doc.add_paragraph("请在下方粘贴原始数据记录照片。")
+    doc.add_data_photo("请在下方粘贴原始数据记录照片。")
 
     # ════════════════════════════════════════
     # 二、数据处理
@@ -297,6 +297,10 @@ def _generate_docx(data: dict, output_path: str):
     # 三、实验结果分析
     # ════════════════════════════════════════
     doc.add_heading("三、实验结果分析", level=1)
+
+    # 结果分析 AI 导入消费点：AI 润色导入的「结果分析」覆盖硬编码段落
+    if "结果分析" in variants:
+        doc.add_paragraph_rich(variants["结果分析"])
 
     # 理论值
     doc.add_paragraph("在室温 ")
@@ -372,36 +376,55 @@ def _generate_docx(data: dict, output_path: str):
     # ════════════════════════════════════════
     doc.add_heading("四、课后思考题", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_heading("1. 用共振干涉法和位相比较法测声速有何相同和不同？", level=2)
-    doc.add_paragraph(
-        "相同：都是基于声波在空气中传播的原理进行测量，"
-        "通过测量声波传播的时间或频率来计算声速。"
-    )
-    doc.add_paragraph("不同：")
-    doc.add_paragraph(
-        "① 共振干涉法：通过测量声波在管道或腔体内的共振频率来确定声速，"
-        "利用声波与腔体内壁反射后形成的干涉现象来测量声速。"
-    )
-    doc.add_paragraph(
-        "② 位相比较法：通过测量两个声波信号之间的相位差来计算声速，"
-        "通常用频率较稳定的信号源和精确计时设备来实现。"
-    )
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "相同：都是基于声波在空气中传播的原理进行测量，"
+            "通过测量声波传播的时间或频率来计算声速。"
+        )
+        doc.add_paragraph("不同：")
+        doc.add_paragraph(
+            "① 共振干涉法：通过测量声波在管道或腔体内的共振频率来确定声速，"
+            "利用声波与腔体内壁反射后形成的干涉现象来测量声速。"
+        )
+        doc.add_paragraph(
+            "② 位相比较法：通过测量两个声波信号之间的相位差来计算声速，"
+            "通常用频率较稳定的信号源和精确计时设备来实现。"
+        )
 
     doc.add_heading(
         "2. 声速测量实验中，定性分析共振法测量时声压振幅极大值"
         "随距离变大而减少的原因。", level=2
     )
-    doc.add_paragraph(
-        "① 能量减小：声波在传播过程中会受到空气和管道等介质的吸收和散射，"
-        "导致声波能量逐渐减小，声压振幅减小。"
-    )
-    doc.add_paragraph(
-        "② 波动扩散：声波传播时会发生波动扩散，随着距离增大，"
-        "声波波动波束逐渐扩散，导致声波的能量分布在更大的区域内，"
-        "从而导致声压振幅减小。"
-    )
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
 
-    # ── 保存 ──
+        doc.add_paragraph(
+            "① 能量减小：声波在传播过程中会受到空气和管道等介质的吸收和散射，"
+            "导致声波能量逐渐减小，声压振幅减小。"
+        )
+        doc.add_paragraph(
+            "② 波动扩散：声波传播时会发生波动扩散，随着距离增大，"
+            "声波波动波束逐渐扩散，导致声波的能量分布在更大的区域内，"
+            "从而导致声压振幅减小。"
+        )
+
+        # ── 保存 ──
     doc.save()
     doc.close()
     print(f"报告已生成: {output_path}")

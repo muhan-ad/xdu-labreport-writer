@@ -211,7 +211,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 一、原始数据提交（拍照上传） ──
     doc.add_heading("一、原始数据提交（拍照上传）", level=1)
-    doc.add_paragraph("请在下方粘贴原始数据记录照片。")
+    doc.add_data_photo("请在下方粘贴原始数据记录照片。")
 
     # ── 二、数据处理 ──
     doc.add_heading("二、数据处理", level=1)
@@ -293,6 +293,10 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 三、实验结果分析 ──
     doc.add_heading("三、实验结果分析", level=1)
+
+    # 结果分析 AI 导入消费点：AI 润色导入的「结果分析」覆盖硬编码段落
+    if "结果分析" in variants:
+        doc.add_paragraph_rich(variants["结果分析"])
     doc.add_paragraph(
         f"通过复摆实验测量重力加速度 g，实验结果得到 g = {g_calc:.3f} m/s²，"
         f"与西安标准值 g₀ = {g0} m/s² 相比，相对误差为 {format_percent(delta_E)}%。"
@@ -316,100 +320,124 @@ def _generate_docx(data: dict, output_path: str):
     # ── 四、思考题 ──
     doc.add_heading("四、思考题", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     # 第1题
     doc.add_heading("1. 试证明二次法测 g 的公式(3-3-11)等效于卡特公式(3-3-15)。", level=2)
-    doc.add_paragraph("答：二次法公式为")
-    doc.add_math(
-        r"g = 4\pi^{2} \cdot \frac{h_{1}^{2} - h_{2}^{2}}{h_{1}T_{1}^{2} - h_{2}T_{2}^{2}}"
-    )
-    doc.add_paragraph("卡特公式为")
-    doc.add_math(
-        r"\frac{4\pi^{2}}{g} = "
-        r"\frac{T_{1}^{2} + T_{2}^{2}}{2(h_{1} + h_{2})} + "
-        r"\frac{T_{1}^{2} - T_{2}^{2}}{2(h_{1} - h_{2})}"
-    )
-    doc.add_paragraph("将卡特公式右端通分：")
-    doc.add_math(
-        r"\frac{4\pi^{2}}{g} = "
-        r"\frac{(T_{1}^{2} + T_{2}^{2})(h_{1} - h_{2}) + (T_{1}^{2} - T_{2}^{2})(h_{1} + h_{2})}"
-        r"{2(h_{1} + h_{2})(h_{1} - h_{2})}"
-    )
-    doc.add_paragraph("将分子展开：")
-    doc.add_math(
-        r"(T_{1}^{2} + T_{2}^{2})(h_{1} - h_{2}) + (T_{1}^{2} - T_{2}^{2})(h_{1} + h_{2}) = "
-        r"2T_{1}^{2}h_{1} - 2T_{2}^{2}h_{2}"
-    )
-    doc.add_paragraph("分母为：")
-    doc.add_math(r"2(h_{1} + h_{2})(h_{1} - h_{2}) = 2(h_{1}^{2} - h_{2}^{2})")
-    doc.add_paragraph("因此")
-    doc.add_math(
-        r"\frac{4\pi^{2}}{g} = \frac{2(T_{1}^{2}h_{1} - T_{2}^{2}h_{2})}{2(h_{1}^{2} - h_{2}^{2})} = "
-        r"\frac{T_{1}^{2}h_{1} - T_{2}^{2}h_{2}}{h_{1}^{2} - h_{2}^{2}}"
-    )
-    doc.add_paragraph("取倒数即得二次法公式：")
-    doc.add_math(
-        r"g = 4\pi^{2} \cdot \frac{h_{1}^{2} - h_{2}^{2}}{h_{1}T_{1}^{2} - h_{2}T_{2}^{2}}"
-    )
-    doc.add_paragraph("故二次法测 g 的公式与卡特公式完全等效。")
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
 
-    # 第2题
+        doc.add_paragraph("答：二次法公式为")
+        doc.add_math(
+            r"g = 4\pi^{2} \cdot \frac{h_{1}^{2} - h_{2}^{2}}{h_{1}T_{1}^{2} - h_{2}T_{2}^{2}}"
+        )
+        doc.add_paragraph("卡特公式为")
+        doc.add_math(
+            r"\frac{4\pi^{2}}{g} = "
+            r"\frac{T_{1}^{2} + T_{2}^{2}}{2(h_{1} + h_{2})} + "
+            r"\frac{T_{1}^{2} - T_{2}^{2}}{2(h_{1} - h_{2})}"
+        )
+        doc.add_paragraph("将卡特公式右端通分：")
+        doc.add_math(
+            r"\frac{4\pi^{2}}{g} = "
+            r"\frac{(T_{1}^{2} + T_{2}^{2})(h_{1} - h_{2}) + (T_{1}^{2} - T_{2}^{2})(h_{1} + h_{2})}"
+            r"{2(h_{1} + h_{2})(h_{1} - h_{2})}"
+        )
+        doc.add_paragraph("将分子展开：")
+        doc.add_math(
+            r"(T_{1}^{2} + T_{2}^{2})(h_{1} - h_{2}) + (T_{1}^{2} - T_{2}^{2})(h_{1} + h_{2}) = "
+            r"2T_{1}^{2}h_{1} - 2T_{2}^{2}h_{2}"
+        )
+        doc.add_paragraph("分母为：")
+        doc.add_math(r"2(h_{1} + h_{2})(h_{1} - h_{2}) = 2(h_{1}^{2} - h_{2}^{2})")
+        doc.add_paragraph("因此")
+        doc.add_math(
+            r"\frac{4\pi^{2}}{g} = \frac{2(T_{1}^{2}h_{1} - T_{2}^{2}h_{2})}{2(h_{1}^{2} - h_{2}^{2})} = "
+            r"\frac{T_{1}^{2}h_{1} - T_{2}^{2}h_{2}}{h_{1}^{2} - h_{2}^{2}}"
+        )
+        doc.add_paragraph("取倒数即得二次法公式：")
+        doc.add_math(
+            r"g = 4\pi^{2} \cdot \frac{h_{1}^{2} - h_{2}^{2}}{h_{1}T_{1}^{2} - h_{2}T_{2}^{2}}"
+        )
+        doc.add_paragraph("故二次法测 g 的公式与卡特公式完全等效。")
+
+        # 第2题
     doc.add_heading(
         "2. 为什么不能用图3-3-2中 C 点的 (T₁, h₁) 和 F 点的 (T₂, h₂) 来计算重力加速度 g，"
         "而须用 (F, D) 或 (F, E) 来计算？",
         level=2,
     )
-    doc.add_paragraph(
-        "答：在 T-h 关系曲线中，A、B 两点为共轭的周期极小值点。"
-        "在极小值以上作水平线（等 T 线），交曲线于 C、D、E、F 四个点。"
-        "其中，C 与 D 位于同一侧（构成一对等值单摆长 l = h_C + h_D），"
-        "E 与 F 位于同一侧（构成另一对等值单摆长 l = h_E + h_F）。"
-    )
-    doc.add_paragraph(
-        "若取 C 点和 F 点，它们分属两侧不同支，其悬距之和 h_C + h_F 并不等于正确的等值单摆长，"
-        "因此无法正确求出 g。"
-    )
-    doc.add_paragraph(
-        "此外，C 点位于极小值 A 附近，此处 T 随 h 的变化十分剧烈，"
-        "微小的 h 读数误差即会导致显著的周期偏差，从而引入较大的计算误差。"
-        "而 F 点是离极小值最远的点，T 随 h 变化平缓，测量最为稳定。"
-        "因此应选取最大的 F 点与同侧的对称点 D（或另一侧的对称点 E）构成等值单摆长来计算 g，"
-        "以获得最精确的结果。"
-    )
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
 
-    # 第3题
+        doc.add_paragraph(
+            "答：在 T-h 关系曲线中，A、B 两点为共轭的周期极小值点。"
+            "在极小值以上作水平线（等 T 线），交曲线于 C、D、E、F 四个点。"
+            "其中，C 与 D 位于同一侧（构成一对等值单摆长 l = h_C + h_D），"
+            "E 与 F 位于同一侧（构成另一对等值单摆长 l = h_E + h_F）。"
+        )
+        doc.add_paragraph(
+            "若取 C 点和 F 点，它们分属两侧不同支，其悬距之和 h_C + h_F 并不等于正确的等值单摆长，"
+            "因此无法正确求出 g。"
+        )
+        doc.add_paragraph(
+            "此外，C 点位于极小值 A 附近，此处 T 随 h 的变化十分剧烈，"
+            "微小的 h 读数误差即会导致显著的周期偏差，从而引入较大的计算误差。"
+            "而 F 点是离极小值最远的点，T 随 h 变化平缓，测量最为稳定。"
+            "因此应选取最大的 F 点与同侧的对称点 D（或另一侧的对称点 E）构成等值单摆长来计算 g，"
+            "以获得最精确的结果。"
+        )
+
+        # 第3题
     doc.add_heading(
         "3. 试述用摆动法测量任意形状物体对任一指定轴的转动惯量的实验步骤"
         "（设当地的重力加速度 g 已知）。",
         level=2,
     )
-    doc.add_paragraph("答：实验步骤如下：")
-    doc.add_paragraph(
-        "（1）确定转轴与支点：将物体悬挂于指定转轴，确保转轴水平固定且支点稳定，"
-        "使物体可在铅直面内自由摆动。"
-    )
-    doc.add_paragraph(
-        "（2）测量摆动周期 T：使物体在小角度（小于 1°）下作自由摆动，"
-        "用光电计时器多次测量摆动周期（建议以 10T 计数），取平均值作为单周期 T。"
-    )
-    doc.add_paragraph(
-        "（3）测量质量与质心位置：用天平称出物体质量 M；"
-        "用杠杆平衡原理确定物体质心 C 的位置，测量支点 O 到质心 C 的距离 h。"
-    )
-    doc.add_paragraph("（4）计算绕支点的转动惯量：由复摆周期公式")
-    doc.add_math(r"T = 2\pi\sqrt{\frac{J_0}{Mgh}}")
-    doc.add_paragraph("解出")
-    doc.add_math(r"J_0 = \frac{MghT^{2}}{4\pi^{2}}")
-    doc.add_paragraph("")
-    doc.add_run("再利用平行轴定理 ")
-    doc.add_inline_math("J_c = J_0 - Mh^{2}")
-    doc.add_run(" 求出物体绕质心轴的转动惯量。")
-    doc.add_paragraph(
-        "（5）多次测量取平均：改变支点位置重复上述步骤，"
-        "对多次测量结果取平均值，分析误差来源（摆角、摩擦、计时精度等），"
-        "以提高转动惯量的测量精度。"
-    )
+    _o = _quiz.get("3") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
 
-    # ── 保存 ──
+        doc.add_paragraph("答：实验步骤如下：")
+        doc.add_paragraph(
+            "（1）确定转轴与支点：将物体悬挂于指定转轴，确保转轴水平固定且支点稳定，"
+            "使物体可在铅直面内自由摆动。"
+        )
+        doc.add_paragraph(
+            "（2）测量摆动周期 T：使物体在小角度（小于 1°）下作自由摆动，"
+            "用光电计时器多次测量摆动周期（建议以 10T 计数），取平均值作为单周期 T。"
+        )
+        doc.add_paragraph(
+            "（3）测量质量与质心位置：用天平称出物体质量 M；"
+            "用杠杆平衡原理确定物体质心 C 的位置，测量支点 O 到质心 C 的距离 h。"
+        )
+        doc.add_paragraph("（4）计算绕支点的转动惯量：由复摆周期公式")
+        doc.add_math(r"T = 2\pi\sqrt{\frac{J_0}{Mgh}}")
+        doc.add_paragraph("解出")
+        doc.add_math(r"J_0 = \frac{MghT^{2}}{4\pi^{2}}")
+        doc.add_paragraph("")
+        doc.add_run("再利用平行轴定理 ")
+        doc.add_inline_math("J_c = J_0 - Mh^{2}")
+        doc.add_run(" 求出物体绕质心轴的转动惯量。")
+        doc.add_paragraph(
+            "（5）多次测量取平均：改变支点位置重复上述步骤，"
+            "对多次测量结果取平均值，分析误差来源（摆角、摩擦、计时精度等），"
+            "以提高转动惯量的测量精度。"
+        )
+
+        # ── 保存 ──
     doc.save()
     doc.close()
 

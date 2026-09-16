@@ -2,6 +2,7 @@
 // Launch with Electron. Uses a fresh user profile and only its own Word instance.
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert/strict');
+const JSZip = require('jszip');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'labreport-electron-test-'));
 app.setPath('userData', root);
 app.on('browser-window-created', (_, window) => window.hide());
@@ -36,10 +37,27 @@ app.whenReady().then(async () => {
     assert.equal((await evaluate(`window.labAPI.readDocxBuffer(${JSON.stringify(path.join(__dirname, '../package.json'))})`)).ok, false);
     console.log('PASS: real Electron IPC, isolated profile, DPAPI credential storage');
     await evaluate("selectExperiment(experiments.find(e => e.name === '长度与体积的测量'))");
-    const result = await evaluate("window.labAPI.runGenerate(currentExp.path,{name:'回归测试',id:'TEST',class:'测试'}, {}, {})");
+    await until(() => evaluate('currentSchema && currentSchema.groups && currentSchema.groups.length'));
+    const ocrUi = await evaluate("({button:!!document.getElementById('btnRecognize'),modal:!!document.getElementById('recognizeModal'),provider:!!document.getElementById('selectVisionProvider')})");
+    assert.deepEqual(ocrUi, { button: true, modal: true, provider: true });
+    await evaluate("document.getElementById('btnRecognize').click()");
+    assert.equal(await evaluate("document.getElementById('recognizeModal').classList.contains('show')"), true);
+    await evaluate("document.getElementById('btnCloseRecognize').click()");
+    const visionStored = await evaluate("window.labAPI.saveVisionCredential({provider:'siliconflow',key:'VISION_TEST_ONLY'})");
+    assert.equal(visionStored.ok, true, visionStored.error);
+    assert.doesNotMatch(fs.readFileSync(path.join(root, 'vision', 'credentials.json'), 'utf8'), /VISION_TEST_ONLY/);
+    const rejectedImage = await evaluate("window.labAPI.ocrRecognize({visionProvider:'siliconflow',prompt:'x',imageDataUrl:'data:text/plain;base64,SGVsbG8='})");
+    assert.equal(rejectedImage.ok, false);
+    await evaluate("window.labAPI.saveVisionCredential({key:''})");
+    console.log('PASS: OCR UI, encrypted vision credential and image validation');
+    const photo = await evaluate("window.labAPI.saveTableImage(currentExp.path,'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZxZ0AAAAASUVORK5CYII=')");
+    assert.equal(photo.ok, true, photo.error);
+    const result = await evaluate("window.labAPI.runGenerate(currentExp.path,{name:'回归测试',id:'TEST',class:'测试'}, {}, {}, true)");
     assert.equal(result.ok, true, result.error || result.logs);
-    console.log('PASS: real Electron -> Python -> Word generation');
-    await evaluate("(async () => { experiments = await window.labAPI.scanExperiments(); currentExp = experiments.find(e => e.name === '长度与体积的测量'); await loadPreview(); })()");
+    const reportZip = await JSZip.loadAsync(fs.readFileSync(result.reportFile));
+    assert.ok(Object.keys(reportZip.files).some(name => name.startsWith('word/media/')), 'saved OCR photo should be embedded in DOCX');
+    console.log('PASS: real Electron -> saved OCR photo -> Python -> Word generation');
+    await evaluate("(async () => { const scan = await window.labAPI.scanExperiments(); experiments = Array.isArray(scan) ? scan : scan.experiments; currentExp = experiments.find(e => e.name === '长度与体积的测量'); await loadPreview(); })()");
     await until(() => evaluate('previewLoaded === true'));
     const frame = contents.mainFrame.framesInSubtree.find(f => f !== contents.mainFrame);
     assert.ok(frame, 'preview frame exists');

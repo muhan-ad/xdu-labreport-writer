@@ -4,7 +4,7 @@
   "description": "大学物理实验报告自动编写应用",
   "main": "main.js",
   "scripts": {
-    "test": "node --test tests/regression.test.js tests/security.test.js",
+    "test": "node --test tests/regression.test.js tests/security.test.js tests/ocr.test.js",
     "start": "electron .",
     "build": "electron-builder",
     "build:win": "electron-builder --win",

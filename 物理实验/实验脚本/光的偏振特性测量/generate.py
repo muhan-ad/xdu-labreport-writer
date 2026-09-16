@@ -183,7 +183,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # ---- 一、原始数据记录 ----
     doc.add_heading("一、原始数据记录", level=1)
-    doc.add_paragraph("（请在此处粘贴原始数据记录照片。）")
+    doc.add_data_photo("（请在此处粘贴原始数据记录照片。）")
 
     # ---- 二、数据处理 ----
     doc.add_heading("二、数据处理", level=1)
@@ -206,6 +206,10 @@ def _generate_docx(data: dict, output_path: str):
 
     # ---- 三、实验结果分析 ----
     doc.add_heading("三、实验结果分析", level=1)
+
+    # 结果分析 AI 导入消费点：AI 润色导入的「结果分析」覆盖硬编码段落
+    if "结果分析" in variants:
+        doc.add_paragraph_rich(variants["结果分析"])
 
     # 根据截距是否在 2σ 范围内判零，使用 add_run + add_inline_math 混合排版
     intercept_ok = abs(intercept) < 2.0 * intercept_uncertainty
@@ -257,25 +261,44 @@ def _generate_docx(data: dict, output_path: str):
     # ---- 四、课后思考题 ----
     doc.add_heading("四、课后思考题", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_heading("1. 为什么自然光经过 1/4 波片后透射光仍然为自然光？", level=2)
-    doc.add_paragraph(
-        "自然光是由许多不同方向振动的光波组成的，其偏振方向是随机的。"
-        "1/4 波片的作用是使两个相互垂直的偏振分量产生 90° 的相位差，"
-        "但自然光中包含无数个随机方向的偏振分量，"
-        "因此经过 1/4 波片后，这些偏振分量的相位差变化是随机的，"
-        "整体上仍然表现为无规律的偏振状态，即自然光。"
-    )
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "自然光是由许多不同方向振动的光波组成的，其偏振方向是随机的。"
+            "1/4 波片的作用是使两个相互垂直的偏振分量产生 90° 的相位差，"
+            "但自然光中包含无数个随机方向的偏振分量，"
+            "因此经过 1/4 波片后，这些偏振分量的相位差变化是随机的，"
+            "整体上仍然表现为无规律的偏振状态，即自然光。"
+        )
 
     doc.add_heading("2. 实验室里有偏振片、1/4波片和1/2波片各一块，如何将它们区分开？", level=2)
-    doc.add_paragraph(
-        "首先，将每个元件分别放置在自然光源前，旋转该元件，观察透过元件的光强变化。"
-        "当旋转时透射光强出现明显变化的是偏振片，剩下的两个是波片。"
-        "然后，将已知的偏振片作为起偏器放置在光源前，调整偏振方向使光强达到最大。"
-        "将两波片分别放置在偏振片后面，再将检偏器放置在该波片后面。"
-        "旋转波片，观察透过检偏器的光强变化。"
-        "如果旋转波片时光强没有明显变化，则该波片是 1/4 波片；"
-        "如果旋转波片时光强有明显变化，则该波片是 1/2 波片。"
-    )
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "首先，将每个元件分别放置在自然光源前，旋转该元件，观察透过元件的光强变化。"
+            "当旋转时透射光强出现明显变化的是偏振片，剩下的两个是波片。"
+            "然后，将已知的偏振片作为起偏器放置在光源前，调整偏振方向使光强达到最大。"
+            "将两波片分别放置在偏振片后面，再将检偏器放置在该波片后面。"
+            "旋转波片，观察透过检偏器的光强变化。"
+            "如果旋转波片时光强没有明显变化，则该波片是 1/4 波片；"
+            "如果旋转波片时光强有明显变化，则该波片是 1/2 波片。"
+        )
 
     doc.save()
     doc.close()

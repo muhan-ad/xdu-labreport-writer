@@ -149,7 +149,7 @@ def _generate_docx(data: dict, output_path: str):
         doc.add_paragraph_rich(variants["实验方法"])
 
     doc.add_heading("一、原始数据提交（拍照上传）", level=1)
-    doc.add_paragraph("请在下方粘贴原始数据记录照片。")
+    doc.add_data_photo("请在下方粘贴原始数据记录照片。")
 
     doc.add_heading("二、数据处理", level=1)
 
@@ -242,6 +242,10 @@ def _generate_docx(data: dict, output_path: str):
     )
 
     doc.add_heading("三、实验结果分析", level=1)
+
+    # 结果分析 AI 导入消费点：AI 润色导入的「结果分析」覆盖硬编码段落
+    if "结果分析" in variants:
+        doc.add_paragraph_rich(variants["结果分析"])
     doc.add_paragraph("")
     doc.add_run("本实验采用拉伸法和光杠杆放大技术测量钢丝的杨氏弹性模量。通过逐差法处理标尺读数，")
     doc.add_run("充分利用了全部测量数据，减小了随机误差。测得杨氏模量 Y = ")
@@ -266,29 +270,53 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_heading("四、思考题", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_heading("1. 为什么要用逐差法处理数据？", level=2)
-    doc.add_paragraph(
-        "答：逐差法可以充分利用全部测量数据，减小随机误差。如果只用首末两项之差计算，"
-        "中间数据全部浪费，且首末两项的误差直接决定结果。逐差法将数据分成前后两组对应相减，"
-        "相当于多次测量取平均，提高了结果的可靠性。同时逐差法还能检验数据的线性关系——"
-        "如果各逐差值接近相等，说明力与伸长量呈线性关系（胡克定律成立）。"
-    )
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：逐差法可以充分利用全部测量数据，减小随机误差。如果只用首末两项之差计算，"
+            "中间数据全部浪费，且首末两项的误差直接决定结果。逐差法将数据分成前后两组对应相减，"
+            "相当于多次测量取平均，提高了结果的可靠性。同时逐差法还能检验数据的线性关系——"
+            "如果各逐差值接近相等，说明力与伸长量呈线性关系（胡克定律成立）。"
+        )
 
     doc.add_heading("2. 光杠杆法的放大倍数是多少？如何提高测量灵敏度？", level=2)
-    doc.add_paragraph(
-        "答：光杠杆的放大倍数为 2D/H（D 为镜面到标尺距离，H 为光杠杆常数即后足到前足连线距离）。"
-        "当钢丝伸长 ΔL 时，光杠杆后足下降 ΔL，镜面偏转角度 θ ≈ ΔL/H，标尺读数变化 Δn = 2Dθ = 2D·ΔL/H。"
-        "提高灵敏度的方法：增大镜面到标尺距离 D，减小光杠杆常数 H。但 D 过大时标尺像会变小变模糊，"
-        "H 过小时光杠杆稳定性变差，因此需要综合考虑。"
-    )
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：光杠杆的放大倍数为 2D/H（D 为镜面到标尺距离，H 为光杠杆常数即后足到前足连线距离）。"
+            "当钢丝伸长 ΔL 时，光杠杆后足下降 ΔL，镜面偏转角度 θ ≈ ΔL/H，标尺读数变化 Δn = 2Dθ = 2D·ΔL/H。"
+            "提高灵敏度的方法：增大镜面到标尺距离 D，减小光杠杆常数 H。但 D 过大时标尺像会变小变模糊，"
+            "H 过小时光杠杆稳定性变差，因此需要综合考虑。"
+        )
 
     doc.add_heading("3. 为什么要进行增重和减重两次测量？", level=2)
-    doc.add_paragraph(
-        "答：增重和减重两次测量可以消除摩擦滞后和弹性后效的影响。在加载过程中，"
-        "光杠杆镜面和支架之间可能存在静摩擦，导致加卸载时标尺读数不重合（滞后回线）。"
-        "取增重和减重读数的平均值，可以部分消除这种系统误差。同时两次测量还能检验数据的重复性，"
-        "如果增重减重数据差异过大，说明实验装置存在问题或操作不规范。"
-    )
+    _o = _quiz.get("3") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：增重和减重两次测量可以消除摩擦滞后和弹性后效的影响。在加载过程中，"
+            "光杠杆镜面和支架之间可能存在静摩擦，导致加卸载时标尺读数不重合（滞后回线）。"
+            "取增重和减重读数的平均值，可以部分消除这种系统误差。同时两次测量还能检验数据的重复性，"
+            "如果增重减重数据差异过大，说明实验装置存在问题或操作不规范。"
+        )
 
     doc.save()
     doc.close()

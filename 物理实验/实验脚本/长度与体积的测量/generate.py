@@ -208,7 +208,7 @@ def _generate_docx(data: dict, output_path: str):
         doc.add_paragraph_rich(variants["实验方法"])
 
     doc.add_heading("一、原始数据提交（拍照上传）", level=1)
-    doc.add_paragraph("请在下方粘贴原始数据记录照片（含仪器读数与数据表格）。")
+    doc.add_data_photo("请在下方粘贴原始数据记录照片（含仪器读数与数据表格）。")
 
     doc.add_heading("二、数据处理", level=1)
 
@@ -345,6 +345,10 @@ def _generate_docx(data: dict, output_path: str):
     )
 
     doc.add_heading("三、实验结果分析", level=1)
+
+    # 结果分析 AI 导入消费点：AI 润色导入的「结果分析」覆盖硬编码段落
+    if "结果分析" in variants:
+        doc.add_paragraph_rich(variants["结果分析"])
     doc.add_paragraph("")
     doc.add_run("本实验综合使用米尺、游标卡尺、螺旋测微计和 15J 测量显微镜四种长度测量仪器，"
                 "分别适用于不同精度等级的测量对象：板长与板宽用米尺单次测量，孔径用 50 分度游标卡尺，"
@@ -372,29 +376,53 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_heading("四、思考题", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_heading("1. 为什么米尺读数要估读到分度值的 1/10？", level=2)
-    doc.add_paragraph(
-        "答：米尺最小分度为 1 mm，测量时可精确读到毫米位。估读到分度值的 1/10（即 0.1 mm）"
-        "可以在不降低可靠性的前提下充分利用仪器信息，减小读数随机误差。估读本身就是一次"
-        "在相邻刻线之间的内插，是人为判断的结果，其不确定度约为最小分度的 1/10，故读数结果"
-        "记为 L ± 0.1 mm 量级。"
-    )
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：米尺最小分度为 1 mm，测量时可精确读到毫米位。估读到分度值的 1/10（即 0.1 mm）"
+            "可以在不降低可靠性的前提下充分利用仪器信息，减小读数随机误差。估读本身就是一次"
+            "在相邻刻线之间的内插，是人为判断的结果，其不确定度约为最小分度的 1/10，故读数结果"
+            "记为 L ± 0.1 mm 量级。"
+        )
 
     doc.add_heading("2. 游标卡尺为什么能准确读出分度值的 1/n？", level=2)
-    doc.add_paragraph(
-        "答：游标卡尺利用游标（副尺）与主尺分度之间的微小差值来实现细分。n 个游标分度与主尺上 "
-        "Mn−1 个分度等长，主尺分度 a 与游标分度 b 之差 h = a − b = a/n，即为游标卡尺的分度值。"
-        "读数时只需判断游标上哪一根刻线与主尺刻线对齐，该刻线的序号 k 与 h 的乘积 kh 就是"
-        "小于一个主尺分度的部分，因此可以准确读出 a/n 的整数倍而无需估读。"
-    )
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：游标卡尺利用游标（副尺）与主尺分度之间的微小差值来实现细分。n 个游标分度与主尺上 "
+            "Mn−1 个分度等长，主尺分度 a 与游标分度 b 之差 h = a − b = a/n，即为游标卡尺的分度值。"
+            "读数时只需判断游标上哪一根刻线与主尺刻线对齐，该刻线的序号 k 与 h 的乘积 kh 就是"
+            "小于一个主尺分度的部分，因此可以准确读出 a/n 的整数倍而无需估读。"
+        )
 
     doc.add_heading("3. 为什么要对千分尺和游标卡尺进行零点修正？", level=2)
-    doc.add_paragraph(
-        "答：仪器在长期使用后，测量面磨损或装配间隙变化会使“零位”偏离理想位置。若测量前两测量面"
-        "直接接触时微分套筒读数不为零（千分尺零点读数 d₀ 可正可负），或游标零线与主尺零线不重合"
-        "（游标卡尺零点读数 D₀），则所有测量读数都带有固定的系统偏差。通过测量前记录零点读数，"
-        "并在结果中扣除（实际长度 = 测量读数 − 零点读数），即可消除该系统误差。"
-    )
+    _o = _quiz.get("3") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：仪器在长期使用后，测量面磨损或装配间隙变化会使“零位”偏离理想位置。若测量前两测量面"
+            "直接接触时微分套筒读数不为零（千分尺零点读数 d₀ 可正可负），或游标零线与主尺零线不重合"
+            "（游标卡尺零点读数 D₀），则所有测量读数都带有固定的系统偏差。通过测量前记录零点读数，"
+            "并在结果中扣除（实际长度 = 测量读数 − 零点读数），即可消除该系统误差。"
+        )
 
     doc.save()
     doc.close()

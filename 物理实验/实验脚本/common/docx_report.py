@@ -656,6 +656,17 @@ class DocxReportWriter:
         self._sel.Collapse(Direction=wdCollapseEnd)
         self._goto_end()
 
+    def add_data_photo(self, fallback_text: str = "（请在此处粘贴原始数据记录照片。）", width_cm: float = 14.0):
+        """插入识图时保存的原始数据照片；缺失或无法读取时保留原占位文字。"""
+        photo = os.environ.get("LAB_DATA_PHOTO")
+        if photo and os.path.isfile(photo):
+            try:
+                self.add_image(photo, width_cm=width_cm)
+                return
+            except Exception as exc:
+                print(f"[警告] 原始数据照片插入失败（{exc}），改用占位文字：{photo}")
+        self.add_paragraph(fallback_text)
+
     def add_page_break(self):
         """插入分页符。"""
         self._goto_end()

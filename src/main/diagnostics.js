@@ -18,6 +18,13 @@ const USERPATH_RE = /[A-Za-z]:[\\/][^\\/]+[\\/][^\\/:*?"<>|]+(?=[\\/,;\s:)"']|$)
 function sanitize(text, roots) {
   const knownRoots = roots || [];
   let out = String(text == null ? '' : text);
+  // 版本号/构建号保护：先提取占位，防 LONG_DIGITS_RE 把长构建号误伤成 ****
+  // （示例：Word 构建 16.0.1772600000 的连续数字段会被当成学号打码）
+  const versionTokens = [];
+  out = out.replace(/((?:Build|文件版本|版本|apiVersion)\s*)(\d+(?:\.\d+){1,3})/gi, (m, prefix, ver) => {
+    versionTokens.push(ver);
+    return prefix + '\u0000VER' + (versionTokens.length - 1) + '\u0000';
+  });
   // 已知根目录字面量置换成占位符（先于通用路径规则；反斜杠/正斜杠两种形态都替换）
   for (const r of knownRoots) {
     if (!r) continue;
@@ -33,11 +40,15 @@ function sanitize(text, roots) {
   out = out.replace(SECRET_PAIR_RE, '$1=***');
   out = out.replace(EMAIL_RE, '[EMAIL]');
   out = out.replace(LONG_DIGITS_RE, num => '****' + num.slice(-4));
+  // 用户目录（C:\Users\<名>）整体掩码：通用路径规则只匹配两段，会把用户名留在 <路径><名> 里
+  out = out.replace(/([A-Za-z]:[\\/])Users[\\/][^\\/:*?"<>|\s,;]+/gi, (m, drive) => drive + '{USER}');
   out = out.replace(USERPATH_RE, m => {
     const parts = m.split(/[\\/]/);
     const name = parts[parts.length - 1] || m;
     return '<路径>' + name;
   });
+  // 还原版本号占位（占位符含 \u0000，不会被上述任一规则改写）
+  out = out.replace(/\u0000VER(\d+)\u0000/g, (m, i) => versionTokens[Number(i)] || '?');
   return out;
 }
 
@@ -68,6 +79,42 @@ function buildDiagnostics(sources) {
   if (p.updateInfo) {
     L.push(`更新：当前 v${p.updateInfo.current || '?'}${p.updateInfo.hasUpdate ? ' → 可更新 v' + p.updateInfo.latest : '（已是最新）'}`);
   }
+  L.push(hr);
+
+  L.push('【Word 环境检测】');
+  const w = (p.wordEnv && typeof p.wordEnv === 'object') ? p.wordEnv : {};
+  L.push(`Word 已安装：${w.installed === undefined ? '（未获取）' : (w.installed ? '是' : '否')}`);
+  L.push(`ProgramId：${w.curVer || '（未读取到）'} | COM CLSID 注册：${w.clsidPresent === undefined ? '（未获取）' : (w.clsidPresent ? '是' : '否')}`);
+  L.push(`WPS 已安装：${w.wpsInstalled === undefined ? '（未获取）' : (w.wpsInstalled ? '是（注意：WPS 不支持 OMath 公式）' : '否')}`);
+  L.push(`WINWORD.EXE：${w.exePath || '（未找到）'}${w.version ? `（文件版本 ${w.version}${w.bitness ? '，' + w.bitness : ''}）` : ''}`);
+  L.push(`正在运行的 Word 进程数：${w.runningCount === undefined ? '（未获取）' : w.runningCount}`);
+  L.push(`本应用实例数：${w.appProcessCount === undefined ? '（未获取）' : w.appProcessCount}`);
+  const com = (w.com && typeof w.com === 'object') ? w.com : {};
+  L.push(`COM 可启动（生成同路径冒烟）：${com.ok === undefined ? '（未获取）' : (com.ok ? `是（${com.version || '?'}${com.caption ? '，' + com.caption : ''}）` : `否（${com.error || '未知错误'}）`)}`);
+  if (w.com && w.com.ok && w.com.version) L.push(`    → 版本 ${w.com.version} 支持 OMath 数学公式：${/^1[4-9]\.|^2\d\./.test(String(w.com.version)) ? '是（建议 Word 2016+，版本号 ≥ 16）' : '需确认（Word 2010+ 才支持公式）'}`);
+  L.push(hr);
+
+  L.push('【系统与运行时】');
+  const s = (p.systemEnv && typeof p.systemEnv === 'object') ? p.systemEnv : {};
+  L.push(`系统代码页(ACP)：${s.acp !== undefined ? s.acp : '（未获取）'}（936=GBK 中文；65001=UTF-8） | 区域 LCID：${s.lcid !== undefined ? s.lcid : '（未获取）'}`);
+  L.push(`Python 首选编码：${s.preferredEncoding !== undefined ? s.preferredEncoding : '（未获取）'}（影响生成管道乱码判定）`);
+  L.push(`生成用 Python：${s.pythonVersion || '（未获取）'} @ ${s.pythonExe || '（未获取）'}`);
+  L.push(`最近生成登记的 Word 实例数：${Array.isArray(s.recentWordInstances) && s.recentWordInstances.length ? s.recentWordInstances.join('；') : '（无记录）'}`);
+  L.push(hr);
+
+  L.push('【数据与生成现场】');
+  const d = (p.dataScene && typeof p.dataScene === 'object') ? p.dataScene : {};
+  L.push(`实验清单：共 ${d.count === undefined ? '（未获取）' : d.count} 个实验`);
+  L.push(`缺 data.json 的实验（模板缺失）：${Array.isArray(d.missingData) && d.missingData.length ? d.missingData.join('、') : '（无）'}`);
+  L.push(`启用章节禁用的实验：${Array.isArray(d.sectionDisabled) && d.sectionDisabled.length ? d.sectionDisabled.join('；') : '（无）'}`);
+  L.push(`当前实验未填必填字段：${p.pendingRequired === undefined || p.pendingRequired === null ? '（未获取）' : p.pendingRequired}（-1=未选择实验）`);
+  L.push(hr);
+
+  L.push('【更新与网络】');
+  const n = (p.netEnv && typeof p.netEnv === 'object') ? p.netEnv : {};
+  L.push(`代理环境变量（仅存在性）：${Array.isArray(n.proxySet) && n.proxySet.length ? n.proxySet.join('、') : '（未设置）'}`);
+  const dm = (n.dataManifest && typeof n.dataManifest === 'object') ? n.dataManifest : {};
+  L.push(`数据清单 data-manifest 可达性：${dm.status !== undefined ? `已连接（HTTP ${dm.status}）` : (dm.error || '（未探测）')}`);
   L.push(hr);
 
   L.push('【配置摘要（已脱敏）】');
@@ -105,6 +152,15 @@ function buildDiagnostics(sources) {
   if (!genLogs.length) L.push('（暂无生成记录）');
   genLogs.forEach((g, i) => {
     L.push(`--- 第 ${i + 1} 次（${g.time || '?'}，实验：${g.exp || '?'}，exit=${g.exitCode}, ok=${g.ok}）---`);
+    if (g.job) {
+      const j = g.job;
+      const variants = (j.variants && typeof j.variants === 'object') ? Object.keys(j.variants) : [];
+      L.push(`    变体选择：${variants.length ? variants.map(k => `${k}#${j.variants[k]}`).join('、') : '（默认）'} | 润色覆盖章节：${(j.polishSections || []).length ? j.polishSections.join('、') : '（无）'} | 禁用章节：${(j.disabledSections || []).length ? j.disabledSections.join('、') : '（无）'}`);
+    }
+    if (g.report || g.sectionsCache !== undefined) {
+      const r = g.report;
+      L.push(`    报告现场：${r ? `${r.name}（${r.size} 字节，${r.mtime}）` : '（无新报告）'} | 章节缓存：${g.sectionsCache ? '存在' : '缺失'}`);
+    }
     L.push(String(g.logs || '').trim() || '（空）');
   });
   L.push(hr);

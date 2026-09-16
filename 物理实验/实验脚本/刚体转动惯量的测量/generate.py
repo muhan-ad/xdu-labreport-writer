@@ -264,7 +264,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 一、原始数据记录 ──
     doc.add_heading("一、原始数据记录", level=1)
-    doc.add_paragraph("请在下方粘贴原始数据记录照片。")
+    doc.add_data_photo("请在下方粘贴原始数据记录照片。")
 
     # ═══════════════════════════════════════════════
     # ── 二、数据处理 ──
@@ -410,6 +410,10 @@ def _generate_docx(data: dict, output_path: str):
     # ═══════════════════════════════════════════════
     doc.add_heading("三、实验结果分析", level=1)
 
+    # 结果分析 AI 导入消费点：AI 润色导入的「结果分析」覆盖硬编码段落
+    if "结果分析" in variants:
+        doc.add_paragraph_rich(variants["结果分析"])
+
     doc.add_heading("1. 误差", level=2)
     doc.add_paragraph(
         "①摆线问题：器材使用时间较久，摆线的材质、粗细和弹性不均匀"
@@ -443,27 +447,46 @@ def _generate_docx(data: dict, output_path: str):
     # ═══════════════════════════════════════════════
     doc.add_heading("四、问题讨论", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_paragraph(
         "1. 实验中转动惯量公式中的 R 是否为下圆盘半径？其数值如何测量？"
     )
-    doc.add_paragraph("")
-    doc.add_run("答：不是，R 是下盘圆心到悬挂点的距离。"
-                 "测量方法：三悬点组成一个等边三角形，设其边长为 L，"
-                 "则 R 等于其外接圆的半径，测量出 L 的长度后，")
-    doc.add_inline_math(r"R = \frac{L}{\sqrt{3}}")
-    doc.add_run("，通过计算即可得到 R 的数值。")
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph("")
+        doc.add_run("答：不是，R 是下盘圆心到悬挂点的距离。"
+                     "测量方法：三悬点组成一个等边三角形，设其边长为 L，"
+                     "则 R 等于其外接圆的半径，测量出 L 的长度后，")
+        doc.add_inline_math(r"R = \frac{L}{\sqrt{3}}")
+        doc.add_run("，通过计算即可得到 R 的数值。")
 
     doc.add_paragraph(
         "2. 当待测物体的转动惯量比下圆盘的转动惯量小得多时，"
         "为何不宜采用三线摆测量？"
     )
-    doc.add_paragraph(
-        "答：若待测物转动惯量远小于下盘，则加与不加样品时周期变化极小，"
-        "T ≈ T₀，公式中差值项接近零，测量误差被放大，灵敏度不足，"
-        "会导致误差过多，无法得到理想结果。"
-    )
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
 
-    # ── 保存 ──
+        doc.add_paragraph(
+            "答：若待测物转动惯量远小于下盘，则加与不加样品时周期变化极小，"
+            "T ≈ T₀，公式中差值项接近零，测量误差被放大，灵敏度不足，"
+            "会导致误差过多，无法得到理想结果。"
+        )
+
+        # ── 保存 ──
     doc.save()
     doc.close()
     print(f"报告已生成: {output_path}")

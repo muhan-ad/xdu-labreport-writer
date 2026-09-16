@@ -153,7 +153,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 一、原始数据提交（拍照上传） ──
     doc.add_heading("一、原始数据提交（拍照上传）", level=1)
-    doc.add_paragraph("请在下方粘贴原始数据记录照片。")
+    doc.add_data_photo("请在下方粘贴原始数据记录照片。")
 
     # ── 二、切变模量计算原理 ──
     doc.add_heading("二、切变模量计算原理", level=1)
@@ -291,32 +291,56 @@ def _generate_docx(data: dict, output_path: str):
     # ── 四、问题讨论 ──
     doc.add_heading("四、问题讨论", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_heading("1. 扭摆在转动过程中受到哪些阻尼作用？有什么影响？", level=2)
-    doc.add_paragraph("答：扭摆在转动过程中受到的阻尼有空气阻尼和转轴间的摩擦阻尼。")
-    doc.add_paragraph("")
-    doc.add_run("周期 ")
-    doc.add_inline_math(r"T_{0} = 2\pi\sqrt{\frac{J_{0}}{F}}")
-    doc.add_run("，其中 ")
-    doc.add_inline_math(r"J_{0}")
-    doc.add_run("、F 为常量，故周期将会保持不变，扭摆所受的阻尼对实验没有影响。")
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph("答：扭摆在转动过程中受到的阻尼有空气阻尼和转轴间的摩擦阻尼。")
+        doc.add_paragraph("")
+        doc.add_run("周期 ")
+        doc.add_inline_math(r"T_{0} = 2\pi\sqrt{\frac{J_{0}}{F}}")
+        doc.add_run("，其中 ")
+        doc.add_inline_math(r"J_{0}")
+        doc.add_run("、F 为常量，故周期将会保持不变，扭摆所受的阻尼对实验没有影响。")
 
     doc.add_heading("2. 扭摆的转动周期是否与转动角度有关？选择多大转角合适？", level=2)
-    doc.add_paragraph("")
-    doc.add_run("答：周期 ")
-    doc.add_inline_math(r"T_{0} = 2\pi\sqrt{\frac{J_{0}}{F}}")
-    doc.add_run("，与转动角度无关。")
-    doc.add_paragraph("为提供充足的初始势能，同时提高周期测量的准确度，"
-                      "转角在 60~90° 左右为宜。")
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph("")
+        doc.add_run("答：周期 ")
+        doc.add_inline_math(r"T_{0} = 2\pi\sqrt{\frac{J_{0}}{F}}")
+        doc.add_run("，与转动角度无关。")
+        doc.add_paragraph("为提供充足的初始势能，同时提高周期测量的准确度，"
+                          "转角在 60~90° 左右为宜。")
 
     doc.add_heading("3. 实验中，对扭摆装置中钢丝的长度和直径有何要求？", level=2)
-    doc.add_paragraph("")
-    doc.add_run("答：为了满足切变模量公式 ")
-    doc.add_inline_math(r"F = \frac{\pi \cdot d^{4}}{32l}G")
-    doc.add_run("，钢丝长度 l 应满足 ")
-    doc.add_inline_math(r"l \gg 4r")
-    doc.add_run("，且钢丝直径应分布均匀。")
+    _o = _quiz.get("3") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
 
-    # ── 保存 ──
+        doc.add_paragraph("")
+        doc.add_run("答：为了满足切变模量公式 ")
+        doc.add_inline_math(r"F = \frac{\pi \cdot d^{4}}{32l}G")
+        doc.add_run("，钢丝长度 l 应满足 ")
+        doc.add_inline_math(r"l \gg 4r")
+        doc.add_run("，且钢丝直径应分布均匀。")
+
+        # ── 保存 ──
     doc.save()
     doc.close()
     print(f"报告已生成: {output_path}")

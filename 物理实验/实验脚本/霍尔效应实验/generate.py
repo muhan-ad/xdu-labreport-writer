@@ -161,7 +161,7 @@ def _generate_docx(data: dict, output_path: str):
         doc.add_paragraph_rich(variants["实验方法"])
 
     doc.add_heading("一、原始数据记录", level=1)
-    doc.add_paragraph("请在下方粘贴原始数据记录照片。")
+    doc.add_data_photo("请在下方粘贴原始数据记录照片。")
 
     doc.add_heading("二、数据处理", level=1)
     doc.add_paragraph("采用电流换向法消除不等位电压的影响，霍尔电压为")
@@ -201,17 +201,36 @@ def _generate_docx(data: dict, output_path: str):
         doc.add_paragraph_rich(variants["结论"])
 
     doc.add_heading("三、课后思考题", level=1)
+
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
     doc.add_paragraph("1. 若磁感应强度跟霍尔元件不完全正交，则按 B = U_H/(K_H·I) 计算出的"
                       "磁感应强度比实际值大还是小？要准确测量磁场应如何操作？")
-    doc.add_paragraph("答：偏小。当霍尔片平面与磁场不完全正交时，只有垂直于霍尔片平面的"
-                      "磁场分量对霍尔电压有贡献，测得的霍尔电压偏小，按公式计算出的磁感应"
-                      "强度比实际值小。要准确测量磁场，应缓慢转动霍尔元件的方位，使霍尔"
-                      "电压达到最大，此时霍尔片平面与磁场方向严格正交，测得的才是真实磁场。")
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph("答：偏小。当霍尔片平面与磁场不完全正交时，只有垂直于霍尔片平面的"
+                          "磁场分量对霍尔电压有贡献，测得的霍尔电压偏小，按公式计算出的磁感应"
+                          "强度比实际值小。要准确测量磁场，应缓慢转动霍尔元件的方位，使霍尔"
+                          "电压达到最大，此时霍尔片平面与磁场方向严格正交，测得的才是真实磁场。")
     doc.add_paragraph("2. 如何用霍尔效应法判断 N 型半导体和 P 型半导体？")
-    doc.add_paragraph("答：在相同的工作电流方向和磁场方向下，N 型半导体（载流子为电子）与"
-                      "P 型半导体（载流子为空穴）产生的霍尔电压极性相反。将待测半导体通入"
-                      "已知方向的工作电流并置于已知方向的磁场中，测出霍尔电压的正负，即可"
-                      "判断载流子的符号：与空穴导电情形一致的为 P 型半导体，反之为 N 型半导体。")
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph("答：在相同的工作电流方向和磁场方向下，N 型半导体（载流子为电子）与"
+                          "P 型半导体（载流子为空穴）产生的霍尔电压极性相反。将待测半导体通入"
+                          "已知方向的工作电流并置于已知方向的磁场中，测出霍尔电压的正负，即可"
+                          "判断载流子的符号：与空穴导电情形一致的为 P 型半导体，反之为 N 型半导体。")
 
     doc.save()
     doc.close()

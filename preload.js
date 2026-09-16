@@ -4,10 +4,15 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('labAPI', {
   credentialStatus: () => ipcRenderer.invoke('credential-status'),
   saveCredential: (payload) => ipcRenderer.invoke('credential-save', payload),
+  visionCredentialStatus: () => ipcRenderer.invoke('vision-credential-status'),
+  saveVisionCredential: (payload) => ipcRenderer.invoke('vision-credential-save', payload),
+  pickTableImage: () => ipcRenderer.invoke('pick-table-image'),
+  saveTableImage: (expPath, dataUrl) => ipcRenderer.invoke('save-table-image', expPath, dataUrl),
+  ocrRecognize: (params) => ipcRenderer.invoke('ocr-recognize', params),
   reportText: (filePath) => ipcRenderer.invoke('report-text', filePath),
   scanExperiments: () => ipcRenderer.invoke('scan-experiments'),
   openFile: (filePath) => ipcRenderer.invoke('open-file', filePath),
-  runGenerate: (expPath, studentInfo, variants, polish) => ipcRenderer.invoke('run-generate', expPath, studentInfo, variants, polish),
+  runGenerate: (expPath, studentInfo, variants, polish, embedDataPhoto) => ipcRenderer.invoke('run-generate', expPath, studentInfo, variants, polish, embedDataPhoto),
   cancelGenerate: () => ipcRenderer.invoke('cancel-generate'),
   onGenerateLog: (callback) => {
     ipcRenderer.on('generate-log', (_, data) => callback(data));
@@ -56,15 +61,21 @@ contextBridge.exposeInMainWorld('labAPI', {
     ipcRenderer.removeAllListeners('data-update-progress');   // 防多次注册累积
     ipcRenderer.on('data-update-progress', (_, data) => callback(data));
   },
-  // AI 对话（requestId 支持取消）
+  // AI 对话（requestId 支持取消：ai-chat-cancel 中止对应请求；onAiChunk 实时增量显示）
   aiChat: (params) => ipcRenderer.invoke('ai-chat', params),
   aiChatCancel: (requestId) => ipcRenderer.send('ai-chat-cancel', requestId),
+  onAiChunk: (cb) => {
+    ipcRenderer.removeAllListeners('ai-chat-chunk');
+    ipcRenderer.on('ai-chat-chunk', (_e, d) => { try { cb(d); } catch (e) { /* 忽略 */ } });
+  },
   // 变体组合
   loadVariants: (expPath) => ipcRenderer.invoke('load-variants', expPath),
   saveVariants: (expPath, variants) => ipcRenderer.invoke('save-variants', expPath, variants),
   // 变体管理：实验级章节开关
   readSectionsConfig: (expPath) => ipcRenderer.invoke('read-sections-config', expPath),
   writeSectionsConfig: (expPath, disabled) => ipcRenderer.invoke('write-sections-config', expPath, disabled),
+  // AI 润色导入判定：实验结果分析等非变体章节是否支持导入
+  sectionImportable: (expPath, section) => ipcRenderer.invoke('section-importable', expPath, section),
   // 用户自建变体库
   listCustomVariants: () => ipcRenderer.invoke('list-custom-variants'),
   readCustomVariants: (expId) => ipcRenderer.invoke('read-custom-variants', expId),

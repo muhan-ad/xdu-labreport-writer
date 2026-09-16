@@ -5,7 +5,7 @@ const { spawnSync } = require('child_process');
 const root = path.join(__dirname, '..');
 const bundled = path.join(root, 'python-runtime/python.exe');
 const python = fs.existsSync(bundled) ? bundled : 'python';
-const commands = [[process.execPath, ['--test', 'tests/regression.test.js', 'tests/security.test.js']],
+const commands = [[process.execPath, ['--test', 'tests/regression.test.js', 'tests/security.test.js', 'tests/ocr.test.js']],
   ...['smoke_test.py', 'validate_schema.py', 'tests/calculation_test.py'].map(file => [python, ['-B', '-X', 'utf8', file]])];
 for (const [exe, args] of commands) {
   const result = spawnSync(exe, args, { cwd: root, stdio: 'inherit', windowsHide: true, timeout: 120000 });

@@ -258,7 +258,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
 
     # ---- 一、原始数据记录 ----
     doc.add_heading("一、原始数据记录", level=1)
-    doc.add_paragraph("（请在此处粘贴原始数据记录照片。）")
+    doc.add_data_photo("（请在此处粘贴原始数据记录照片。）")
 
     # ---- 二、数据处理 ----
     doc.add_heading("二、数据处理", level=1)
@@ -357,6 +357,10 @@ def _generate_docx(data: dict, output_path: str) -> bool:
 
     # ---- 三、实验结果分析 ----
     doc.add_heading("三、实验结果分析", level=1)
+
+    # 结果分析 AI 导入消费点：AI 润色导入的「结果分析」覆盖硬编码段落
+    if "结果分析" in variants:
+        doc.add_paragraph_rich(variants["结果分析"])
     doc.add_paragraph(
         f"本实验用反射法测得三棱镜顶角为 {_fmt_dm(r['alpha_mean'])}，"
         "与三棱镜 60° 的标称顶角接近。测量中利用对径放置的双游标 A、B "
@@ -376,46 +380,65 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     # ---- 四、课后思考题 ----
     doc.add_heading("四、课后思考题", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_heading("1. 在载物台上放置三棱镜时，为什么要使折射面垂直于"
                     "载物台调平螺丝的连线？", level=2)
-    doc.add_paragraph(
-        "答：（1）调节关系明确：当折射面垂直于两颗调平螺丝的连线时，"
-        "升降这两颗螺丝只改变该折射面法线的俯仰，螺丝的调节量与折射面"
-        "倾角之间有明确的几何对应关系，便于精准调节。")
-    doc.add_paragraph(
-        "（2）两折射面的调节互不干扰：此时每个折射面的俯仰只由对应的"
-        "调平螺丝控制，调节自由度解耦——调平一个折射面时不会破坏另一个"
-        "已调好的折射面，用各半调节法能迅速完成载物台调平。")
-    doc.add_paragraph(
-        "（3）保证测量精度：若折射面不垂直于连线，调节任一螺丝都会使"
-        "反射像同时产生上下和左右的复合偏移，难以判断像的中心位置，"
-        "会引入额外的对准误差。")
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：（1）调节关系明确：当折射面垂直于两颗调平螺丝的连线时，"
+            "升降这两颗螺丝只改变该折射面法线的俯仰，螺丝的调节量与折射面"
+            "倾角之间有明确的几何对应关系，便于精准调节。")
+        doc.add_paragraph(
+            "（2）两折射面的调节互不干扰：此时每个折射面的俯仰只由对应的"
+            "调平螺丝控制，调节自由度解耦——调平一个折射面时不会破坏另一个"
+            "已调好的折射面，用各半调节法能迅速完成载物台调平。")
+        doc.add_paragraph(
+            "（3）保证测量精度：若折射面不垂直于连线，调节任一螺丝都会使"
+            "反射像同时产生上下和左右的复合偏移，难以判断像的中心位置，"
+            "会引入额外的对准误差。")
 
     doc.add_heading("2. 不使用汞灯和平行光管，利用望远镜自身产生的平行光来"
                     "测三棱镜顶角的方法称为自准法。试用自准法测三棱镜顶角，"
                     "并说明测量原理和方法。", level=2)
-    doc.add_paragraph(
-        "答：测量原理——望远镜目镜中的叉丝分划板被小灯照亮后，经物镜"
-        "射出平行光；当望远镜光轴与三棱镜某折射面垂直时，平行光沿原路"
-        "返回，在分划板上形成清晰的亮十字自准像并与叉丝重合，由此可以"
-        "确定该折射面法线的方位。")
-    doc.add_paragraph("")
-    doc.add_run("设两折射面法线的方位角分别为 ")
-    doc.add_inline_math(r"\varphi_{1}")
-    doc.add_run(" 和 ")
-    doc.add_inline_math(r"\varphi_{2}")
-    doc.add_run("，则两法线的夹角为 ")
-    doc.add_inline_math(r"θ = |φ_{1} - φ_{2}|")
-    doc.add_run("，顶角为其补角：")
-    doc.add_math(r"α = 180° - θ")
-    doc.add_paragraph(
-        "测量方法：①按正常步骤调整分光计，使望远镜适合观察平行光、其"
-        "光轴垂直于仪器中心轴，并调平载物台；②将三棱镜置于载物台上，"
-        "转动望远镜正对折射面 AB，微调至亮十字自准像与叉丝上方交点重合，"
-        "从两个游标分别读出方位角 φ₁；③再转动望远镜正对另一折射面 AC，"
-        "同法读出方位角 φ₂；④由上式求出顶角 α，重复测量数次取平均。"
-        "计算转角时同样取双游标读数的平均以消除偏心差，读数跨过刻度盘"
-        "零点时作 360° 修正。")
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：测量原理——望远镜目镜中的叉丝分划板被小灯照亮后，经物镜"
+            "射出平行光；当望远镜光轴与三棱镜某折射面垂直时，平行光沿原路"
+            "返回，在分划板上形成清晰的亮十字自准像并与叉丝重合，由此可以"
+            "确定该折射面法线的方位。")
+        doc.add_paragraph("")
+        doc.add_run("设两折射面法线的方位角分别为 ")
+        doc.add_inline_math(r"\varphi_{1}")
+        doc.add_run(" 和 ")
+        doc.add_inline_math(r"\varphi_{2}")
+        doc.add_run("，则两法线的夹角为 ")
+        doc.add_inline_math(r"θ = |φ_{1} - φ_{2}|")
+        doc.add_run("，顶角为其补角：")
+        doc.add_math(r"α = 180° - θ")
+        doc.add_paragraph(
+            "测量方法：①按正常步骤调整分光计，使望远镜适合观察平行光、其"
+            "光轴垂直于仪器中心轴，并调平载物台；②将三棱镜置于载物台上，"
+            "转动望远镜正对折射面 AB，微调至亮十字自准像与叉丝上方交点重合，"
+            "从两个游标分别读出方位角 φ₁；③再转动望远镜正对另一折射面 AC，"
+            "同法读出方位角 φ₂；④由上式求出顶角 α，重复测量数次取平均。"
+            "计算转角时同样取双游标读数的平均以消除偏心差，读数跨过刻度盘"
+            "零点时作 360° 修正。")
 
     doc.save()
     doc.close()

@@ -121,7 +121,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 一、原始数据提交（拍照上传） ──
     doc.add_heading("一、原始数据提交（拍照上传）", level=1)
-    doc.add_paragraph("请在下方粘贴原始数据记录照片。")
+    doc.add_data_photo("请在下方粘贴原始数据记录照片。")
 
     # ── 二、数据处理 ──
     doc.add_heading("二、数据处理", level=1)
@@ -164,6 +164,10 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 三、实验结果分析 ──
     doc.add_heading("三、实验结果分析", level=1)
+
+    # 结果分析 AI 导入消费点：AI 润色导入的「结果分析」覆盖硬编码段落
+    if "结果分析" in variants:
+        doc.add_paragraph_rich(variants["结果分析"])
     doc.add_paragraph("")
     doc.add_run("本次测量曲率半径 ")
     doc.add_inline_math(f"R = {format_number(R_bar, u_c)} mm")
@@ -196,48 +200,72 @@ def _generate_docx(data: dict, output_path: str):
     # ── 四、思考题 ──
     doc.add_heading("四、思考题", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_heading("1. 牛顿环中心为何不是理想暗点？对 R 测量有无影响？", level=2)
-    doc.add_paragraph(
-        "答：实际实验中，平凸透镜和平面玻璃接触处存在弹性形变，"
-        "导致接触处为一个小圆面而非理想点接触；此外镜面上可能有微量灰尘，"
-        "引起附加光程差，使中心呈现或暗或明的圆斑。"
-    )
-    doc.add_paragraph("")
-    doc.add_run("对 R 测量无影响。因为采用 ")
-    doc.add_inline_math("D_m^2 - D_n^2")
-    doc.add_run(" 的差值法处理数据时，附加厚度 a 在相减过程中被消除，不改变干涉条纹的级次差。")
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：实际实验中，平凸透镜和平面玻璃接触处存在弹性形变，"
+            "导致接触处为一个小圆面而非理想点接触；此外镜面上可能有微量灰尘，"
+            "引起附加光程差，使中心呈现或暗或明的圆斑。"
+        )
+        doc.add_paragraph("")
+        doc.add_run("对 R 测量无影响。因为采用 ")
+        doc.add_inline_math("D_m^2 - D_n^2")
+        doc.add_run(" 的差值法处理数据时，附加厚度 a 在相减过程中被消除，不改变干涉条纹的级次差。")
 
     doc.add_heading("2. 说明牛顿环分布特点及干涉级次分布。", level=2)
-    doc.add_paragraph("")
-    doc.add_run("答：牛顿环中心为暗斑，周围交替分布明暗相间的同心圆环。")
-    doc.add_run("环的分布特点是中央稀疏、边缘密集，呈内疏外密的不均匀排列。")
-    doc.add_run("干涉级次分布：中央级次低（")
-    doc.add_inline_math("m")
-    doc.add_run(" 小），由内向外级次逐渐增大（")
-    doc.add_inline_math("m")
-    doc.add_run(" 增大），明环与暗环交替出现。")
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph("")
+        doc.add_run("答：牛顿环中心为暗斑，周围交替分布明暗相间的同心圆环。")
+        doc.add_run("环的分布特点是中央稀疏、边缘密集，呈内疏外密的不均匀排列。")
+        doc.add_run("干涉级次分布：中央级次低（")
+        doc.add_inline_math("m")
+        doc.add_run(" 小），由内向外级次逐渐增大（")
+        doc.add_inline_math("m")
+        doc.add_run(" 增大），明环与暗环交替出现。")
 
     doc.add_heading("3. 牛顿环各环间距是否相等？根据以下原理进行解释。", level=2)
-    doc.add_paragraph("")
-    doc.add_run("测量原理：")
-    doc.add_inline_math(r"R = \frac{D_m^2 - D_n^2}{4(m-n)\lambda}")
-    doc.add_paragraph("")
-    doc.add_run("答：不相等。空气膜厚度沿径向不均匀变化是根本原因。")
-    doc.add_run("由几何关系 ")
-    doc.add_inline_math("R^2 = (R-d)^2 + r^2")
-    doc.add_run("，略去 d² 得 ")
-    doc.add_inline_math(r"d = \frac{r^{2}}{2R}")
-    doc.add_run("。")
-    doc.add_paragraph("")
-    doc.add_run("可见膜厚 ")
-    doc.add_inline_math("d")
-    doc.add_run(" 与 ")
-    doc.add_inline_math("r^2")
-    doc.add_run(" 成正比，即越远离中心，厚度增加越快，")
-    doc.add_run("光程差变化越剧烈，导致相邻干涉环之间的间距越来越小，")
-    doc.add_run("形成内疏外密的分布。")
+    _o = _quiz.get("3") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
 
-    # ── 保存 ──
+        doc.add_paragraph("")
+        doc.add_run("测量原理：")
+        doc.add_inline_math(r"R = \frac{D_m^2 - D_n^2}{4(m-n)\lambda}")
+        doc.add_paragraph("")
+        doc.add_run("答：不相等。空气膜厚度沿径向不均匀变化是根本原因。")
+        doc.add_run("由几何关系 ")
+        doc.add_inline_math("R^2 = (R-d)^2 + r^2")
+        doc.add_run("，略去 d² 得 ")
+        doc.add_inline_math(r"d = \frac{r^{2}}{2R}")
+        doc.add_run("。")
+        doc.add_paragraph("")
+        doc.add_run("可见膜厚 ")
+        doc.add_inline_math("d")
+        doc.add_run(" 与 ")
+        doc.add_inline_math("r^2")
+        doc.add_run(" 成正比，即越远离中心，厚度增加越快，")
+        doc.add_run("光程差变化越剧烈，导致相邻干涉环之间的间距越来越小，")
+        doc.add_run("形成内疏外密的分布。")
+
+        # ── 保存 ──
     doc.save()
     doc.close()
 

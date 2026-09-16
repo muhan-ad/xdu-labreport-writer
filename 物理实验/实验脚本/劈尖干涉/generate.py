@@ -128,7 +128,7 @@ def _generate_docx(data: dict, output_path: str):
     # 一、原始数据记录
     # ════════════════════════════════
     doc.add_heading("一、原始数据记录", level=1)
-    doc.add_paragraph("请在下方粘贴劈尖干涉条纹原始数据记录照片。")
+    doc.add_data_photo("请在下方粘贴劈尖干涉条纹原始数据记录照片。")
 
     doc.add_heading("1.1 实验数据记录表", level=2)
 
@@ -294,27 +294,46 @@ def _generate_docx(data: dict, output_path: str):
     # ════════════════════════════════
     doc.add_heading("三、课后思考题", level=1)
 
+    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
+    import random
+    _quiz = variants.get("思考题")
+    if isinstance(_quiz, str) and _quiz.strip():
+        doc.add_paragraph_rich(_quiz)
+        _quiz = None
+    elif not isinstance(_quiz, dict):
+        _quiz = None
+
     doc.add_heading(
         "1. 如果形成空气劈尖的两块玻璃板内表面凹凸不平，空气薄膜的等厚干涉条纹还平行于棱边吗？为什么？",
         level=2,
     )
-    doc.add_paragraph(
-        "答：不会平行于棱边。因为玻璃板的内表面凹凸不平会导致空气薄膜厚度不均匀，"
-        "光程差不再简单地沿棱边方向线性变化，从而导致干涉条纹形状也发生变化，"
-        "不再是平行直条纹，而是呈现出与表面凹凸对应的弯曲形态。"
-    )
+    _o = _quiz.get("1") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
+
+        doc.add_paragraph(
+            "答：不会平行于棱边。因为玻璃板的内表面凹凸不平会导致空气薄膜厚度不均匀，"
+            "光程差不再简单地沿棱边方向线性变化，从而导致干涉条纹形状也发生变化，"
+            "不再是平行直条纹，而是呈现出与表面凹凸对应的弯曲形态。"
+        )
 
     doc.add_heading(
         "2. 如果形成空气劈尖的两块玻璃板上板为标准平面，如何根据等厚干涉条纹的形状判断下板某处是凹还是凸？",
         level=2,
     )
-    doc.add_paragraph(
-        "答：可以通过观察条纹的弯曲方向来判断。若干涉条纹向劈尖棱边方向（空气层较薄一侧）弯曲，"
-        "则表明该处下板表面为凸起（该处空气膜偏薄，同级干涉条纹向薄处偏移）；"
-        "相反，若干涉条纹背离棱边方向（空气层较厚一侧）弯曲，则该处为凹陷。"
-    )
+    _o = _quiz.get("2") if _quiz else None
+    if _o:
+        doc.add_paragraph_rich(random.choice(_o))
+    else:
 
-    # ── 保存 ──
+        doc.add_paragraph(
+            "答：可以通过观察条纹的弯曲方向来判断。若干涉条纹向劈尖棱边方向（空气层较薄一侧）弯曲，"
+            "则表明该处下板表面为凸起（该处空气膜偏薄，同级干涉条纹向薄处偏移）；"
+            "相反，若干涉条纹背离棱边方向（空气层较厚一侧）弯曲，则该处为凹陷。"
+        )
+
+        # ── 保存 ──
     doc.save()
     doc.close()
 
