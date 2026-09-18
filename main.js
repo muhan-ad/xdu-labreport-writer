@@ -5,7 +5,6 @@ const fs = require('fs');
 const { spawn, spawnSync, execFile } = require('child_process');
 const mammoth = require('mammoth');
 const resourceStore = require('./src/main/resource-store');
-const { cleanupScript } = require('./src/main/word-process');
 const diagnostics = require('./src/main/diagnostics');
 const atomic = require('./src/main/atomic-store');
 const dataValidation = require('./src/shared/data-validation');
@@ -1506,19 +1505,29 @@ handle('report-text', async (_, filePath) => {
   catch (e) { return { ok: false, error: e.message }; }
 });
 
-// ── 诊断增强：Word 环境 / 数据现场 / 网络探测（全部只读，失败降级不阻塞导出）──
+// ── 诊断增强：运行时环境 / 数据现场 / 网络探测（全部只读，失败降级不阻塞导出）──
+// 报告生成已改为纯 Python（python-docx + OMML），不再检测或依赖 Microsoft Word。
 const DIAG_PROBE_MARKER = '###DIAGNOSTIC_PROBE###';
 
-function probeWordEnv() {
-  // 用生成同款 python + pywin32 探测：注册表存在性/文件版本/COM 冒烟/进程数/WPS/代码页。
-  // 探测脚本为独立文件 src/main/word-probe.py，源码经 stdin 喂给 python
-  // （asar 内文件不是真实路径，不能直接作为 python 入口）。
+// 运行时探测：Python 版本与系统代码页/区域（生成管道的编码问题排查用）。
+// 探测源码经 stdin 喂给 python —— asar 内的文件不是真实路径，不能直接作为 python 入口。
+const RUNTIME_PROBE_SOURCE = [
+  'import json, sys, locale',
+  'out = {"pythonVersion": sys.version.split()[0], "preferredEncoding": locale.getpreferredencoding(False)}',
+  'try:',
+  '    import ctypes',
+  '    out["acp"] = ctypes.windll.kernel32.GetACP()',
+  '    out["lcid"] = ctypes.windll.kernel32.GetUserDefaultLCID()',
+  'except Exception:',
+  '    pass',
+  'print("' + DIAG_PROBE_MARKER + '" + json.dumps(out))',
+].join('\n');
+
+function probeRuntimeEnv() {
   return new Promise((resolve) => {
     let proc = null;
-    const timer = setTimeout(() => { try { if (proc && proc.exitCode === null) proc.kill(); } catch (e) { /* 忽略 */ } resolve(null); }, 25000);
+    const timer = setTimeout(() => { try { if (proc && proc.exitCode === null) proc.kill(); } catch (e) { /* 忽略 */ } resolve(null); }, 15000);
     try {
-      const probeFile = path.join(__dirname, 'src', 'main', 'word-probe.py');
-      const source = fs.readFileSync(probeFile, 'utf8');
       proc = spawn(resolvePythonExe() || 'python', ['-B', '-X', 'utf8', '-'], {
         windowsHide: true,
         env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
@@ -1537,7 +1546,7 @@ function probeWordEnv() {
           return resolve(null);
         }
       });
-      proc.stdin.write(source);
+      proc.stdin.write(RUNTIME_PROBE_SOURCE);
       proc.stdin.end();
     } catch (e) {
       clearTimeout(timer);
@@ -1605,15 +1614,14 @@ handle('export-diagnostics', async (_, payload) => {
     const netProbe = await probeDataManifest();
     const proxySet = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY']
       .filter(k => process.env[k] !== undefined && String(process.env[k]).trim() !== '');
-    const wordEnv = await probeWordEnv();   // 由下方定义；失败返回 null
-    const sys = (wordEnv && typeof wordEnv === 'object') ? wordEnv : {};
+    const runtimeEnv = await probeRuntimeEnv();
+    const sys = (runtimeEnv && typeof runtimeEnv === 'object') ? runtimeEnv : {};
     const systemEnv = {
       acp: sys.acp !== undefined ? sys.acp : '（未获取）',
       lcid: sys.lcid !== undefined ? sys.lcid : '（未获取）',
       preferredEncoding: sys.preferredEncoding !== undefined ? sys.preferredEncoding : '（未获取）',
       pythonVersion: sys.pythonVersion !== undefined ? sys.pythonVersion : '（未获取）',
       pythonExe: resolvePythonExe() || '（未找到，生成时将回退 PATH python）',
-      recentWordInstances: generationLogBuffer.map(g => `${g.exp}：${g.wordInstances === null || g.wordInstances === undefined ? '未知' : g.wordInstances} 个`),
     };
     const netEnv = { proxySet, dataManifest: netProbe };
 
@@ -1637,7 +1645,6 @@ handle('export-diagnostics', async (_, payload) => {
       renderErrors: Array.isArray(p.renderErrors) ? p.renderErrors : [],
       runLog,
       generationLogs: generationLogBuffer,
-      wordEnv,
       systemEnv,
       dataScene,
       netEnv,
@@ -1669,7 +1676,7 @@ handle('run-generate', async (_, expPath, studentInfo, variants, polish, embedDa
   if (generationBusy || resourceUpdating) return { ok: false, error: '已有任务正在运行，请稍后重试' };
   syncInstalledResources();
   generationBusy = true;
-  const job = { cancelled: false, wordHandles: new Map(), cleanup: null, inputFile: null };
+  const job = { cancelled: false, cleanup: null, inputFile: null };
   const genT0 = Date.now();
   const genExpName = path.basename(String(expPath || ''));
   log(`generate | 开始 | 实验=${genExpName}`);
@@ -1743,10 +1750,7 @@ handle('run-generate', async (_, expPath, studentInfo, variants, polish, embedDa
       if (stdoutCarry.length > 1024 * 1024) { job.cancelled = true; cancelGeneration(); stdoutCarry = ''; }
       const keep = [];
       for (const ln of lines) {
-        const wordMatch = /^\.LAB_WORD_INSTANCE:(\d+):(\d+)$/.exec(ln);
-        if (wordMatch) {
-          job.wordHandles.set(Number(wordMatch[1]), Number(wordMatch[2]));
-        } else if (ln.startsWith(SECTIONS_MARKER)) {
+        if (ln.startsWith(SECTIONS_MARKER)) {
           try { capturedSections = JSON.parse(ln.slice(SECTIONS_MARKER.length)); } catch (e) { /* 坏行忽略 */ }
         } else {
           keep.push(ln);
@@ -1816,7 +1820,6 @@ handle('run-generate', async (_, expPath, studentInfo, variants, polish, embedDa
         try { sectionsCache = fs.existsSync(path.join(expPath, '.lab_sections.json')); } catch (e) { /* 忽略 */ }
         pushGenerationLog({
           exp: genExpName, exitCode: code, ok, logs: (logs || []).join(''),
-          wordInstances: job.wordHandles ? job.wordHandles.size : null,
           job: jobSummary, report: reportInfo, sectionsCache,
         });
       } catch (e) { /* 缓冲失败不影响结果 */ }
@@ -1856,7 +1859,7 @@ handle('run-generate', async (_, expPath, studentInfo, variants, polish, embedDa
   }
 });
 
-// ── IPC: 取消生成（结束 python 进程树 + 清理其启动的 Word，保留用户手动打开的 Word）──
+// ── IPC: 取消生成（结束 python 进程树；报告生成已无外部程序，无需额外清理）──
 async function cancelGeneration() {
   const python = activePython;
   if (!python || python.exitCode !== null) {
@@ -1869,11 +1872,6 @@ async function cancelGeneration() {
       const timer = setTimeout(resolve, 8000);
       python.once('close', () => { clearTimeout(timer); resolve(); });
       execFile('taskkill', ['/PID', String(python.pid), '/T', '/F'], () => {});
-    });
-    // Verify both HWND and PID, then terminate through a process handle (no PID difference scan).
-    if (job.wordHandles.size) await new Promise(resolve => {
-      execFile(resolvePythonExe() || 'python', ['-c', cleanupScript, JSON.stringify([...job.wordHandles])],
-        { windowsHide: true, timeout: 10000 }, () => resolve());
     });
   })();
   await job.cleanup;

@@ -81,25 +81,12 @@ function buildDiagnostics(sources) {
   }
   L.push(hr);
 
-  L.push('【Word 环境检测】');
-  const w = (p.wordEnv && typeof p.wordEnv === 'object') ? p.wordEnv : {};
-  L.push(`Word 已安装：${w.installed === undefined ? '（未获取）' : (w.installed ? '是' : '否')}`);
-  L.push(`ProgramId：${w.curVer || '（未读取到）'} | COM CLSID 注册：${w.clsidPresent === undefined ? '（未获取）' : (w.clsidPresent ? '是' : '否')}`);
-  L.push(`WPS 已安装：${w.wpsInstalled === undefined ? '（未获取）' : (w.wpsInstalled ? '是（注意：WPS 不支持 OMath 公式）' : '否')}`);
-  L.push(`WINWORD.EXE：${w.exePath || '（未找到）'}${w.version ? `（文件版本 ${w.version}${w.bitness ? '，' + w.bitness : ''}）` : ''}`);
-  L.push(`正在运行的 Word 进程数：${w.runningCount === undefined ? '（未获取）' : w.runningCount}`);
-  L.push(`本应用实例数：${w.appProcessCount === undefined ? '（未获取）' : w.appProcessCount}`);
-  const com = (w.com && typeof w.com === 'object') ? w.com : {};
-  L.push(`COM 可启动（生成同路径冒烟）：${com.ok === undefined ? '（未获取）' : (com.ok ? `是（${com.version || '?'}${com.caption ? '，' + com.caption : ''}）` : `否（${com.error || '未知错误'}）`)}`);
-  if (w.com && w.com.ok && w.com.version) L.push(`    → 版本 ${w.com.version} 支持 OMath 数学公式：${/^1[4-9]\.|^2\d\./.test(String(w.com.version)) ? '是（建议 Word 2016+，版本号 ≥ 16）' : '需确认（Word 2010+ 才支持公式）'}`);
-  L.push(hr);
-
-  L.push('【系统与运行时】');
+  L.push('【生成环境】');
   const s = (p.systemEnv && typeof p.systemEnv === 'object') ? p.systemEnv : {};
+  L.push(`生成方式：本机 Python 直接生成（python-docx + OMML），不依赖 Microsoft Word`);
   L.push(`系统代码页(ACP)：${s.acp !== undefined ? s.acp : '（未获取）'}（936=GBK 中文；65001=UTF-8） | 区域 LCID：${s.lcid !== undefined ? s.lcid : '（未获取）'}`);
   L.push(`Python 首选编码：${s.preferredEncoding !== undefined ? s.preferredEncoding : '（未获取）'}（影响生成管道乱码判定）`);
   L.push(`生成用 Python：${s.pythonVersion || '（未获取）'} @ ${s.pythonExe || '（未获取）'}`);
-  L.push(`最近生成登记的 Word 实例数：${Array.isArray(s.recentWordInstances) && s.recentWordInstances.length ? s.recentWordInstances.join('；') : '（无记录）'}`);
   L.push(hr);
 
   L.push('【数据与生成现场】');
