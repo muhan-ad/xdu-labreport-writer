@@ -126,7 +126,8 @@
   border-radius: var(--radius);
   background: var(--bg);
   overflow: auto;
-  max-height: 420px;
+  /* 高度上限随窗口收缩，避免小窗口里原图把字段列表挤没 */
+  max-height: min(420px, calc(100vh - 300px));
   box-shadow: var(--shadow-sm);
 }
 .recog-image-pane img { display: block; width: 100%; }
@@ -312,8 +313,16 @@
 .recog-row.has-wide .recog-row-label { flex: 1 1 auto; min-width: 0; }
 .recog-row.has-wide .recog-badge { flex: 0 0 auto; }
 
-/* 原图面板：缩略并排 + 点击全屏放大（核对时要能看清手写数字） */
-.recog-image-pane { cursor: zoom-in; position: relative; }
+/* 原图面板：核对时固定在左侧（sticky），字段列表再长、滚动时原图也不会滚走；
+   点击可全屏放大（核对时要能看清手写数字）。
+   注意：滚动容器是 #recognizeModal .modal-body（overflow:auto），
+   故 sticky 生效范围由 .recog-split 的高度决定，正好覆盖整个字段列表。 */
+.recog-image-pane {
+  cursor: zoom-in;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+}
 .recog-image-hint {
   position: sticky;
   bottom: 0;
