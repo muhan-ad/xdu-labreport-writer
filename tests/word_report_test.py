@@ -83,6 +83,36 @@ def main():
                 problems.append("公式仍有线性残留（BuildUp 时代的失败特征）：索引 %s" % residue[:5])
             if body_cmd:
                 problems.append("正文残留 LaTeX 命令：%s" % body_cmd[:5])
+            # 版式越界：逐行取行尾水平位置（正文区右界 505pt；中文标点悬挂约 12pt）
+            sel = word.Selection
+            wide = []
+            for i in range(1, doc.Paragraphs.Count + 1):
+                r = doc.Paragraphs(i).Range
+                if not r.Text.strip():
+                    continue
+                sel.SetRange(r.Start, r.Start)
+                prev = -1
+                for _ in range(40):
+                    sel.EndOf(Unit=5, Extend=0)          # wdLine
+                    end = sel.End
+                    if end == prev or end >= r.End:
+                        break
+                    try:
+                        x = float(sel.Information(5))     # 相对页面的水平位置
+                    except Exception:
+                        x = -1
+                    if x > 518:
+                        wide.append((i, round(x, 1)))
+                    prev = end
+                    sel.Collapse(0); sel.MoveRight(Unit=1, Count=1)
+                    try:
+                        if sel.Information(5) < 89:
+                            break
+                    except Exception:
+                        break
+            print("越界行（行尾 > 518pt）：%d %s" % (len(wide), wide[:5]))
+            if wide:
+                problems.append("有 %d 行超出正文区：%s" % (len(wide), wide[:5]))
         finally:
             doc.Close(False)
     finally:

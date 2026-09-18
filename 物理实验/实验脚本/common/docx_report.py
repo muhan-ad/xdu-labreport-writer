@@ -49,6 +49,17 @@ FIRST_LINE_INDENT = 21.0    # pt，与原实现一致
 # 用倍数而非固定磅值，避免"固定值"行距在公式/图片行裁剪内容。
 LINE_SPACING = 278 / 240.0
 
+# ── 正文区宽度与公式自适应 ──
+# A4 宽 595.28pt，左右页边距各 90pt；独立公式段还有 21pt 首行缩进。
+TEXT_WIDTH_PT = 595.28 - 90 - 90
+# Word **不会**在公式内部换行（整条公式是一个不可断单元，实测内联/显示两种写法都一样），
+# 所以超宽公式只能整体缩小字号来适应版心，否则会顶出页面。
+# 每个数学字符的估算宽度（em）：用 12 条真实公式标定，实测 0.53~0.86 em/字符
+# （纯字母式子最宽，含分式/根号的式子较窄），取 0.70 作折中；配合 7pt 下限，宁可
+# 略小也不要顶出页面。
+MATH_CHAR_EM = 0.70
+MATH_MIN_PT = 7.0           # 缩放下限，再小就影响可读性（宁可略微超出也不用 6 号以下字号）
+
 _ENGINE_BANNER_PRINTED = False   # 每个进程只打印一次引擎标识，便于排查"跑的是哪条管线"
 
 # ── 宋体缺失的 Unicode 上下标字符 → Word 原生上下标 ──
@@ -130,6 +141,61 @@ def split_rich_blocks(text: str) -> list:
         if b.strip():
             ops.append(("para", b))
     return ops
+
+
+def _math_char_count(xml: str) -> int:
+    """OMML 片段里的可见字符数（用于估算渲染宽度）。"""
+    return sum(len(t) for t in re.findall(r'<m:t[^>]*>(.*?)</m:t>', xml, re.S))
+
+
+def _apply_math_size(xml: str, size_pt: float) -> str:
+    """给 OMML 里每个数学 run 加上字号（<w:rPr><w:sz>），用于把超宽公式整体缩小。"""
+    sz = str(int(round(size_pt * 2)))
+    rpr = '<w:rPr><w:sz w:val="%s"/><w:szCs w:val="%s"/></w:rPr>' % (sz, sz)
+
+    def repl(m):
+        body = m.group(1)
+        head = re.match(r'(<m:rPr>.*?</m:rPr>)?', body, re.S).group(1) or ''
+        return '<m:r>' + head + rpr + body[len(head):] + '</m:r>'
+
+    return re.sub(r'<m:r>(.*?)</m:r>', repl, xml, flags=re.S)
+
+
+def fit_math_width(xml: str, available_pt: float, base_pt: float) -> str:
+    """把超宽公式整体缩小到可用宽度内（Word 不会在公式内部折行）。
+
+    available_pt：该公式可占用的宽度（pt）；base_pt：原本的字号（pt）。
+    估算公式渲染宽度 ≈字符数 × MATH_CHAR_EM × 字号；超出才缩小，缩放下限 MATH_MIN_PT。
+    """
+    n = _math_char_count(xml)
+    if n <= 0 or available_pt <= 0:
+        return xml
+    if MATH_CHAR_EM * base_pt * n <= available_pt:
+        return xml
+    size = max(MATH_MIN_PT, available_pt / (MATH_CHAR_EM * n))
+    if size >= base_pt - 0.05:
+        return xml
+    return _apply_math_size(xml, size)
+
+
+def _set_tbl_width_pct(table, pct: int):
+    """设置表格宽度为版心宽度的百分比。
+
+    注意：python-docx 默认已带一个 <w:tblW w:type="auto" w:w="0"/>，
+    直接 append 会出现两个 tblW，Word 只认第一个 → 宽度设置静默失效（曾踩）。
+    这里先删掉已有的，再按 OOXML 的元素顺序插到 tblBorders 之前。
+    """
+    tbl_pr = table._tbl.tblPr
+    for old in tbl_pr.findall(qn('w:tblW')):
+        tbl_pr.remove(old)
+    el = OxmlElement('w:tblW')
+    el.set(qn('w:type'), 'pct')
+    el.set(qn('w:w'), str(pct))
+    ref = tbl_pr.find(qn('w:tblBorders'))
+    if ref is not None:
+        ref.addprevious(el)
+    else:
+        tbl_pr.append(el)
 
 
 class DocxReportWriter:
@@ -237,10 +303,18 @@ class DocxReportWriter:
                                first_line_indent=first_line_indent)
         if text:
             self._add_text_runs(p, text, font_name, font_size, bold)
+        # 光标语义与旧实现（Word Selection 停在文档末尾）一致：新建的段落就是后续
+        # add_run / add_inline_math 的写入目标。少了这一步，富文本里的 $...$ 公式会被
+        # 写到另一段去（文字与公式分离、多条公式连成一行顶出页面）——曾导致排版错乱。
+        self._cursor = p
         return p
 
-    def _append_math(self, paragraph, latex: str, display: bool = False) -> bool:
-        """把 LaTeX 公式作为 OMML 追加到段落；失败时回退为纯文本，返回是否成功。"""
+    def _append_math(self, paragraph, latex: str, display: bool = False,
+                     available_pt: float = None, base_pt: float = None) -> bool:
+        """把 LaTeX 公式作为 OMML 追加到段落；失败时回退为纯文本，返回是否成功。
+
+        available_pt/base_pt 给出时，超宽公式会整体缩小字号以适应版心（Word 不折行）。
+        """
         xml = latex_to_omathpara(latex) if display else latex_to_omml(latex)
         if xml is None:
             plain = latex_to_plain(latex)
@@ -248,6 +322,8 @@ class DocxReportWriter:
             if plain:
                 self._add_text_runs(paragraph, plain, BODY_FONT, self._body_font_size)
             return False
+        if available_pt:
+            xml = fit_math_width(xml, available_pt, base_pt or self._body_font_size)
         try:
             paragraph._p.append(parse_xml(xml))
         except Exception as exc:
@@ -318,8 +394,9 @@ class DocxReportWriter:
         if not formula:
             return
         p = self._add_paragraph(first_line_indent=FIRST_LINE_INDENT)
-        self._append_math(p, formula, display=True)
-        self._cursor = None
+        # 独立公式可占用的宽度：版心宽 − 首行缩进
+        self._append_math(p, formula, display=True,
+                          available_pt=TEXT_WIDTH_PT - FIRST_LINE_INDENT)
 
     def add_run(self, text: str):
         """在当前段落末尾追加文字（不另起段落），与 add_inline_math() 配合使用。"""
@@ -345,27 +422,25 @@ class DocxReportWriter:
         ncols = len(headers)
         nrows = 1 + len(rows)
         table = self._doc.add_table(rows=nrows, cols=ncols)
-        self._style_table(table, ncols, col_widths)
+        col_pt = self._style_table(table, ncols, col_widths)
 
         for j, h in enumerate(headers):
-            self._set_cell_content(table.cell(0, j), h, bold=True)
+            self._set_cell_content(table.cell(0, j), h, bold=True, available_pt=col_pt[j])
         for i, row in enumerate(rows):
             for j, val in enumerate(row):
                 if j < ncols:
-                    self._set_cell_content(table.cell(i + 1, j), val, bold=False)
+                    self._set_cell_content(table.cell(i + 1, j), val, bold=False,
+                                           available_pt=col_pt[j])
 
         # 表格后补一个空段落，避免后续内容与表格粘连（与原实现一致）
         self._add_paragraph()
-        self._cursor = None
 
     def _style_table(self, table, ncols: int, col_widths):
-        """边框 / 居中 / 宽度 / 单元格默认字体。"""
+        """边框 / 居中 / 宽度 / 列宽；返回各列可用宽度（pt），供单元格公式缩放用。"""
         tbl_pr = table._tbl.tblPr
-        # 宽度：整表撑满正文宽度（对应旧实现的 AutoFitWindow）
-        tbl_w = OxmlElement('w:tblW')
-        tbl_w.set(qn('w:type'), 'pct')
-        tbl_w.set(qn('w:w'), '5000')
-        tbl_pr.append(tbl_w)
+        # 宽度：整表撑满版心（对应旧实现的 AutoFitWindow）。
+        # 注意：python-docx 模板已带一个 tblW，必须替换而不是追加，否则 Word 只认第一个。
+        _set_tbl_width_pct(table, 5000)
         layout = OxmlElement('w:tblLayout')
         layout.set(qn('w:type'), 'autofit')
         tbl_pr.append(layout)
@@ -380,13 +455,23 @@ class DocxReportWriter:
         tbl_pr.append(borders)
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
+        # 各列可用宽度：给了 col_widths（cm）就按比例换算到版心宽，否则等分
         if col_widths:
-            for j, w in enumerate(col_widths[:ncols]):
-                width = Pt(float(w) * 28.35)      # cm → pt（与旧实现换算一致）
+            given = [float(w) * 28.35 for w in col_widths[:ncols]]     # cm → pt（与旧实现一致）
+            total = sum(given) or 1.0
+            scale = TEXT_WIDTH_PT / total
+            col_pt = [g * scale for g in given]
+            if len(col_pt) < ncols:                                    # 列数不足时补等分
+                col_pt += [TEXT_WIDTH_PT / ncols] * (ncols - len(col_pt))
+            for j, pt in enumerate(given):
+                width = Pt(pt)
                 for r in table.rows:
                     r.cells[j].width = width
+        else:
+            col_pt = [TEXT_WIDTH_PT / ncols] * ncols
+        return [max(20.0, w - 12.0) for w in col_pt]     # 扣掉单元格左右内边距
 
-    def _set_cell_content(self, cell, text, bold=False):
+    def _set_cell_content(self, cell, text, bold=False, available_pt=None):
         """设置单元格内容：支持 $...$ 公式与宋体缺失字符的兜底样式。"""
         text = str(text) if text is not None else ""
         p = cell.paragraphs[0]
@@ -396,7 +481,8 @@ class DocxReportWriter:
             if not part:
                 continue
             if part.startswith("$") and part.endswith("$") and len(part) > 2:
-                self._append_math(p, part[1:-1], display=False)
+                self._append_math(p, part[1:-1], display=False,
+                                  available_pt=available_pt, base_pt=TABLE_SIZE)
             else:
                 self._add_text_runs(p, part, BODY_FONT, TABLE_SIZE, bold)
 
@@ -412,7 +498,6 @@ class DocxReportWriter:
             run.add_picture(abs_path, width=Cm(width_cm))
         else:
             run.add_picture(abs_path)
-        self._cursor = None
 
     def add_data_photo(self, fallback_text: str = "（请在此处粘贴原始数据记录照片。）",
                        width_cm: float = 14.0):
@@ -434,7 +519,6 @@ class DocxReportWriter:
         break_el = OxmlElement('w:br')
         break_el.set(qn('w:type'), 'page')
         run._element.append(break_el)
-        self._cursor = None
 
     # ── 保存 ──────────────────────────────────────────
 

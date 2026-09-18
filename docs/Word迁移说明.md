@@ -33,6 +33,9 @@ LaTeX → MathML → OMML → 写入 docx（python-docx）
 | 只起分组作用的 LaTeX 环境（`\begin{aligned}` 等） | 转换器直接抛 `SAXParseException`，公式退化成乱码文本（`beginaligned …`）；AI 润色改写时很常见 | `_normalize_environments()` 剥离环境标记、去掉对齐符 `&`、行分隔 `\\` 当作逗号 |
 | 未替换的 `%%DATA:%%` 占位符进了公式 | `%` 是 LaTeX 注释符，会把后面内容整段吃掉，**转换还"成功"** | 检测到占位符直接判失败并告警 |
 | 同类上下标连写 `T_{0}_i` | 非法 LaTeX，转换器抛异常，公式退化为纯文本 | `_merge_double_scripts()` 合并为 `T_{0i}` |
+| **富文本里的内联公式被写进了另一段**（光标语义） | `add_paragraph_rich` 创建段落后没有把"写入光标"指向它，于是 `$...$` 内联公式落到独立段落里：**文字与公式被拆开**，十几条公式连成一行顶出页面（实测越界 419pt，观感"排版乱"）。旧实现靠 Word 的 Selection 停在文档末尾，天然不会出现 | `_add_paragraph` 统一把 `_cursor` 指向新建段落，恢复"光标停在最后一段"的旧语义；`omml_test` 增加断言（内联公式必须与同段文字在同一 `<w:p>`），并做过注入验证 |
+| **超宽公式顶出页面** | Word **不会在公式内部折行**（实验证实：内联、显示两种写法同样整块不可断），`u(V)=√(...)` 这类长公式在 12pt 下宽 553pt > 版心 415pt | `fit_math_width()` 按可用宽度自动缩放整条公式（系数 0.70 em/字符，由 12 条真实公式标定；下限 7pt）；独立公式按"版心−缩进"算可用宽度，表格内公式按列宽算 |
+| 表格宽度设置静默失效 | python-docx 模板自带 `<w:tblW w:type="auto" w:w="0"/>`，直接 append 会出现两个 tblW，Word 只认第一个 → "撑满版心"的设置从未生效 | `_set_tbl_width_pct()` 先删旧的、再按 OOXML 顺序插到 `tblBorders` 之前 |
 | 改写后基座被包了两层 `<m:e>` | XML 合法但 OMML 结构非法，Word 报"打开文件时遇到错误" —— 只查 XML 合法性查不出来 | `_wrap_e()`：基座已是 `<m:e>…</m:e>` 时不再包一层（由 `tests/word_report_test.py` 的 Word 实物验收兜住） |
 
 此外每条 OMML 在写入前都做 **XML 合法性校验**：不合法宁可回退为文本并打印告警，也绝不写进文档。
@@ -62,6 +65,7 @@ LaTeX → MathML → OMML → 写入 docx（python-docx）
 | Word 实物验收 | 用 Word 逐个打开 26 份报告，统计公式对象数、检查线性残留与正文 LaTeX 命令 | **26/26 通过**：公式 8～58 个/份，残留 0，正文命令 0 |
 | 应用内预览 | 用真实 Chromium（Electron）把 26 份报告喂给 docx-preview 渲染 | **26/26 通过**（数学节点 107～1859 个/份） |
 | 整体链路 | `npm run test:desktop`（真实 Electron：IPC → OCR 原图 → Python 生成 → 文档预览） | 5/5 通过 |
+| **版式越界（渲染级）** | 导出 PDF 后统计超出正文区的墨迹（>525pt 判真越界，排除中文标点悬挂） | **26 个实验真越界字符 0 个**；`tests/word_report_test.py` 内置逐行越界断言 |
 
 `tests/omml_test.py` 已加入 `npm run verify`，因此**公式回归在 CI/提交前就能跑，不再需要 Word 环境**。
 另有 `tests/word_report_test.py` 作为**可选的 Word 实物验收**（有 Word 的机器上运行；无 Word 自动跳过）：

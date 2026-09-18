@@ -156,12 +156,36 @@ def phase2():
     doc.close()
 
     import zipfile
+    from lxml import etree
     xml = zipfile.ZipFile(path).read("word/document.xml").decode("utf-8")
+    # 回归：富文本里的 $...$ 内联公式必须与同段文字在**同一个 <w:p>** 里。
+    # 曾经 writer 的光标没有指向新建段落，公式被写到另一段去——文字与公式分离、
+    # 多条公式连成一行顶出页面（实测越界 419pt）。
+    root = etree.fromstring(xml.encode("utf-8"))
+    WNS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    MNS = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
+    inline_ok = False
+    lone_inline_paras = 0
+    # 只看正文段落（body 的直接子级）：表格单元格里只有公式是正常的，不参与判定
+    body_el = root.find(WNS + "body")
+    for p_el in (body_el.findall(WNS + "p") if body_el is not None else []):
+        n_text = len(p_el.findall(".//" + WNS + "t"))
+        # 独立公式段（m:oMathPara 内的 oMath）本来就只含公式，属正常；只查**内联**公式
+        inline_math = [m for m in p_el.findall(".//" + MNS + "oMath")
+                       if etree.QName(m.getparent()).localname != "oMathPara"]
+        if inline_math and n_text:
+            inline_ok = True
+        elif inline_math and not n_text:
+            lone_inline_paras += 1
     n_math = xml.count("<m:oMath")
     n_para_math = xml.count("<m:oMathPara")
     body_text = "".join(re.findall(r"<w:t[^>]*>(.*?)</w:t>", xml, re.S))
     residue = re.findall(r"\\[a-zA-Z]{2,}", body_text)
     problems = []
+    if not inline_ok:
+        problems.append("内联公式没有和同段文字出现在同一段落（光标语义回归）")
+    if lone_inline_paras:
+        problems.append("有 %d 个段落只有内联公式而没有文字（文字与公式被拆开）" % lone_inline_paras)
     if n_math < 7:
         problems.append("公式数量不足：%d（期望 ≥7）" % n_math)
     if n_para_math < 1:
