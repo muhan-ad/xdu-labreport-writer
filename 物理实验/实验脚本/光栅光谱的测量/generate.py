@@ -235,7 +235,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     doc.add_run("，将三次测量所得绿色谱线衍射角的平均值 ")
     doc.add_inline_math(f"\\overline{{\\varphi}} = {_fmt_dm(r['phi_green_mean'])}")
     doc.add_run(" 代入光栅方程 ")
-    # 注意：行尾的 \lambda 会被 Word BuildUp 静默丢弃，须直接用 Unicode λ
+    # λ 直接用 Unicode 字符（旧版 Word BuildUp 会丢弃行尾的 \lambda；新公式管线两者皆可）
     doc.add_inline_math(r"d\sin\varphi_{K} = Kλ")
     doc.add_run("，求得光栅常数")
     doc.add_math(f"\\overline{{d}} = \\frac{{K\\lambda}}{{\\sin\\overline{{\\varphi}}}}"
@@ -269,7 +269,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     doc.add_math(r"\frac{\partial d}{\partial \varphi_{K}}"
                  r" = \frac{\partial}{\partial \varphi_{K}}"
                  r"\left(\frac{K\lambda}{\sin\varphi_{K}}\right)"
-                 # \sin^{2}\varphi_{K} 会 BuildUp 出空参数函数节点，参数须整体包 {}
+                 # \sin^{2}{\varphi_{K}} 的参数整体包 {}（旧版 BuildUp 会解析成空参数函数节点；新管线同样更稳）
                  r" = -K\lambda \cdot \frac{\cos\varphi_{K}}{\sin^{2}{\varphi_{K}}}")
     doc.add_paragraph("绝对值为")
     doc.add_math(r"\left|\frac{\partial d}{\partial \varphi_{K}}\right|"

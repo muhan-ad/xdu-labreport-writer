@@ -4,4 +4,7 @@ openpyxl>=3.0
 matplotlib>=3.5
 numpy>=1.23
 python-docx>=1.0
-pywin32>=305
+# 公式管线：LaTeX → MathML → OMML（纯 Python，不需要 Microsoft Word / pywin32）
+latex2mathml>=3.70
+mathml2omml>=0.0.2
+lxml>=4.9
