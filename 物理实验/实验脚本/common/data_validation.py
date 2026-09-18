@@ -26,11 +26,18 @@ def validate(schema, data):
                 if typ == "array" and (not isinstance(v, list) or any(x is None for x in v)):
                     missing.append({"key": key, "label": label})
                     continue
-                if typ == "matrix" and (not isinstance(v, list)
-                        or any((not isinstance(row, list)) or any(x is None for x in row)
-                               for row in v)):
-                    missing.append({"key": key, "label": label})
-                    continue
+                if typ == "matrix":
+                    # 定长容器语义：整行全空 = 未使用的行，不算缺失。
+                    # 只有「一行都没填」或「某行只填了一半」才算漏填。
+                    if not isinstance(v, list):
+                        missing.append({"key": key, "label": label})
+                        continue
+                    filled = [r for r in v
+                              if isinstance(r, list) and any(x is not None for x in r)]
+                    half = any(any(x is None for x in r) for r in filled)
+                    if not filled or half:
+                        missing.append({"key": key, "label": label})
+                        continue
 
             if v is None:
                 continue
@@ -52,9 +59,10 @@ def validate(schema, data):
                     invalid.append({"key": key, "label": label, "reason": "应为矩阵"})
                 else:
                     rows, cols = fld.get("rows"), fld.get("cols")
-                    if rows is not None and len(v) != rows:
+                    # 定长容器：rows 是上限。少几行 = 学生没填满，合法；多出来才是错。
+                    if rows is not None and len(v) > rows:
                         invalid.append({"key": key, "label": label,
-                                        "reason": f"行数应为 {rows}"})
+                                        "reason": f"行数不应超过 {rows}"})
                     elif cols is not None and any(
                             not isinstance(r, list) or len(r) != cols for r in v):
                         invalid.append({"key": key, "label": label,

@@ -252,6 +252,7 @@ app.whenReady().then(() => {
   });
   session.defaultSession.setPermissionRequestHandler((_, __, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
+  seedBuiltinSkills();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -587,6 +588,33 @@ function getSkillsDir() {
   const dir = path.join(app.getPath('userData'), 'skills');
   try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { /* 忽略 */ }
   return dir;
+}
+
+// 出厂技能播种：把 PROJECT_ROOT/skills 里缺失的文件补进 userData/skills。
+//
+// 为什么需要：技能此前只有 userData 一个来源（getSkillsDir 指向那里，仓库里没有副本），
+// 于是《物理实验报告写作规范》是台孤儿文件 —— 清一次 userData、换台机器、或照
+// 《复刻指南》重做一版，规范就没了，AI 生成的新变体立刻退回学长原版的措辞。
+//
+// 与出厂资源的同步（resourceStore.syncBuiltin 的「出厂文件覆盖用户副本」）刻意不同：
+// 那边管的是 app 里改不了的文件，这边管的是用户能改的（技能页能导入/删除、能打开
+// 目录手工编辑）—— 所以**只补不覆盖**，已有的同名文件一律留着用户的版本。
+// 代价是出厂技能后续更新不会自动下发，需要用户自己删掉旧文件让它重新播种。
+function seedBuiltinSkills() {
+  try {
+    const src = path.join(PROJECT_ROOT, 'skills');
+    if (!fs.existsSync(src)) return;                     // 出厂没有这个目录（如旧打包版）就不管
+    const dst = getSkillsDir();
+    let n = 0;
+    for (const f of fs.readdirSync(src)) {
+      if (!/\.(md|markdown|txt)$/i.test(f)) continue;
+      const d = path.join(dst, f);
+      if (fs.existsSync(d)) continue;                    // 已存在 —— 用户可能改过，不碰
+      fs.copyFileSync(path.join(src, f), d);
+      n++;
+    }
+    if (n) log(`已播种出厂技能 ${n} 个 -> ${dst}`);
+  } catch (e) { /* 播种失败不影响启动，只是技能少一个 */ }
 }
 
 // 解析 SKILL.md frontmatter（--- name/description ---）；无 frontmatter 时用文件名兜底
