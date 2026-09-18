@@ -85,17 +85,24 @@ def _compute(data: dict) -> dict:
     d_shi_u = smartlab_u(d_shi, D_INST_ERR)
     d_shi_corrected = d_shi_a - d_0  # 零点修正后
 
-    # 杨氏模量
-    Y = 8 * 4 * G * L * H / (math.pi * d_shi_a ** 2 * D * delta_n_a)
+    # 杨氏模量：**必须用零点修正后的直径**（d = d_a − d_0）。
+    # 否则与报告自己给出的「修正零点后 d」矛盾，代入式也复现不出结果。
+    Y = 8 * 4 * G * L * H / (math.pi * d_shi_corrected ** 2 * D * delta_n_a)
 
-    # 不确定度传递
+    # 不确定度传递（直径的相对不确定度用修正后的直径作分母）
     Y_u = math.sqrt(
         (0.003 / L) ** 2
         + (0.003 / H) ** 2
-        + (2 * d_shi_u / d_shi_a) ** 2
+        + (2 * d_shi_u / d_shi_corrected) ** 2
         + (0.003 / (D / 1000)) ** 2
         + (delta_n_dev_a / delta_n_a) ** 2
     ) * Y
+
+    # 供变体文本引用的「已按课程取位规则格式化」的数值（%%DATA:key:%s 直接填）。
+    # 课程 2-4：不确定度取 1~2 位（首位 ≥3 取 1 位、1/2 取 2 位，只进不舍），
+    # 测得值末位与不确定度对齐 —— 由 common.format_number 统一实现；
+    # 变体文本里写死 %.3f 之类的固定格式做不到这一点。
+    Y_pm = r"%s \pm %s" % (format_number(Y, Y_u), format_number(Y_u, Y_u))
 
     return {
         "L": L, "D": D, "H": H, "d_0": d_0,
@@ -105,6 +112,12 @@ def _compute(data: dict) -> dict:
         "d_shi": d_shi, "d_shi_a": d_shi_a, "d_shi_u": d_shi_u,
         "d_shi_corrected": d_shi_corrected,
         "Y": Y, "Y_u": Y_u,
+        # 预格式化字符串（变体用 %s 引用）
+        "Y_pm": Y_pm,
+        "d_disp": format_number(d_shi_corrected, d_shi_u),
+        "d_u_disp": format_number(d_shi_u, d_shi_u),
+        "d_a_disp": format_number(d_shi_a, d_shi_u),
+        "delta_n_disp": format_number(delta_n_a, delta_n_dev_a),
         "n_ni": n_ni, "n_d": n_d,
     }
 
@@ -155,14 +168,15 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_heading("1. 实验参数", level=2)
     doc.add_paragraph("")
+    # 单位写进 \text{}：公式内的普通空格会被省略，写成 "$L$ m" 会显示成 "0.973m"
     doc.add_run("钢丝长度 L = ")
-    doc.add_inline_math(f"{r['L']} m")
+    doc.add_inline_math(r"%s \text{ m}" % r["L"])
     doc.add_run("，光杠杆常数 D = ")
-    doc.add_inline_math(f"{r['D']} mm")
+    doc.add_inline_math(r"%s \text{ mm}" % r["D"])
     doc.add_run("，镜面到标尺距离 H = ")
-    doc.add_inline_math(f"{r['H']} m")
+    doc.add_inline_math(r"%s \text{ m}" % r["H"])
     doc.add_run("，螺旋测微计零点修正 d_0 = ")
-    doc.add_inline_math(f"{r['d_0']} mm")
+    doc.add_inline_math(r"%s \text{ mm}" % r["d_0"])
 
     doc.add_heading("2. 钢丝直径测量", level=2)
     doc.add_paragraph("")
@@ -170,14 +184,21 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph(f"测量值（mm）：{d_str}")
     doc.add_paragraph("")
     doc.add_run("直径平均值：")
-    doc.add_inline_math(f"d_a = {r['d_shi_a']:.4f} mm")
-    doc.add_run("，修正零点后：")
-    doc.add_inline_math(f"d = d_a - d_0 = {r['d_shi_corrected']:.4f} mm")
+    doc.add_inline_math(r"d_a = %s \text{ mm}" % r["d_a_disp"])
+    doc.add_run("，零点修正后：")
+    # 把修正过程写全（含代入的数），便于对照；测得值与不确定度末位对齐（课程 2-4）
+    _d0_disp = format_number(r["d_0"], r["d_shi_u"])
+    if r["d_0"] < 0:                      # 负数加括号，避免出现 "0.625 - -0.015"
+        _d0_disp = "(%s)" % _d0_disp
+    doc.add_inline_math(
+        r"d = d_a - d_0 = (%s - %s) = (%s \pm %s) \text{ mm}"
+        % (r["d_a_disp"], _d0_disp, r["d_disp"], r["d_u_disp"])
+    )
     doc.add_paragraph("")
     doc.add_run("合成不确定度（仪器误差 Δ_inst = 0.005 mm）：")
     doc.add_math(
         r"u(d) = \sqrt{u_A(d)^2 + \left(\frac{0.005}{\sqrt{3}}\right)^2} = "
-        + format_number(r["d_shi_u"], sig_figs=6)
+        + r["d_u_disp"]
         + r" \text{ mm}"
     )
 
@@ -207,9 +228,10 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph(f"逐差值（cm）：{dn_str}")
     doc.add_paragraph("")
     doc.add_run("逐差平均值：")
-    doc.add_inline_math(f"Δn_a = {r['delta_n_a']:.4f} cm")
+    doc.add_inline_math(r"\Delta n_a = %s \text{ cm}" % r["delta_n_disp"])
     doc.add_run("，平均偏差：")
-    doc.add_inline_math(f"δn_a = {r['delta_n_dev_a']:.4f} cm")
+    doc.add_inline_math(r"\delta n_a = %s \text{ cm}"
+                        % format_number(r["delta_n_dev_a"], r["delta_n_dev_a"]))
 
     doc.add_heading("4. 杨氏模量计算", level=2)
     doc.add_paragraph("")
@@ -218,12 +240,12 @@ def _generate_docx(data: dict, output_path: str):
         r"Y = \frac{8 \cdot 4 \cdot g \cdot L \cdot H}{\pi \cdot d^2 \cdot D \cdot \Delta n}"
     )
     doc.add_paragraph("")
-    doc.add_run("代入数据：")
+    doc.add_run("代入数据（d 用零点修正后的值）：")
     doc.add_math(
         r"Y = \frac{32 \times 9.8 \times " + str(r["L"]) + r" \times " + str(r["H"])
-        + r"}{\pi \times (" + format_number(r["d_shi_a"]) + r")^2 \times "
-        + str(int(r["D"])) + r" \times " + format_number(r["delta_n_a"]) + r"}"
-        + r" = " + format_number(r["Y"], sig_figs=2) + r" \times 10^{11} \text{ Pa}"
+        + r"}{\pi \times (" + r["d_disp"] + r")^2 \times "
+        + str(int(r["D"])) + r" \times " + r["delta_n_disp"] + r"}"
+        + r" = " + format_number(r["Y"], r["Y_u"]) + r" \times 10^{11} \text{ Pa}"
     )
 
     doc.add_heading("5. 不确定度评定", level=2)
@@ -233,6 +255,25 @@ def _generate_docx(data: dict, output_path: str):
         r"\frac{u(Y)}{Y} = \sqrt{\left(\frac{0.003}{L}\right)^2 + \left(\frac{0.003}{H}\right)^2"
         r" + \left(2\frac{u(d)}{d}\right)^2 + \left(\frac{0.003}{D/1000}\right)^2"
         r" + \left(\frac{\delta n_a}{\Delta n_a}\right)^2}"
+    )
+    doc.add_paragraph("")
+    doc.add_run("代入数据（u(d)/d 用去零修正后的直径 d）：")
+    doc.add_math(
+        r"\frac{u(Y)}{Y} = \sqrt{\left(\frac{0.003}{" + str(r["L"]) + r"}\right)^2"
+        + r" + \left(\frac{0.003}{" + str(r["H"]) + r"}\right)^2"
+        + r" + \left(\frac{2 \times " + r["d_u_disp"] + r"}{" + r["d_disp"] + r"}\right)^2"
+        + r" + \left(\frac{0.003}{" + format_number(r["D"] / 1000.0, sig_figs=3) + r"}\right)^2"
+        + r" + \left(\frac{" + format_number(r["delta_n_dev_a"], r["delta_n_dev_a"]) + r"}{"
+        + r["delta_n_disp"] + r"}\right)^2}"
+        + r" = " + format_percent(r["Y_u"] / r["Y"] * 100) + r"\%"
+    )
+    # 相对不确定度换算到绝对不确定度：只进不舍保留 1 位有效数字（课程 2-4），
+    # 故 7% × 2.1 与 0.2 不是精确相等，用 \approx 而不是 =
+    doc.add_paragraph("")
+    doc.add_run("合成不确定度（只进不舍，保留 1 位有效数字）：")
+    doc.add_inline_math(
+        r"u(Y) = " + format_percent(r["Y_u"] / r["Y"] * 100) + r"\% \times Y \approx "
+        + format_number(r["Y_u"], r["Y_u"]) + r" \times 10^{11} \text{ Pa}"
     )
     doc.add_paragraph("")
     doc.add_run("最终结果：")
@@ -248,9 +289,11 @@ def _generate_docx(data: dict, output_path: str):
         doc.add_paragraph_rich(variants["结果分析"])
     doc.add_paragraph("")
     doc.add_run("本实验采用拉伸法和光杠杆放大技术测量钢丝的杨氏弹性模量。通过逐差法处理标尺读数，")
-    doc.add_run("充分利用了全部测量数据，减小了随机误差。测得杨氏模量 Y = ")
-    doc.add_inline_math(f"{format_number(r['Y'], sig_figs=2)} × 10¹¹ Pa")
-    doc.add_run("，与钢丝的公认值（约 2.0×10¹¹ Pa）进行比较，可评估实验准确度。")
+    doc.add_run("充分利用了全部测量数据，减小了随机误差。测得杨氏模量 ")
+    doc.add_inline_math(r"Y = (%s \pm %s) \times 10^{11} \text{ Pa}"
+                        % (format_number(r["Y"], r["Y_u"]), format_number(r["Y_u"], r["Y_u"])))
+    doc.add_run("（相对不确定度 " + format_percent(r["Y_u"] / r["Y"] * 100)
+                + "%），与钢丝的公认值（约 2.0×10¹¹ Pa）进行比较，可评估实验准确度。")
 
     doc.add_paragraph("")
     doc.add_run("误差来源分析：")
