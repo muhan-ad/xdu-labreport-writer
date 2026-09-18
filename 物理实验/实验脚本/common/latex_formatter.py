@@ -100,6 +100,55 @@ def format_scientific(value: float, sig_figs: int = 4) -> str:
     return f"{s} \\times 10^{{{int(exponent)}}}"
 
 
+def format_measure(value: float, uncertainty: float,
+                   sci_lo: float = 1e-2, sci_hi: float = 1e4) -> str:
+    """「测得值 ± 不确定度」的标准写法，两项末位对齐（课程 2-4）。
+
+    不确定度按只进不舍取 1 位有效数字，测得值修约到与其末位对齐；
+    数量级过小或过大时提出 10 的幂，写成 (a ± b) × 10ⁿ：
+
+        format_measure(0.6398, 0.0031)   -> '(0.640 \\pm 0.004)'
+        format_measure(3.47e-5, 2.1e-6)  -> '(3.5 \\pm 0.3) \\times 10^{-5}'
+
+    单位由调用方在外层补（如 + r' \\text{ mm}'）。
+    """
+    value = float(value)
+    uncertainty = float(uncertainty)
+    if uncertainty <= 0:
+        return "(%s)" % format_number(value, sig_figs=6)
+    u_disp = _ceil_to_1sig(uncertainty)
+    exp_u = int(math.floor(math.log10(u_disp)))
+    av = abs(value)
+    if av != 0 and (av < sci_lo or av >= sci_hi):
+        exp_v = int(math.floor(math.log10(av)))
+        scale = 10.0 ** exp_v
+        dec = max(0, exp_v - exp_u)
+        v = _round_half_even(value / scale, dec)
+        u = _round_half_even(u_disp / scale, dec)
+        return "(%s \\pm %s) \\times 10^{%d}" % (f"{v:.{dec}f}", f"{u:.{dec}f}", exp_v)
+    dec = max(0, -exp_u)
+    v = _round_half_even(value, dec)
+    u = _round_half_even(u_disp, dec)
+    return "(%s \\pm %s)" % (f"{v:.{dec}f}", f"{u:.{dec}f}")
+
+
+def format_uncertainty(uncertainty: float,
+                       sci_lo: float = 1e-2, sci_hi: float = 1e4) -> str:
+    """不确定度的单独写法：只进不舍取 1 位有效数字（课程 2-4），必要时用 ×10ⁿ。
+
+        format_uncertainty(4.04e-5) -> '5 \\times 10^{-5}'
+        format_uncertainty(0.0231)  -> '0.03'
+    """
+    u = float(uncertainty)
+    if u <= 0:
+        return "0"
+    u_disp = _ceil_to_1sig(u)
+    exp_u = int(math.floor(math.log10(u_disp)))
+    if u_disp < sci_lo or u_disp >= sci_hi:
+        return "%s \\times 10^{%d}" % (f"{u_disp / (10.0 ** exp_u):.0f}", exp_u)
+    return f"{u_disp:.{max(0, -exp_u)}f}"
+
+
 def build_formula(template: str, **kwargs) -> str:
     """将值填入LaTeX模板。模板中用{name}占位。
 

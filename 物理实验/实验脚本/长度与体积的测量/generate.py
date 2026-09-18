@@ -152,6 +152,17 @@ def _compute(data: dict) -> dict:
         "V_p": V_p, "V_h": V_h, "V_s": V_s, "V": V,
         "uVp": uVp, "uVh": uVh, "uVs": uVs, "uV": uV,
         "REL": uV / V * 100 if V else 0.0,
+        # 变体文本只能写固定格式（%.2f/%.3f 之类），表达不了课程 2-4 的取位规则，
+        # 会出现「正文 (4.68 \pm 0.02)\times10^3 而结论 4683.7 \pm 17.6」这种不一致；
+        # 故把「值 ± 不确定度」与单个不确定度都预格式化，变体用 %s 引用
+        "L_pm": format_measure(L, uL), "W_pm": format_measure(W, uW),
+        "D_pm": format_measure(D_corrected, uD), "d_pm": format_measure(d_corrected, ud),
+        "Lx_pm": format_measure(Lx_a, uLx), "Ly_pm": format_measure(Ly_a, uLy),
+        "V_pm": format_measure(V, uV),
+        "uD_s": format_uncertainty(uD), "ud_s": format_uncertainty(ud),
+        "uLx_s": format_uncertainty(uLx), "uLy_s": format_uncertainty(uLy),
+        "uL_s": format_uncertainty(uL), "uW_s": format_uncertainty(uW),
+        "uV_s": format_uncertainty(uV),
         "n": n,
     }
 
@@ -234,13 +245,14 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_math(r"u(L) = u(W) = \frac{\Delta L}{\sqrt{3}}")
     doc.add_paragraph("")
     doc.add_run("板长 L = ")
-    doc.add_inline_math(f"{r['L']} mm")
-    doc.add_run("，u(L) = ")
-    doc.add_inline_math(f"{format_number(r['uL'], sig_figs=4)} mm")
-    doc.add_run("；板宽 W = ")
-    doc.add_inline_math(f"{r['W']} mm")
-    doc.add_run("，u(W) = ")
-    doc.add_inline_math(f"{format_number(r['uW'], sig_figs=4)} mm")
+    doc.add_inline_math(format_measure(r["L"], r["uL"]) + r" \text{ mm}")
+    doc.add_run("（u(L) = ")
+    doc.add_inline_math(format_uncertainty(r["uL"]) + r" \text{ mm}")
+    doc.add_run("）；板宽 W = ")
+    doc.add_inline_math(format_measure(r["W"], r["uW"]) + r" \text{ mm}")
+    doc.add_run("（u(W) = ")
+    doc.add_inline_math(format_uncertainty(r["uW"]) + r" \text{ mm}")
+    doc.add_run("）")
 
     doc.add_heading("3. 孔径测量（游标卡尺，50 分度）", level=2)
     doc.add_paragraph("")
@@ -251,7 +263,8 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_run("平均值：")
     doc.add_inline_math(f"D_a = {r['D_a']:.3f} mm")
     doc.add_run("，扣除游标卡尺零点读数 D₀ 后：")
-    doc.add_inline_math(f"D = D_a - D_0 = {r['D_corrected']:.3f} mm")
+    doc.add_inline_math(r"D = D_a - D_0 = " + format_measure(r["D_corrected"], r["uD"])
+                        + r" \text{ mm}")
     doc.add_paragraph("")
     doc.add_run("合成不确定度：")
     doc.add_math(
@@ -268,7 +281,8 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_run("平均值：")
     doc.add_inline_math(f"d_a = {r['d_a']:.4f} mm")
     doc.add_run("，扣除零点读数 d₀ 后：")
-    doc.add_inline_math(f"d = d_a - d_0 = {r['d_corrected']:.4f} mm")
+    doc.add_inline_math(r"d = d_a - d_0 = " + format_measure(r["d_corrected"], r["ud"])
+                        + r" \text{ mm}")
     doc.add_paragraph("")
     doc.add_run("合成不确定度（一级千分尺示值误差 Δd = 0.004 mm）：")
     doc.add_math(
@@ -292,10 +306,10 @@ def _generate_docx(data: dict, output_path: str):
         rows, col_widths=[1.2, 1.7, 1.7, 1.7, 1.7, 1.7, 1.7]
     )
     doc.add_paragraph("")
-    doc.add_run("缝长平均值：")
-    doc.add_inline_math(f"Lx = {r['Lx_a']:.4f} mm")
-    doc.add_run("，缝宽平均值：")
-    doc.add_inline_math(f"Ly = {r['Ly_a']:.4f} mm")
+    doc.add_run("缝长：")
+    doc.add_inline_math(r"L_x = " + format_measure(r["Lx_a"], r["uLx"]) + r" \text{ mm}")
+    doc.add_run("，缝宽：")
+    doc.add_inline_math(r"L_y = " + format_measure(r["Ly_a"], r["uLy"]) + r" \text{ mm}")
     doc.add_paragraph("")
     doc.add_run("每个缝值由两个读数之差得到，B 类不确定度按两个分度值合成：")
     doc.add_math(

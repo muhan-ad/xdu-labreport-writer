@@ -8,10 +8,14 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / '物理实验' / '实验脚本'))
+import common  # noqa: E402  真实脚本以 from common import * 取用工具函数，这里照搬
 from validate_schema import validate
 EXP = ROOT / '物理实验/实验脚本/长度与体积的测量'
 tree = ast.parse((EXP / 'generate.py').read_text(encoding='utf-8-sig'))
-ns = {'math': math, 'T_FACTOR': [0, 0, 1.84, 1.32, 1.2, 1.14, 1.11, 1.09, 1.08], 'SQRT3': math.sqrt(3)}
+ns = {k: v for k, v in vars(common).items() if not k.startswith('__')}
+ns.update({'math': math, 'T_FACTOR': [0, 0, 1.84, 1.32, 1.2, 1.14, 1.11, 1.09, 1.08],
+           'SQRT3': math.sqrt(3)})
 exec(compile(ast.Module(body=[n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in {'smartlab_ua', 'smartlab_u', '_compute'}], type_ignores=[]), 'calculation', 'exec'), ns)
 
 class CalculationTests(unittest.TestCase):

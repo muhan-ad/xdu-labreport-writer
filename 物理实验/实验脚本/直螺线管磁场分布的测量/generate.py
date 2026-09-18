@@ -216,7 +216,8 @@ def _generate_docx(data: dict, output_path: str):
         "dm_cm_val": (dm_cm_center, u_dm_center_cm),
     })
 
-    print(f"  B(x=0) = ({format_number(B_center, u_B_center)}) T")
+    print(f"  B(x=0) = ({format_number(B_center, u_B_center)} ± "
+          f"{format_number(u_B_center, u_B_center)}) T")
 
     # ═══════════════════════════════════
     # 5. 绘制 dm-x 曲线
@@ -239,6 +240,11 @@ def _generate_docx(data: dict, output_path: str):
         "B_exp_center": B_exp_center, "B0_theory": B0_theory,
         "E_rel": E_rel, "RKb_mean": RKb_mean, "M_H": M_H,
         "dm_cm_center": dm_cm_center, "dm_mm_center": dm_mm_center,
+        # 变体文本只能写固定格式（%.3e 会写成 1.891e-03 这种机器计数法），
+        # 故在此预格式化，变体用 %%DATA:B_pm:%s%% / %%DATA:B0_sci:%s%% 引用
+        "B_pm": format_measure(B_center, u_B_center),
+        "RKb_pm": format_measure(RKb_mean, u_RKb),
+        "B0_sci": format_scientific(B0_theory, 4),
     }
     variants = compose(SCRIPT_DIR, r)
     if "实验原理" in variants:
@@ -307,9 +313,9 @@ def _generate_docx(data: dict, output_path: str):
         rf" = {format_scientific(rkb_list[0], 3)} \,\mathrm{{C\cdot\Omega/mm}}"
     )
 
-    doc.add_paragraph("三组 RKb 的平均值：")
+    doc.add_paragraph("三组 RKb 的平均值（不确定度评定见下）：")
     doc.add_math(
-        rf"\overline{{RK_b}} = {format_scientific(RKb_mean, 3)} \,\mathrm{{C\cdot\Omega/mm}}"
+        rf"\overline{{RK_b}} = {format_measure(RKb_mean, u_RKb)} \,\mathrm{{C\cdot\Omega/mm}}"
     )
 
     # RKb 不确定度
@@ -400,8 +406,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # 最终结果
     doc.add_paragraph("中心点磁感应强度的最终测量结果：")
-    B_fmt = format_number(B_center, u_B_center)
-    doc.add_math(rf"B = ({B_fmt}) \,\mathrm{{T}}")
+    doc.add_math(rf"B = {format_measure(B_center, u_B_center)} \,\mathrm{{T}}")
 
     # 结果对比表
     doc.add_paragraph("")

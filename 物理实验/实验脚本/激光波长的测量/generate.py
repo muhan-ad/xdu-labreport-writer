@@ -88,6 +88,10 @@ def _compute(data: dict) -> dict:
         "bias_word": bias_word, "in_range": in_range,
         "lambda0_nm": LAMBDA_0_MM * 1e6,
         "lam_bar_nm": lam_bar * 1e6, "u_lam_nm": u_lam * 1e6,
+        # 变体文本只能写固定格式（%.5f / %.2e 会写成 4.04e-05 这种机器计数法，
+        # 也无法保证末位与不确定度对齐），故在此预格式化，变体用 %s 引用
+        "d_bar_disp": format_number(d_bar, u_d),
+        "u_d_sci": format_uncertainty(u_d),
     }
 
 
@@ -234,8 +238,11 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("合成不确定度：")
     doc.add_math(
         r"\Delta X = \sqrt{(\Delta X_{A})^{2} + (\Delta X_{B})^{2}}"
-        r" \approx " + f"{u_d:.6f}" + r"\,\mathrm{mm}"
+        r" \approx " + format_number(u_d, u_d) + r"\,\mathrm{mm}"
     )
+
+    doc.add_paragraph("位移 d 的测量结果表示：")
+    doc.add_math(r"d = " + format_measure(d_bar, u_d) + r"\,\mathrm{mm}")
 
     # ── 2. 计算波长 ──
     doc.add_heading("2. 计算波长", level=2)
