@@ -125,7 +125,48 @@ def _preprocess(latex: str) -> str:
         s = s[1:-1]
     # 全角空格与零宽字符会干扰解析
     s = s.replace('\u3000', ' ').replace('\u200b', '')
-    return s.strip()
+    return _escape_percent(_space_before_unit(s)).strip()
+
+
+# 公式里的「数值 单位」：LaTeX 会把空格整个丢掉（"0.973 m" → "0.973m"），
+# 且单位按变量排成斜体（mm 应为正体）。把空格 + 单位改写成 "\ \text{mm}"
+# （不间断空格 + 正体），既保住间距也符合单位排版规范。
+# 只认这些常见单位，避免把 "2 x" 这类变量间隔误判成单位；已在 \text{}/\mathrm{}
+# 里的不会匹配（空格前是 { 不在允许的前导集合内）。
+_UNIT_ALT = ('mm', 'cm', 'nm', 'km', 'dm', 'Pa', 'kPa', 'MPa', 'T', 'mT', 'K',
+             'kg', 'mg', 'mA', 'mV', 'kV', 'V', 'A', 'Ω', 'Hz', 'kHz', 'MHz',
+             'W', 'N', 'J', 'C', 's', 'ms', 'm', 'g', 'mol', 'lx')
+_UNITS = '|'.join(sorted(_UNIT_ALT, key=len, reverse=True))
+# (1) 「数值 + 空格 + 裸单位」：LaTeX 数学模式丢空格 → "0.973 m" 变 "0.973m"
+_SPACE_UNIT_RE = re.compile(r'(?<=[\d)\}\]])[ \t]+((?:' + _UNITS + r')(?![a-zA-Z]))')
+# (2) 「数值 + \,（或空格）+ \text{mm}/\mathrm{mm}」：\, 细空格同样会被丢掉，
+#     转换器不认识它 → "0.00806\,cm" 变 "0.00806cm"；统一改成不间断空格 + 正体
+_TEXT_UNIT_RE = re.compile(
+    r'(?<=[\d)\}\]])[ \t]*\\[,;:][ \t]*'
+    r'\\(?:text|mathrm)\{\s*(' + _UNITS + r')\s*\}(?![a-zA-Z])')
+# (2b) 同上，但源码里写的是普通空格（"{v:.2f} \mathrm{cm}"）：空格同样被丢掉
+_TEXT_UNIT_SPACE_RE = re.compile(
+    r'(?<=[\d)\}\]])[ \t]+\\(?:text|mathrm)\{\s*(' + _UNITS + r')\s*\}(?![a-zA-Z])')
+# (3) 复合单位（\mathrm{kg\cdot m^{2}}）等：单位表匹配不到，但那个 \, 也是想要的间距，
+#     一律换成不间断空格，避免 "10^{-3}kg·m²" 这种贴着数字的单位
+_THIN_SPACE_RE = re.compile(
+    r'(?<=[\d)\}\]])[ \t]*\\[,;:](?=[ \t]*\\(?:text|mathrm)\{)')
+# 裸 % ：LaTeX 里是注释符，转换器会把百分号连同后面内容一起吃掉（"0.4%" → "0.4"）。
+# 脚本里写 % 都是想要百分号，统一转义；已转义的 \% 前有反斜杠，不会被匹配。
+_BARE_PERCENT_RE = re.compile(r'(?<!\\)%')
+
+
+def _space_before_unit(formula: str) -> str:
+    r"""把「数值 单位」改写成不间断空格 + 正体单位（\ \text{mm}）。"""
+    formula = _SPACE_UNIT_RE.sub(lambda m: '\\ \\text{' + m.group(1) + '}', formula)
+    formula = _TEXT_UNIT_RE.sub(lambda m: '\\ \\text{' + m.group(1) + '}', formula)
+    formula = _TEXT_UNIT_SPACE_RE.sub(lambda m: '\\ \\text{' + m.group(1) + '}', formula)
+    return _THIN_SPACE_RE.sub(lambda m: '\\ ', formula)
+
+
+def _escape_percent(formula: str) -> str:
+    """转义公式里的裸百分号（LaTeX 注释符会吞掉 % 及其后内容）。"""
+    return _BARE_PERCENT_RE.sub(lambda m: '\\%', formula)
 
 
 def _wrap(omml: str) -> str:
