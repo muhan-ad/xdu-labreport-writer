@@ -94,6 +94,11 @@ def _compute(data: dict) -> dict:
         "L": L, "rn_zheng": rn_zheng, "rn_fan": rn_fan, "rn_a": rn_a,
         "R_x": R_x, "R_x_a": R_x_a, "R_x_ua": R_x_ua,
         "rho": rho, "rho_a": rho_a, "rho_u": rho_u,
+        # 变体文本只能写固定格式（%.4f 之类），既表达不了课程 2-4 的取位，
+        # 也会和正文的 ± 写法打架；预格式化后由变体用 %s 引用
+        "d_pm": format_measure(d_a, d_u), "ud_s": format_uncertainty(d_u),
+        "Rx_pm": format_measure(R_x_a, R_x_ua), "uRx_s": format_uncertainty(R_x_ua),
+        "rho_pm": format_measure(rho_a, rho_u) + r" \times 10^{-8}",
         "n_d": n_d, "n_l": n_l,
     }
 
@@ -172,9 +177,12 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_run("合成不确定度：")
     doc.add_math(
         r"u(d) = \sqrt{u_A(d)^2 + \left(\frac{\Delta_{inst}}{\sqrt{3}}\right)^2} = "
-        + format_number(r["d_u"], sig_figs=6)
+        + format_uncertainty(r["d_u"])
         + r" \text{ mm}"
     )
+    doc.add_paragraph("")
+    doc.add_run("直径的结果表示（只进不舍取 1 位有效数字，末位对齐）：")
+    doc.add_inline_math(r"d = " + format_measure(r["d_a"], r["d_u"]) + r" \text{ mm}")
 
     doc.add_heading("2. 双臂电桥测电阻", level=2)
     doc.add_paragraph("")
@@ -204,9 +212,10 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_paragraph("")
     doc.add_run("8 个长度点的待测电阻平均值：")
-    doc.add_inline_math(f"R_{{x,a}} = {r['R_x_a']:.4f} mΩ")
-    doc.add_run("，A 类不确定度：")
-    doc.add_inline_math(f"u_A(R_x) = {r['R_x_ua']:.6f} mΩ")
+    doc.add_inline_math(r"R_x = " + format_measure(r["R_x_a"], r["R_x_ua"]) + r" \text{ m}\Omega")
+    doc.add_run("（A 类不确定度 u_A(R_x) = ")
+    doc.add_inline_math(format_uncertainty(r["R_x_ua"]) + r" \text{ m}\Omega")
+    doc.add_run("）")
 
     doc.add_heading("3. 电阻率计算", level=2)
     doc.add_paragraph("")
@@ -222,17 +231,16 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_paragraph("")
     doc.add_run("电阻率平均值：")
-    doc.add_inline_math(f"ρ_a = {r['rho_a']:.4f}")
+    doc.add_inline_math(r"\rho = " + format_measure(r["rho_a"], r["rho_u"]) + r" \times 10^{-8}\,\Omega\cdot\mathrm{m}")
     doc.add_paragraph("")
     doc.add_run("不确定度传递（相对不确定度合成）：")
     doc.add_math(
         r"\frac{u(\rho)}{\rho} = \sqrt{4\left(\frac{u(d)}{d_a}\right)^2 + \left(\frac{u_A(R_x)}{R_{x,a}}\right)^2}"
+        r" \approx " + format_percent(r["rho_u"] / r["rho_a"] * 100) + r"\%"
     )
     doc.add_paragraph("")
     doc.add_run("电阻率最终结果：")
-    doc.add_math(
-        r"\rho = " + format_number(r["rho_a"], r["rho_u"])
-    )
+    doc.add_math(r"\rho = " + format_measure(r["rho_a"], r["rho_u"]) + r" \times 10^{-8}\,\Omega\cdot\mathrm{m}")
 
     doc.add_heading("三、实验结果分析", level=1)
 
@@ -241,8 +249,9 @@ def _generate_docx(data: dict, output_path: str):
         doc.add_paragraph_rich(variants["结果分析"])
     doc.add_paragraph("")
     doc.add_run("本实验采用双臂电桥（开尔文电桥）测量金属丝的低电阻，通过正反向测量消除热电势影响，")
-    doc.add_run("测量了 8 个不同长度下的电阻值并计算电阻率。电阻率平均值 ρ_a = ")
-    doc.add_inline_math(f"{format_number(r['rho_a'])}")
+    doc.add_run("测量了 8 个不同长度下的电阻值并计算电阻率。电阻率 ")
+    doc.add_inline_math(r"\rho = " + format_measure(r["rho_a"], r["rho_u"])
+                        + r" \times 10^{-8}\,\Omega\cdot\mathrm{m}")
     doc.add_run("，各长度点的电阻率一致性较好，说明实验数据可靠。")
 
     doc.add_paragraph("")

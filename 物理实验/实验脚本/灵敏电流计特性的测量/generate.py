@@ -225,15 +225,9 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("（请在此处粘贴 R-U 曲线图照片。）")
 
     # 回归结果
-    doc.add_paragraph("回归结果：")
-    doc.add_math(
-        rf"k = {k_disp}\ \mathrm{{\Omega/V}},\quad "
-        rf"u(k) = {u_k_disp}\ \mathrm{{\Omega/V}}"
-    )
-    doc.add_math(
-        rf"b = {b_disp}\ \mathrm{{\Omega}},\quad "
-        rf"u(b) = {u_b_disp}\ \mathrm{{\Omega}}"
-    )
+    doc.add_paragraph("回归结果（不确定度只进不舍取 1 位，测得值末位与它对齐）：")
+    doc.add_math(rf"k = {format_measure(k, u_k)}\ \mathrm{{\Omega/V}}")
+    doc.add_math(rf"b = {format_measure(b, u_b)}\ \mathrm{{\Omega}}")
     doc.add_paragraph("")
     doc.add_run("相关系数 ")
     doc.add_inline_math(f"r^{{2}} = {r_squared:.4f}")
@@ -247,17 +241,14 @@ def _generate_docx(data: dict, output_path: str):
         rf" \approx {Ki_disp}\ \mathrm{{A/mm}}"
     )
     doc.add_paragraph("")
-    doc.add_run("不确定度：")
-    doc.add_inline_math(rf"u(K_i) = {u_Ki_disp}\ \mathrm{{A/mm}}")
+    doc.add_run("电流常数的结果表示：")
+    doc.add_inline_math(rf"K_i = {format_measure(Ki_meas, u_Ki)}\ \mathrm{{A/mm}}")
 
     # 求 Rg
     doc.add_paragraph("由截距求内阻：")
     doc.add_math(
-        rf"R_g = -b = -({b_disp}) = {Rg_disp}\ \mathrm{{\Omega}}"
+        rf"R_g = -b = -({b_disp}) = {format_measure(Rg_meas, u_Rg)}\ \mathrm{{\Omega}}"
     )
-    doc.add_paragraph("")
-    doc.add_run("不确定度：")
-    doc.add_inline_math(rf"u(R_g) = {u_Rg_disp}\ \mathrm{{\Omega}}")
 
     # 相对误差公式
     doc.add_paragraph("相对误差（分母为正值，绝对值仅作用于分子，避免公式渲染异常）：")
