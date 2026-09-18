@@ -10,6 +10,10 @@ PACKAGES = {
     'numpy': 'numpy', 'matplotlib': 'matplotlib', 'openpyxl': 'openpyxl',
     'docx': 'python-docx', 'latex2mathml': 'latex2mathml',
     'mathml2omml': 'mathml2omml', 'lxml': 'lxml', 'scipy': 'scipy',
+    # Word 实物验收（tests/word_report_test.py，可选）用；报告生成不需要它，
+    # 因此声明在 requirements-optional.txt —— 声明了才不会报 Undeclared import，
+    # 不在 required 里则不会强制安装、也不做导入检查。
+    'win32com': 'pywin32',
 }
 
 
@@ -40,9 +44,9 @@ def main():
                     errors.append(f'Undeclared import {name}: {file.relative_to(ROOT)}')
     for module, package in PACKAGES.items():
         if package not in required:
-            continue
+            continue          # 可选依赖（如 pywin32）：只声明，不强制安装
         try:
-            importlib.import_module(module + '.client' if module == 'win32com' else module)
+            importlib.import_module(module)
         except Exception as exc:
             errors.append(f'{package} ({module}): {exc}')
     if errors:

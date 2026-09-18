@@ -39,8 +39,9 @@
 - Python 3.9+
 - openpyxl（Excel 读写）
 - matplotlib（图表）
-- python-docx（模板）
-- pywin32（Word COM 公式渲染，仅 Windows）
+- python-docx（报告生成）
+- latex2mathml、mathml2omml、lxml（公式 LaTeX → OMML；已随 `实验脚本/common/_vendor/` 内置）
+- pywin32（**可选**，仅 `tests/word_report_test.py` 的 Word 实物验收用；报告生成不需要 Word）
 
 `setup.bat` 会自动安装所有依赖。
 
@@ -52,8 +53,9 @@
 ├── requirements.txt
 └── 实验脚本/
     ├── common/            ← 公共工具库
-    │   ├── docx_report.py     Word 报告生成（OMath 公式渲染）
-    │   ├── excel_reader.py    Excel 读取
+    │   ├── docx_report.py     报告生成（python-docx + OMML 公式，无需 Word）
+    │   ├── docx_omml.py       LaTeX → OMML 公式转换
+    │   ├── _vendor/           内置公式依赖（latex2mathml / mathml2omml）
     │   ├── uncertainty.py     不确定度计算
     │   └── ...
     └── <实验名>/
