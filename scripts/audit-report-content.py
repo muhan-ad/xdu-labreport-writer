@@ -4,9 +4,9 @@
 用途：发布前核对 26 个实验的报告内容质量。它**不判断物理对错**（那需要人看），
 只把两类常见缺陷量化出来，便于分工核对：
 
-  ① 不确定度呈现：统计 ± 出现次数与 u(...) 提及次数。
-     全文无 ± 说明结果没有写成「x = (a ± b) 单位」的形式；
-     「u 提及多而 ± 少」说明算出了不确定度但没并到结果里。
+  ① 不确定度呈现：统计「数值型不确定度式」u(x)=…（后面跟数字，说明算出了结果）
+     与 ± 出现次数。算了 u(x) 却没有 ±，说明结果没写成「x = (a ± b) 单位」；
+     ± 条数少于 u(x) 式的条数，说明只有部分结果带上了不确定度。
   ② 计算过程：统计公式里「纯符号（有等号、无数字）」与「含数字（≥2 个数）」的条数。
      纯符号公式多，说明计算式只给了符号式、没给数值代入过程。
 
@@ -73,10 +73,17 @@ def measure(path):
     u_in_text = len(re.findall(u_re, text)) + len(re.findall('不确定度', text))
     u_in_math = sum(len(re.findall(u_re, m)) for m in maths)
     u_mentions = u_in_text + u_in_math
+    # 数值型不确定度式：形如「u(d)=…」且紧随其后出现数字（说明给出了数值结果），
+    # 这类式子有多少条，就说明有多少个量算出了不确定度 —— 用来判断该不该配 ±
+    u_defs = 0
+    for chunk in [text] + maths:
+        for m in re.finditer(r'u\s*[（(][^）)]{0,10}[）)]\s*=', chunk):
+            if re.search(r'\d', chunk[m.end():m.end() + 20]):
+                u_defs += 1
     symbolic = sum(1 for m in maths if '=' in m and not re.search(r'\d', m))
     numeric = sum(1 for m in maths if len(re.findall(r'\d+\.?\d*', m)) >= 2)
-    return {'plusminus': plusminus, 'u_mentions': u_mentions, 'formulas': len(maths),
-            'symbolic_only': symbolic, 'with_numbers': numeric}
+    return {'plusminus': plusminus, 'u_mentions': u_mentions, 'u_defs': u_defs,
+            'formulas': len(maths), 'symbolic_only': symbolic, 'with_numbers': numeric}
 
 
 def main():
@@ -97,26 +104,29 @@ def main():
         except Exception as exc:
             rows.append({'exp': exp, 'error': str(exc)[:120]})
 
-    print('%-26s %4s %8s %5s %8s %8s' % ('实验', '±', 'u/不确定度', '公式', '纯符号', '含数字'))
-    print('-' * 68)
+    print('%-26s %4s %5s %9s %5s %8s %8s' % ('实验', '±', 'u(x)=', 'u/不确定度', '公式', '纯符号', '含数字'))
+    print('-' * 74)
     no_pm, weak_pm = [], []
     for r in rows:
         if r.get('error'):
             print('%-26s 生成失败: %s' % (r['exp'][:24], r['error']))
             continue
         flag = ''
-        if r['plusminus'] == 0 and r['u_mentions'] > 0:
-            flag = '  ← 有不确定度但无 ±'
+        if r['plusminus'] == 0 and r['u_defs'] > 0:
+            flag = '  ← 算了不确定度但结果无 ±'
+            no_pm.append(r['exp'])
+        elif r['plusminus'] == 0 and r['u_mentions'] > 0:
+            flag = '  ← 提到不确定度但全无 ±'
             no_pm.append(r['exp'])
         elif r['plusminus'] == 0:
             flag = '  ← 全文无 ±'
             no_pm.append(r['exp'])
-        elif r['u_mentions'] > 2 * r['plusminus']:
-            flag = '  ← ± 明显少于不确定度'
+        elif r['u_defs'] > r['plusminus']:
+            flag = '  ← ± 少于数值不确定度式'
             weak_pm.append(r['exp'])
-        print('%-26s %4d %8d %5d %8d %8d%s' % (r['exp'][:24], r['plusminus'], r['u_mentions'],
-                                                r['formulas'], r['symbolic_only'],
-                                                r['with_numbers'], flag))
+        print('%-26s %4d %5d %9d %5d %8d %8d%s'
+              % (r['exp'][:24], r['plusminus'], r['u_defs'], r['u_mentions'],
+                 r['formulas'], r['symbolic_only'], r['with_numbers'], flag))
     print()
     print('汇总：%d 个实验；结果无 ± 的 %d 个；± 明显偏少的 %d 个；纯符号公式 >5 条的 %d 个'
           % (len(rows), len(no_pm), len(weak_pm),
