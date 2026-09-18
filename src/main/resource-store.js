@@ -91,6 +91,12 @@ function replaceTree(target, prepare, io = fs) {
   }
 }
 
+// 参与版本指纹与内置同步的文件类型。
+// 注意：这里是白名单，**漏掉扩展名会让该文件既不参与指纹、也不会同步到用户数据目录**
+// （曾因此丢掉公式转换依赖的 216KB 符号表 unimathsymbols.txt，导致生成报告失败）。
+// 新增资源类型时务必同步这里。
+const RESOURCE_FILE_RE = /\.(py|json|md|txt|csv|ttf|otf|dat)$/i;
+
 function resourceFiles(root, relative = '') {
   const result = [];
   for (const entry of fs.readdirSync(path.join(root, relative), { withFileTypes: true })) {
@@ -98,7 +104,7 @@ function resourceFiles(root, relative = '') {
     if (entry.isSymbolicLink()) throw new Error('实验资源不支持链接文件');
     const rel = path.join(relative, entry.name);
     if (entry.isDirectory()) result.push(...resourceFiles(root, rel));
-    else if (/\.(py|json|md)$/i.test(entry.name) && entry.name !== 'data.json') result.push(rel);
+    else if (RESOURCE_FILE_RE.test(entry.name) && entry.name !== 'data.json') result.push(rel);
   }
   return result.sort();
 }
