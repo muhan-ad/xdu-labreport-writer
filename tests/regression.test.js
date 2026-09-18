@@ -87,6 +87,22 @@ test('installed upgrades refresh existing scripts but retain data, reports and c
   assert.equal(read(path.join(target, 'common/core.py')), 'hot-update');
 });
 
+test('resource sync carries non-script data files (vendored formula deps)', async t => {
+  // 回归：白名单曾只认 .py/.json/.md，导致公式转换依赖的符号表 .txt 既不进指纹也不同步，
+  // 用户端生成报告直接失败（内置副本缺文件）。这里钉住"数据文件必须一起走"。
+  const root = fixture(t), builtin = path.join(root, 'builtin'), target = path.join(root, 'user');
+  put(path.join(builtin, 'common/_vendor/latex2mathml/symbols.py'), 'v1');
+  put(path.join(builtin, 'common/_vendor/latex2mathml/unimathsymbols.txt'), 'DATA-1');
+  store.syncBuiltin(builtin, target, store.resourceVersion(builtin), '1');
+  assert.equal(read(path.join(target, 'common/_vendor/latex2mathml/unimathsymbols.txt')), 'DATA-1');
+  // 数据文件内容变化必须改变指纹，否则热更新不会触发
+  const before = store.resourceVersion(builtin);
+  put(path.join(builtin, 'common/_vendor/latex2mathml/unimathsymbols.txt'), 'DATA-2');
+  assert.notEqual(store.resourceVersion(builtin), before);
+  store.syncBuiltin(builtin, target, store.resourceVersion(builtin), '2');
+  assert.equal(read(path.join(target, 'common/_vendor/latex2mathml/unimathsymbols.txt')), 'DATA-2');
+});
+
 const renderer = read(path.join(__dirname, '../src/renderer.js'));
 function load(context, start, end) {
   vm.runInContext(renderer.slice(renderer.indexOf(start), renderer.indexOf(end, renderer.indexOf(start))), context);
@@ -265,21 +281,21 @@ function mainHarness(t, failUpdateCopy = false) {
   return { root, handlers, rawHandlers, children, kills, authorize, merge: controls.merge, unzipScript: controls.unzipScript, copied, extractDelta: controls.extractDelta };
 }
 
-test('main process rejects concurrent generation and cleans only the reported Word instance', async t => {
+test('main process rejects concurrent generation and cancels by killing the python tree', async t => {
   const h = mainHarness(t);
   const exp = path.join(__dirname, '../物理实验/实验脚本/长度与体积的测量');
   const first = h.handlers.get('run-generate')({}, exp, {}, {}, {});
   const duplicate = await h.handlers.get('run-generate')({}, exp, {}, {}, {});
   assert.equal(duplicate.ok, false);
   assert.equal(h.children.length, 1);
-  h.children[0].stdout.write('.LAB_WORD_INSTANCE:555:666\n');
   const cancelled = await h.handlers.get('cancel-generate')();
   const result = await first;
   assert.equal(cancelled.ok, true);
   assert.equal(result.cancelled, true);
   assert.equal(result.ok, false);
-  assert.deepEqual(JSON.parse(h.kills.find(k => k.exe !== 'taskkill').args[2]), [[555, 666]]);
+  // 报告生成改为纯 Python（无 Word COM）：取消只需结束 python 进程树，不再有任何外部进程清理脚本
   assert.equal(h.kills.filter(k => k.exe === 'taskkill').length, 1);
+  assert.equal(h.kills.filter(k => k.exe !== 'taskkill').length, 0);
 });
 
 test('main process rejects data update during generation and reports old DOCX as failure', async t => {

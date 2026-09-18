@@ -4,7 +4,7 @@
 
 ## 一、安装包：网盘分发，COS 只做版本校对
 
-1. 运行 `npm run verify`；在 Windows/Word 环境按需运行 `tests/electron_smoke.js`、`tests/word_integration.js`。
+1. 运行 `npm run verify`（含公式回归 `tests/omml_test.py`，不需要 Word）；在 Windows 桌面环境按需运行 `tests/electron_smoke.js`；有 Word 的机器上再跑 `python tests/word_report_test.py` 做公式实物验收（无 Word 会自动跳过）。
 2. **先递增版本号**（`package.json` 与 `package-lock.json` 两处，如 `2.0.1`；必须是 `x.y.z` 三段式，应用内版本比较与数据包的 `minAppVersion` 都按三段式解析），再 `npm run build:win`。
    同一版本号不要出现两份不同内容的构建——用户端只按版本号判断新旧，同号无法发现修复。
 3. 把安装包（建议用英文名副本 `labreport-setup-<版本>.exe`）放到网盘，并记下新链接与提取码。
@@ -54,7 +54,7 @@
 ## 四、发布前核对
 
 - 本项目使用**无 Windows 数字签名的安装包**，不把购买证书作为发布前提；核验版本号与 SHA-256。实验数据包的 Ed25519 签名必须保留（用途不同）。
-- 用干净环境验证：Word/Python/预览/更新/反馈/实验数据下载。
+- 用干净环境验证：Python 生成/预览/更新/反馈/实验数据下载（**特意在未安装 Word 的机器上跑一遍生成**，确认无 Word 依赖）。
 - 运行时版本记录见 `docs/python-runtime-inventory.json` 与 `requirements-runtime.txt`；更换嵌入式 Python 后重新生成这两份记录并重跑 `npm run verify`。
 - 发一版新客户端后，建议自测一次「安装 → 检查更新 → 更新实验数据 → 生成一份报告」完整闭环。
 

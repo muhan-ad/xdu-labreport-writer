@@ -56,7 +56,7 @@ app.whenReady().then(async () => {
     assert.equal(result.ok, true, result.error || result.logs);
     const reportZip = await JSZip.loadAsync(fs.readFileSync(result.reportFile));
     assert.ok(Object.keys(reportZip.files).some(name => name.startsWith('word/media/')), 'saved OCR photo should be embedded in DOCX');
-    console.log('PASS: real Electron -> saved OCR photo -> Python -> Word generation');
+    console.log('PASS: real Electron -> saved OCR photo -> Python report generation (Word-free)');
     await evaluate("(async () => { const scan = await window.labAPI.scanExperiments(); experiments = Array.isArray(scan) ? scan : scan.experiments; currentExp = experiments.find(e => e.name === '长度与体积的测量'); await loadPreview(); })()");
     await until(() => evaluate('previewLoaded === true'));
     const frame = contents.mainFrame.framesInSubtree.find(f => f !== contents.mainFrame);

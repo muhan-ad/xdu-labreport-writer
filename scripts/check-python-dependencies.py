@@ -1,4 +1,4 @@
-"""Check declared Python dependencies and imports without starting Word."""
+"""Check declared Python dependencies and imports (report generation is Word-free)."""
 import ast
 import importlib
 from pathlib import Path
@@ -8,8 +8,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = {
     'numpy': 'numpy', 'matplotlib': 'matplotlib', 'openpyxl': 'openpyxl',
-    'docx': 'python-docx', 'win32com': 'pywin32', 'win32api': 'pywin32',
-    'win32event': 'pywin32', 'win32process': 'pywin32', 'scipy': 'scipy',
+    'docx': 'python-docx', 'latex2mathml': 'latex2mathml',
+    'mathml2omml': 'mathml2omml', 'lxml': 'lxml', 'scipy': 'scipy',
 }
 
 
@@ -25,7 +25,7 @@ def main():
     optional = declared(ROOT / 'requirements-optional.txt')
     files = list((ROOT / '物理实验/实验脚本').rglob('*.py'))
     files += list((ROOT / 'tests').glob('*.py'))
-    local = {'common', 'validate_schema'}
+    local = {'common', 'validate_schema', 'docx_omml'}
     for file in files:
         for node in ast.walk(ast.parse(file.read_text(encoding='utf-8-sig'))):
             names = []

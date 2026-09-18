@@ -1,8 +1,8 @@
 # 实验搭子（labreport-writer）
 
-面向西安电子科技大学物理实验课程的报告自动生成桌面应用。用户选择实验、在结构化表单中录入测量数据，应用即调用内置 Python 脚本完成数据处理（不确定度、线性回归、图表绘制），并通过 Word COM 接口生成可直接提交的 `.docx` 报告——公式为 Word 原生可编辑数学公式（OMML），表格、插图、学生信息一应俱全。在此基础上提供措辞变体组合与 AI 个性化润色（限定教材知识库），帮助报告在保持科学性的前提下形成个人化表述。
+面向西安电子科技大学物理实验课程的报告自动生成桌面应用。用户选择实验、在结构化表单中录入测量数据，应用即调用内置 Python 脚本完成数据处理（不确定度、线性回归、图表绘制），并**在本机直接生成**可直接提交的 `.docx` 报告——公式为 Word 原生可编辑数学公式（OMML），表格、插图、学生信息一应俱全。在此基础上提供措辞变体组合与 AI 个性化润色（限定教材知识库），帮助报告在保持科学性的前提下形成个人化表述。
 
-**技术栈**：Electron（主进程 Node.js + 渲染层原生 JavaScript，contextIsolation + preload 桥接）· Python 数据处理与文档生成（`pywin32` 驱动 Microsoft Word）· `matplotlib` 绘图 · NSIS 安装包（electron-builder）。
+**技术栈**：Electron（主进程 Node.js + 渲染层原生 JavaScript，contextIsolation + preload 桥接）· Python 数据处理与文档生成（`python-docx` + LaTeX→MathML→OMML，**不依赖 Microsoft Word**）· `matplotlib` 绘图 · NSIS 安装包（electron-builder）。
 
 **项目声明与致谢**
 
@@ -12,8 +12,8 @@
 
 如对本项目有任何疑问、建议或合作意向，欢迎通过以下方式联系：对策府库的鸽子屋。
 
-**运行要求**：Windows 10/11 · Microsoft Word 2016 及以上（报告生成依赖 Word COM 组件）。最终用户**无需安装 Python**——安装包内置嵌入式运行时与全部实验资源。
-目前，此项目暂无开发其它系统版本的想法。再次声明，本项目依赖于Microsoft Word， WPS Office暂不支持此项目，推荐使用者在学校正版化网站下载Microsoft Word。
+**运行要求**：Windows 10/11。**报告生成不再需要安装 Microsoft Word**（旧版依赖 Word COM，公式转换在部分 Word 版本上会失败；现改为纯 Python 生成，单份报告约 1 秒）；生成的 .docx 用 Word 或 WPS 打开均可。最终用户**无需安装 Python**——安装包内置嵌入式运行时与全部实验资源。
+目前，此项目暂无开发其它系统版本的想法。
 
 ---
 
@@ -30,13 +30,15 @@
 
 > 历史遗留的 `数据.xlsx` 模板已退出数据链路，仅作存档保留。
 
-### 2. 一键生成 Word 报告
+### 2. 一键生成 Word 报告（本机生成，不需要安装 Word）
 
-`generate.py` 读取测量数据后完成完整的数据处理流水线：间接测量量计算、A/B 类不确定度与合成不确定度、最小二乘线性回归、matplotlib 图表绘制，随后通过公共库 `DocxReportWriter`（Word COM）产出报告：
+`generate.py` 读取测量数据后完成完整的数据处理流水线：间接测量量计算、A/B 类不确定度与合成不确定度、最小二乘线性回归、matplotlib 图表绘制，随后通过公共库 `DocxReportWriter`（`python-docx`）产出报告：
 
-- 数学公式以 LaTeX/UnicodeMath 线性格式经 `OMaths.BuildUp()` 转为 **Word 原生公式**，可二次编辑；
+- 数学公式经 **LaTeX → MathML → OMML** 直接写入文档，是 **Word 原生可编辑公式**（双击即可编辑），不经过 Word 的 `OMaths.BuildUp()` —— 该步骤在部分 Word 版本上会把公式降级成线性文本，是旧版最常见的失败原因；
 - 自动注入学生信息（姓名/学号/班级/日期，来自应用内配置，经环境变量传递，未配置时以占位符代替）;
 - 数据三线表、实验插图、章节结构按课程提交规范排版（纯中文、A4、宋体/黑体）。
+
+> 迁移细节、排版对齐基线与验证方式见 [docs/Word迁移说明.md](docs/Word迁移说明.md)。单份报告生成约 1 秒（旧版为启动 Word 后逐条 BuildUp，约 16～33 秒且可能失败）。
 
 ### 3. 措辞变体系统
 
@@ -64,7 +66,7 @@
 
 ### 6. 批量生成队列
 
-支持将多个实验加入生成队列：可视化查看与拖拽调整顺序、单项移除、暂停/恢复、一键全部取消；生成过程实时输出脚本日志，取消操作精确清理本次启动的 Word 进程。
+支持将多个实验加入生成队列：可视化查看与拖拽调整顺序、单项移除、暂停/恢复、一键全部取消；生成过程实时输出脚本日志，取消操作结束当前 python 生成任务（不再涉及外部程序）。
 
 ### 7. 报告预览与管理
 
@@ -95,7 +97,7 @@ electron-builder NSIS 安装包：应用代码打包为 asar；`物理实验` �
 | **应用内使用说明** | 已完成 | 设置 →「使用说明」内置快速上手、AI 润色、报告管理、常见问题与开发者声明；另有「感谢声明」页展示贡献者名单（名单文件为 `物理实验/实验脚本/common/credits.json`，随实验数据更新下发，由管理端维护） |
 | **自建变体库** | 已完成 | AI 调整产生的变体可归档到自建库（设置 →「自建变体」），支持按实验/章节浏览、删除（联动清理实验内同文本）、恢复到实验、导出与（开发者模式）批量导入；主界面有自建变体的实验置顶并挂"自建"徽章 |
 | **贡献数据 / 意见反馈** | 已完成 | 实验页「贡献数据」可上传自建变体或实验报告（照片+Word），设置「意见反馈」可提交建议；均经云函数预签名直传 COS `contributions/`，密钥不落地，供开发者筛选后回流官方数据 |
-| **平台** | 仅 Windows | 报告生成依赖 Word COM（`win32com`），无 macOS/Linux 移植计划 |
+| **平台** | 仅 Windows | 报告生成依赖 python-docx（无 Word 依赖），但应用本身仍为 Windows 桌面端，暂无移植计划 |
 
 ---
 
@@ -110,7 +112,7 @@ electron-builder NSIS 安装包：应用代码打包为 asar；`物理实验` �
 
 ### 开发者（源码运行）
 
-环境要求：Windows、Node.js ≥ 22.12（建议 24）、Python 3.12+，生成报告需要 Microsoft Word 桌面版。Python 二选一：自行配置仓库根目录的 `python-runtime/`，或安装本机 Python 并按下方命令安装依赖。
+环境要求：Windows、Node.js ≥ 22.12（建议 24）、Python 3.12+。**报告生成为纯 Python，不再需要 Microsoft Word**。Python 二选一：自行配置仓库根目录的 `python-runtime/`，或安装本机 Python 并按下方命令安装依赖。
 
 ```bash
 npm ci
@@ -140,10 +142,10 @@ npm test                   # Node 三套：回归（数据包协议/下架恢复
 npm run verify             # npm test + Python 静态/计算测试 + 各实验 schema 检查（提交前跑这一条即可）
 python smoke_test.py        # 全实验静态回归：脚本语法 / schema-data 一致性 / 变体章节数与 $ 配对 / 占位符键存在性 / 知识库存在性
 python validate_schema.py   # 各实验 data.json 相对 schema.json 的 missing / invalid 明细
-npm run test:desktop        # 桌面端冒烟（需 Windows + Word 环境，非 CI）
+npm run test:desktop        # 桌面端冒烟（需 Windows 桌面环境，非 CI）
 ```
 
-以上除 `test:desktop` 外均为纯静态检查，不启动 Word，可在 CI 或提交前快速执行。
+以上除 `test:desktop` 外均为纯静态检查（公式测试不依赖 Word），可在 CI 或提交前快速执行。
 
 ## 项目结构
 
@@ -155,7 +157,9 @@ validate_schema.py            schema-data 一致性校验
 物理实验/
   requirements.txt / setup.bat  Python 依赖清单与一键安装
   实验脚本/
-    common/                   公共库：docx_report（Word COM 报告器）/ variants（变体组合与润色注入）
+    common/                   公共库：docx_omml（LaTeX→MathML→OMML 公式转换）
+                              / docx_report（python-docx 报告生成器）
+                              / variants（变体组合与润色注入）
                               / uncertainty / regression / latex_formatter / plot_utils / data_io
                               / credits.json（感谢声明名单，管理端可编辑并随数据包下发）
     <实验名>/                 共 26 个实验，每个包含：
@@ -183,7 +187,7 @@ validate_schema.py            schema-data 一致性校验
 ## 注意事项
 
 - 学校课程要求以 Word（`.docx`）提交、纯中文行文，实验原理以教材为准；
-- 报告生成期间请勿手动结束 Word 进程；应用内"取消生成"会安全清理本次启动的 Word 实例；
+- 报告由本机 Python 直接生成，不启动 Word，也不受 Word 是否安装影响；
 - 示例数据仅供功能演示，**严禁直接提交**。
 
 ## 许可
