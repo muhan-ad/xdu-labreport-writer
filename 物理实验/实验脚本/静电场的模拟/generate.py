@@ -201,6 +201,45 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_run(" 之间存在良好的线性关系，")
     doc.add_run("验证了同轴电缆静电场的理论分布规律，即模拟法测绘静电场是可靠的。")
 
+    # 数值代入：把拟合得到的 a、b 代回理论式，并用一组实测数据核对（课程要求写出计算过程）。
+    # 代入的必须是报告里显示的（已按不确定度修约的）系数，否则算式与显示值对不上。
+    import math as _math
+    _a_disp = format_number(r["intercept"], r["intercept_u"])
+    _b_disp = format_number(r["slope"], r["slope_u"])
+    _a_val = float(_a_disp)
+    _b_val = float(_b_disp)
+    _i0 = 0
+    _urua0 = r["u_r_ua"][_i0]
+    _lnr_fit = _a_val + _b_val * _urua0
+    doc.add_paragraph("")
+    doc.add_run("以第 1 组数据为例，把拟合系数代回 ")
+    doc.add_inline_math(r"\ln(r) = a + b \cdot U_r/U_a")
+    doc.add_run("：")
+    doc.add_math(
+        r"\ln(r) = " + _a_disp + r" + (" + _b_disp + r") \times "
+        + f"{_urua0:.3f}" + r" = " + f"{_lnr_fit:.4f}"
+        + r",\quad r = e^{" + f"{_lnr_fit:.4f}" + r"} = " + f"{_math.exp(_lnr_fit):.2f}"
+        + r"\ \mathrm{cm}"
+    )
+    doc.add_run("，与该点实测半径 ")
+    doc.add_inline_math(f"{r['r'][_i0]:.2f}\\ \\mathrm{{cm}}")
+    doc.add_run(" 相符，说明拟合直线能复现实测数据。")
+
+    doc.add_paragraph("")
+    doc.add_run("由拟合系数还可反推模型几何（理论上 ")
+    doc.add_inline_math(r"\ln(r) = \ln(r_b) - \ln(r_b/r_a)\cdot U_r/U_a")
+    doc.add_run("，即 ")
+    doc.add_inline_math(r"a = \ln(r_b)")
+    doc.add_run("、")
+    doc.add_inline_math(r"b = -\ln(r_b/r_a)")
+    doc.add_run("）：")
+    doc.add_math(
+        r"r_b = e^{a} = e^{" + _a_disp + r"} = "
+        + f"{_math.exp(_a_val):.2f}" + r"\ \mathrm{cm}, \quad "
+        + r"\frac{r_b}{r_a} = e^{-b} = e^{" + f"{-_b_val:.2f}" + r"} = "
+        + f"{_math.exp(-_b_val):.2f}"
+    )
+
     doc.add_heading("三、实验结果分析", level=1)
 
     # 结果分析 AI 导入消费点：AI 润色导入的「结果分析」覆盖硬编码段落

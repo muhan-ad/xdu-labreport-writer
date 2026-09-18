@@ -64,10 +64,30 @@ def generate_report(exp):
 def measure(path):
     from lxml import etree
     root = etree.fromstring(zipfile.ZipFile(path).read('word/document.xml'))
+    body = root.find(W_NS + 'body')
     text = ''.join(t.text or '' for t in root.iter() if etree.QName(t).localname == 't')
     maths = []
-    for om in root.iter(M_NS + 'oMath'):
-        maths.append(''.join(x.text or '' for x in om.iter(M_NS + 't')).replace('\r', ''))
+    # 按章节把公式归类：原理/方法里的公式本就该是符号式（pV=nRT、Q=CU…），
+    # 只有「数据处理」里的纯符号式才说明计算只给了符号式、没给数值代入过程。
+    sec = ''
+    in_data = False
+    data_symbolic = data_numeric = 0
+    for p in (body.iter(W_NS + 'p') if body is not None else []):
+        ptext = ''.join(t.text or '' for t in p.iter(W_NS + 't'))
+        if p.find(W_NS + 'pPr/' + W_NS + 'pStyle') is not None or re.match(r'^\s*[一二三四五六]、', ptext):
+            sec = ptext.strip()
+            if '数据处理' in sec:
+                in_data = True
+            elif re.match(r'^\s*[三四五六]、|^\s*(误差分析|结论)', sec):
+                in_data = False
+        for om in p.iter(M_NS + 'oMath'):
+            m = ''.join(x.text or '' for x in om.iter(M_NS + 't')).replace('\r', '')
+            maths.append(m)
+            if in_data:
+                if '=' in m and not re.search(r'\d', m):
+                    data_symbolic += 1
+                elif len(re.findall(r'\d+\.?\d*', m)) >= 2:
+                    data_numeric += 1
     plusminus = text.count('±') + sum(m.count('±') for m in maths)
     u_re = r'u\s*[（(]'
     u_in_text = len(re.findall(u_re, text)) + len(re.findall('不确定度', text))
@@ -83,7 +103,8 @@ def measure(path):
     symbolic = sum(1 for m in maths if '=' in m and not re.search(r'\d', m))
     numeric = sum(1 for m in maths if len(re.findall(r'\d+\.?\d*', m)) >= 2)
     return {'plusminus': plusminus, 'u_mentions': u_mentions, 'u_defs': u_defs,
-            'formulas': len(maths), 'symbolic_only': symbolic, 'with_numbers': numeric}
+            'formulas': len(maths), 'symbolic_only': symbolic, 'with_numbers': numeric,
+            'data_symbolic': data_symbolic, 'data_numeric': data_numeric}
 
 
 def main():
@@ -104,9 +125,10 @@ def main():
         except Exception as exc:
             rows.append({'exp': exp, 'error': str(exc)[:120]})
 
-    print('%-26s %4s %5s %9s %5s %8s %8s' % ('实验', '±', 'u(x)=', 'u/不确定度', '公式', '纯符号', '含数字'))
-    print('-' * 74)
-    no_pm, weak_pm = [], []
+    print('%-26s %4s %5s %7s %8s %8s' % ('实验', '±', 'u(x)=', '数据段', '数据段', '数据段'))
+    print('%-26s %4s %5s %7s %8s %8s' % ('', '', '', '纯符号', '含数字', '公式数'))
+    print('-' * 72)
+    no_pm, weak_pm, no_sub = [], [], []
     for r in rows:
         if r.get('error'):
             print('%-26s 生成失败: %s' % (r['exp'][:24], r['error']))
@@ -124,17 +146,23 @@ def main():
         elif r['u_defs'] > r['plusminus']:
             flag = '  ← ± 少于数值不确定度式'
             weak_pm.append(r['exp'])
-        print('%-26s %4d %5d %9d %5d %8d %8d%s'
-              % (r['exp'][:24], r['plusminus'], r['u_defs'], r['u_mentions'],
-                 r['formulas'], r['symbolic_only'], r['with_numbers'], flag))
+        # 数据处理段里一条带数字的公式都没有 = 只给了符号式、没有代入过程
+        if r['data_numeric'] == 0 and r['data_symbolic'] > 0:
+            flag += '  ← 数据处理无一处数值代入'
+            no_sub.append(r['exp'])
+        print('%-26s %4d %5d %7d %8d %8d%s'
+              % (r['exp'][:24], r['plusminus'], r['u_defs'],
+                 r['data_symbolic'], r['data_numeric'],
+                 r['data_symbolic'] + r['data_numeric'], flag))
     print()
-    print('汇总：%d 个实验；结果无 ± 的 %d 个；± 明显偏少的 %d 个；纯符号公式 >5 条的 %d 个'
-          % (len(rows), len(no_pm), len(weak_pm),
-             sum(1 for r in rows if r.get('symbolic_only', 0) > 5)))
+    print('汇总：%d 个实验；结果无 ± 的 %d 个；± 偏少的 %d 个；数据处理无一处数值代入的 %d 个'
+          % (len(rows), len(no_pm), len(weak_pm), len(no_sub)))
     if no_pm:
         print('  无 ±：' + '、'.join(no_pm))
     if weak_pm:
         print('  ± 偏少：' + '、'.join(weak_pm))
+    if no_sub:
+        print('  无数值代入：' + '、'.join(no_sub))
     if args.json:
         json.dump(rows, open(args.json, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
         print('已写出 ' + args.json)

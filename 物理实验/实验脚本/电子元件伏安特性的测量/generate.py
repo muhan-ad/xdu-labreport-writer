@@ -282,6 +282,12 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     t1_r = [u / i * 1000.0 for i, u in zip(t1_i, t1_u)]
     t2_r = [u / i * 1000.0 for i, u in zip(t2_i, t2_u)]
 
+    # 线性电阻的最小二乘拟合（U 为横轴、I 为纵轴）：R = 1/k，u(R)/R = u(k)/k。
+    # 拟合斜率的标准差已含各测量点的分散，是作图法给出的完整不确定度（本实验无仪器误差字段）
+    fit1 = linear_regression(t1_u, t1_i)            # 斜率单位 mA/V
+    r1_fit = 1000.0 / fit1.slope                    # V/mA = kΩ → Ω
+    u_r1_fit = r1_fit * fit1.slope_uncertainty / fit1.slope
+
     # 钨丝灯泡 U = K·I^n，两点法取首末两点（照范例）
     # n、K 均用文档中显示的舍入值链计算，保证文档内数值自洽
     u1, u2 = round(t2_u[0], 2), round(t2_u[-1], 2)
@@ -328,6 +334,11 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     r = {
         "u1": u1, "u2": u2, "i1": i1, "i2": i2,
         "n_disp": n_disp, "K_disp": K_disp, "r1_mean": r1_mean,
+        # 拟合斜率给出的阻值（含不确定度），供变体 %%DATA:R1_pm:%s%% 引用
+        "R1_pm": format_measure(r1_fit, u_r1_fit),
+        "k1": fit1.slope, "u_k1": fit1.slope_uncertainty,
+        "b1": fit1.intercept, "u_b1": fit1.intercept_uncertainty, "r1_corr": fit1.r,
+        "R1_fit": r1_fit, "u_R1_fit": u_r1_fit,
     }
     variants = compose(SCRIPT_DIR, r)
     if "实验原理" in variants:
@@ -354,6 +365,27 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     ])
     doc.add_paragraph("由数据得到线性电阻的伏安特性曲线如下：")
     doc.add_image(plot_t1, width_cm=14)
+
+    # 线性电阻的阻值（含不确定度）：R = 1/k，u(R)/R = u(k)/k —— 拟合值在计算段已算好
+    doc.add_paragraph("以 U 为横轴、I 为纵轴作最小二乘拟合 ")
+    doc.add_inline_math(r"I = kU + b")
+    doc.add_run("：")
+    doc.add_math(
+        r"k = " + format_measure(r["k1"], r["u_k1"]) + r"\ \mathrm{mA/V},"
+        + r"\quad b = " + format_measure(r["b1"], r["u_b1"]) + r"\ \mathrm{mA}"
+        + r",\quad r = " + format_number(r["r1_corr"], sig_figs=5)
+    )
+    doc.add_run("由 ")
+    doc.add_inline_math(r"R = \frac{1}{k}")
+    doc.add_run(" 得线性电阻阻值：")
+    doc.add_math(
+        r"R = \frac{1}{" + format_number(r["k1"], r["u_k1"]) + r"} = "
+        + format_measure(r["R1_fit"], r["u_R1_fit"]) + r"\ \Omega"
+    )
+    doc.add_run("（相对不确定度 " + format_percent(r["u_R1_fit"] / r["R1_fit"] * 100)
+                + "%，由拟合斜率的标准差给出），与表中各点 ")
+    doc.add_inline_math(r"R = U/I")
+    doc.add_run(" 的计算值一致。")
 
     # 2. 钨丝灯泡
     doc.add_heading("2. 钨丝灯泡的伏安特性", level=2)
