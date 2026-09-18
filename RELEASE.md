@@ -55,7 +55,10 @@
 
 - 本项目使用**无 Windows 数字签名的安装包**，不把购买证书作为发布前提；核验版本号与 SHA-256。实验数据包的 Ed25519 签名必须保留（用途不同）。
 - 用干净环境验证：Python 生成/预览/更新/反馈/实验数据下载（**特意在未安装 Word 的机器上跑一遍生成**，确认无 Word 依赖）。
-- 运行时版本记录见 `docs/python-runtime-inventory.json` 与 `requirements-runtime.txt`；更换嵌入式 Python 后重新生成这两份记录并重跑 `npm run verify`。
+- 运行时版本记录见 `docs/python-runtime-inventory.json` 与 `requirements-runtime.txt`；需要重建时执行
+  `python scripts/build-python-runtime.py`（下载嵌入式 Python + 按清单装依赖，国内镜像优先、失败回退官方源），
+  重建后核对上述两份记录并重跑 `npm run verify`（`verify.js` 会自动优先使用 `python-runtime/`）。
+  公式转换依赖已随 `物理实验/实验脚本/common/_vendor/` 内置，**不重建运行时也能工作**。
 - 发一版新客户端后，建议自测一次「安装 → 检查更新 → 更新实验数据 → 生成一份报告」完整闭环。
 
 ## 五、本地发布物料
