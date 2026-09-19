@@ -99,7 +99,7 @@
     // 千分之一彩蛋：不进随机池（权重 0 且 rare 标记），由 runDangerEffect 单独掷骰子触发。
     // 纯动画：不联网、不下载、不写任何文件 —— 末尾会自己说明"什么都没下载"。
     {
-      id: 'genshin', name: '原神启动（千分之一）', weight: 0, rare: true, maxMs: 20000,
+      id: 'genshin', name: '原神启动（万分之一）', weight: 0, rare: true, maxMs: 26000,
       async run(h) {
         const el = h.layer({
           pointer: false,
@@ -121,7 +121,7 @@
           </div>
           <div id="gxLog" style="font-family:Consolas,monospace;font-size:12px;color:#7f8ba3;
                                  margin-top:12px;line-height:1.95;height:132px"></div>
-          <div style="font-size:11.5px;color:#5f6a80;margin-top:10px">（千分之一才会出现的彩蛋 · 祝你好运）</div>`;
+          <div style="font-size:11.5px;color:#5f6a80;margin-top:10px">（万分之一才会出现的彩蛋 · 祝你好运）</div>`;
         el.appendChild(box);
         const bar = box.querySelector('#gxBar');
         const pct = box.querySelector('#gxPct');
@@ -139,12 +139,41 @@
         line('> 已连接 cdn.不存在的网站（延迟 3ms，编的）');
         await h.sleep(600);
 
+        // 真实磁盘检查：挑最空的盘、判断装不装得下（只读容量，不写任何文件）
+        line('> 正在挑选安装位置 …');
+        await h.sleep(500);
+        let drives = [];
+        try {
+          const r = await window.labAPI.dangerDiskSpace();
+          if (r && r.ok) drives = r.drives || [];
+        } catch (_) { /* 取不到就跳过这一步 */ }
+        const NEED_GB = 92.4;
+        let aborted = false;
+        if (drives.length) {
+          const top = drives[0];
+          line('> 扫描磁盘：' + drives.map(d => `${d.drive} 剩 ${d.freeGB}GB`).join('，'));
+          await h.sleep(600);
+          line(`> 选定最空的 ${top.drive}（剩 ${top.freeGB} GB），需要 ${NEED_GB} GB`);
+          await h.sleep(600);
+          if (top.freeGB < NEED_GB) {
+            aborted = true;
+            line(`> ✗ 已放弃下载：${top.drive} 装不下（差 ${(NEED_GB - top.freeGB).toFixed(1)} GB）`);
+            await h.sleep(700);
+            line('> 这是本次彩蛋里唯一一句真话 —— 磁盘是真的，判断是真的。');
+          } else {
+            line(`> ✓ 空间足够（剩 ${top.freeGB} GB ≥ ${NEED_GB} GB），按计划开始下载 …`);
+          }
+        } else {
+          line('> 读不到磁盘信息，跳过空间检查（继续演）');
+        }
+        await h.sleep(600);
+
         // 进度条：前段慢（"92GB 呢"），中段提速，最后卡在 87% 演一下
         const steps = [
           [2, 1.2, '> 包体大小：92.4 GB（含全部语音包与过场动画）'],
           [9, 8.6, '> 已连接加速节点：23.5 MB/s（你家网速的最高礼遇）'],
           [21, 19.8, '> 剩余时间：约 118 小时 43 分'],
-          [38, 24.1, '> ⚠ 检测到磁盘剩余空间 12 GB，可能不够'],
+          [38, 24.1, '> ⚠ 顺手提醒：别把游戏装系统盘，装满了 C 盘连报告都存不下'],
           [55, 31.6, '> 建议关闭占带宽的程序（比如正在生成实验报告的那个）'],
           [74, 42.9, '> 已下载 68.1 GB … 你家路由器开始冒烟了'],
           [87, 0.4, '> 速度骤降：0.4 MB/s（运营商表示这不归它管）'],
@@ -155,23 +184,34 @@
           pct.textContent = p + '%';
           spd.textContent = s.toFixed(1) + ' MB/s';
           line(txt);
-          await h.sleep(900);
+          await h.sleep(aborted ? 320 : 900);        // 已放弃下载的话，后面只快速过一遍
         }
-        await h.sleep(900);
-        line('> 下载完成，正在解压 …');
-        await h.sleep(800);
-        line('> 解压失败：磁盘空间不足（差 80.4 GB）');
-        await h.sleep(800);
-        line('> 正在清理安装残留 ……… 已完成');
+        await h.sleep(600);
+        line(aborted ? '> 安装包已丢弃 …' : '> 下载完成，正在解压 …');
+        await h.sleep(700);
+        line(aborted ? '> 未写入任何文件' : '> 解压失败：磁盘空间不足（编的，别当真）');
         await h.sleep(700);
         bar.style.width = '100%';
         pct.textContent = '100%';
         spd.textContent = '0.0 MB/s';
-        box.querySelector('#gxLog').innerHTML =
-          '<div style="color:#8fd3ff">玩笑到此为止 😄</div>'
-          + '<div style="color:#7f8ba3">什么都没下载，一个字节流量都没用，磁盘也没动。</div>'
-          + '<div style="color:#7f8ba3">想玩游戏的话 —— 先把实验报告写完。</div>';
-        await h.sleep(3000);
+        log.innerHTML = '<div style="color:#8fd3ff">玩笑到此为止 😄 什么都没下载。</div>'
+          + '<div style="color:#7f8ba3">一个字节流量都没用，磁盘一个文件都没动'
+          + (drives.length ? `（刚才读到的 ${drives[0].drive} 剩余空间是真数据，其它都是演的）` : '')
+          + '。</div>';
+        // 想真下就自己点 —— 打开的是官方页面，下载由用户发起（不替用户静默下载 90GB）
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-sm btn-outline';
+        btn.textContent = '真去官网下载';
+        btn.style.cssText = 'margin-top:14px';
+        btn.onclick = async () => {
+          try { await window.labAPI.openExternal('https://ys.mihoyo.com/'); } catch (_) {}
+        };
+        log.appendChild(btn);
+        const tip = document.createElement('div');
+        tip.style.cssText = 'color:#5f6a80;font-size:11.5px;margin-top:8px';
+        tip.textContent = '想玩游戏的话 —— 先把实验报告写完。';
+        log.appendChild(tip);
+        await h.sleep(3600);
       },
     },
     // 经典保留项目：第一次点击永远是它（见 renderer.js 的 pickDangerEffect）
@@ -726,7 +766,7 @@
   }
 
   // 千分之一彩蛋：命中就返回 'genshin'，否则 null
-  const RARE_ODDS = 0.001;
+  const RARE_ODDS = 0.0001;   // 万分之一
   function rollRare() { return Math.random() < RARE_ODDS ? 'genshin' : null; }
 
   function remember(id) { try { localStorage.setItem('dangerLastEffect', id); } catch (_) {} }

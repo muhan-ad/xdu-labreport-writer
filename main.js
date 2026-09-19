@@ -558,6 +558,23 @@ handle('danger-window-vanish', () => {
   return { ok: true };
 });
 
+// 「原神启动」彩蛋要"挑最空的盘、判断装不装得下"：这里只读各盘剩余空间，不写不下载。
+// statfs 只给容量信息，不需要管理员权限；枚举 A~Z 逐个试，Windows 上取不到的盘会抛错跳过。
+handle('danger-disk-space', () => {
+  const out = [];
+  for (const letter of 'CDEFGHIJKLMNOPQRSTUVWXYZ') {
+    const root = letter + ':\\';
+    try {
+      const st = fs.statfsSync(root);
+      const totalGB = (st.blocks * st.bsize) / 1024 ** 3;
+      const freeGB = (st.bavail * st.bsize) / 1024 ** 3;
+      if (totalGB > 0) out.push({ drive: letter + ':', totalGB: Math.round(totalGB), freeGB: Math.round(freeGB) });
+    } catch (_) { /* 该盘不存在或不可访问 */ }
+  }
+  out.sort((a, b) => b.freeGB - a.freeGB);
+  return { ok: true, drives: out };
+});
+
 // ── IPC: 读取 schema.json（方式三：表单模式）──
 handle('read-schema', (_, expPath) => {
   try {

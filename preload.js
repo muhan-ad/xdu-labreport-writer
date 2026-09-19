@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('labAPI', {
   // 「请勿点击」彩蛋的窗口级效果（主进程侧保证复原；渲染层另有看门狗）
   dangerShake: () => ipcRenderer.invoke('danger-window-shake'),
   dangerVanish: () => ipcRenderer.invoke('danger-window-vanish'),
+  dangerDiskSpace: () => ipcRenderer.invoke('danger-disk-space'),
   // 检查更新（仅版本校对 + 浏览器打开下载链接）
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   checkForUpdate: (cfg) => ipcRenderer.invoke('check-for-update', cfg),
