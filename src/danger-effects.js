@@ -96,6 +96,84 @@
 
   // ── 效果池 ──────────────────────────────────────────────
   const POOL = [
+    // 千分之一彩蛋：不进随机池（权重 0 且 rare 标记），由 runDangerEffect 单独掷骰子触发。
+    // 纯动画：不联网、不下载、不写任何文件 —— 末尾会自己说明"什么都没下载"。
+    {
+      id: 'genshin', name: '原神启动（千分之一）', weight: 0, rare: true, maxMs: 20000,
+      async run(h) {
+        const el = h.layer({
+          pointer: false,
+          css: 'background:radial-gradient(circle at 50% 30%,#1b2233 0%,#0c1018 70%);display:flex;'
+            + 'align-items:center;justify-content:center;color:#fff;font-family:system-ui,sans-serif',
+        });
+        const box = document.createElement('div');
+        box.style.cssText = 'width:470px;max-width:82vw';
+        box.innerHTML = `
+          <div style="font-size:12.5px;color:#8b93a7;margin-bottom:8px">检测到连续点击「请勿点击」，已自动为你启动：</div>
+          <div style="font-size:32px;font-weight:800;letter-spacing:8px;margin-bottom:16px;
+                      background:linear-gradient(90deg,#8fd3ff,#b39dff,#8fd3ff);-webkit-background-clip:text;
+                      background-clip:text;color:transparent">原  神</div>
+          <div style="height:10px;background:#222a3a;border-radius:5px;overflow:hidden">
+            <div id="gxBar" style="width:0;height:100%;background:linear-gradient(90deg,#5aa9ff,#7c5cff);transition:width .3s"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:#9aa3b5;margin-top:8px">
+            <span id="gxPct">0%</span><span id="gxSpeed">0.0 MB/s</span>
+          </div>
+          <div id="gxLog" style="font-family:Consolas,monospace;font-size:12px;color:#7f8ba3;
+                                 margin-top:12px;line-height:1.95;height:132px"></div>
+          <div style="font-size:11.5px;color:#5f6a80;margin-top:10px">（千分之一才会出现的彩蛋 · 祝你好运）</div>`;
+        el.appendChild(box);
+        const bar = box.querySelector('#gxBar');
+        const pct = box.querySelector('#gxPct');
+        const spd = box.querySelector('#gxSpeed');
+        const log = box.querySelector('#gxLog');
+        const line = txt => {
+          const d = document.createElement('div');
+          d.textContent = txt;
+          log.appendChild(d);
+          log.scrollTop = log.scrollHeight;
+        };
+
+        line('> 正在解析下载地址 …');
+        await h.sleep(700);
+        line('> 已连接 cdn.不存在的网站（延迟 3ms，编的）');
+        await h.sleep(600);
+
+        // 进度条：前段慢（"92GB 呢"），中段提速，最后卡在 87% 演一下
+        const steps = [
+          [2, 1.2, '> 包体大小：92.4 GB（含全部语音包与过场动画）'],
+          [9, 8.6, '> 已连接加速节点：23.5 MB/s（你家网速的最高礼遇）'],
+          [21, 19.8, '> 剩余时间：约 118 小时 43 分'],
+          [38, 24.1, '> ⚠ 检测到磁盘剩余空间 12 GB，可能不够'],
+          [55, 31.6, '> 建议关闭占带宽的程序（比如正在生成实验报告的那个）'],
+          [74, 42.9, '> 已下载 68.1 GB … 你家路由器开始冒烟了'],
+          [87, 0.4, '> 速度骤降：0.4 MB/s（运营商表示这不归它管）'],
+        ];
+        for (const [p, s, txt] of steps) {
+          if (h.cancelled()) return;
+          bar.style.width = p + '%';
+          pct.textContent = p + '%';
+          spd.textContent = s.toFixed(1) + ' MB/s';
+          line(txt);
+          await h.sleep(900);
+        }
+        await h.sleep(900);
+        line('> 下载完成，正在解压 …');
+        await h.sleep(800);
+        line('> 解压失败：磁盘空间不足（差 80.4 GB）');
+        await h.sleep(800);
+        line('> 正在清理安装残留 ……… 已完成');
+        await h.sleep(700);
+        bar.style.width = '100%';
+        pct.textContent = '100%';
+        spd.textContent = '0.0 MB/s';
+        box.querySelector('#gxLog').innerHTML =
+          '<div style="color:#8fd3ff">玩笑到此为止 😄</div>'
+          + '<div style="color:#7f8ba3">什么都没下载，一个字节流量都没用，磁盘也没动。</div>'
+          + '<div style="color:#7f8ba3">想玩游戏的话 —— 先把实验报告写完。</div>';
+        await h.sleep(3000);
+      },
+    },
     // 经典保留项目：第一次点击永远是它（见 renderer.js 的 pickDangerEffect）
     {
       id: 'audio', name: '经典音频（保留节目）', weight: 1, maxMs: 8000,
@@ -635,15 +713,21 @@
     return true;
   }
 
+  // 随机抽取：rare 效果（原神）不进池，由下面的 rollRare() 单独掷骰子
   function pick(excludeLast = true) {
     let last = '';
     try { last = localStorage.getItem('dangerLastEffect') || ''; } catch (_) {}
-    const cand = POOL.filter(e => e.id !== 'audio' && !(excludeLast && e.id === last));
+    const cand = POOL.filter(e => !e.rare && e.id !== 'audio'
+      && (e.weight || 1) > 0 && !(excludeLast && e.id === last));
     const total = cand.reduce((s, e) => s + (e.weight || 1), 0);
     let r = Math.random() * total;
     for (const e of cand) { r -= (e.weight || 1); if (r <= 0) return e.id; }
     return cand[0].id;
   }
+
+  // 千分之一彩蛋：命中就返回 'genshin'，否则 null
+  const RARE_ODDS = 0.001;
+  function rollRare() { return Math.random() < RARE_ODDS ? 'genshin' : null; }
 
   function remember(id) { try { localStorage.setItem('dangerLastEffect', id); } catch (_) {} }
 
@@ -652,6 +736,8 @@
     names: () => POOL.map(e => e.id + ': ' + e.name),
     run: async id => { remember(id); return run(id); },   // 供 CDP 验收逐个调用
     pick,
+    rollRare,                 // 千分之一：命中原神
+    RARE_ODDS,
     remember,
     isRunning: () => !!running,
     cancel,

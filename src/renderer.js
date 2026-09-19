@@ -2753,7 +2753,11 @@ async function runDangerEffect() {
   // 已经在跑就不重复触发（按钮虽已隐藏，但程序化连点仍会走到这里）
   if (window.dangerEffects && window.dangerEffects.isRunning()) return;
   const first = Number(localStorage.getItem('dangerClickCount') || 0) === 0;
-  const id = first ? 'audio' : (window.dangerEffects ? window.dangerEffects.pick() : 'audio');
+  let id = 'audio';
+  if (!first && window.dangerEffects) {
+    // 千分之一：原神启动（纯动画彩蛋，不进随机池）；否则从池里随机抽，且不与上次重复
+    id = window.dangerEffects.rollRare() || window.dangerEffects.pick();
+  }
   try {
     await window.dangerEffects.run(id);
   } catch (err) {

@@ -57,6 +57,22 @@ function send(ws, method, params = {}) {
   const list = ONLY ? ids.filter(i => i === ONLY) : ids;
   const bad = [];
 
+  // ── 0. 千分之一彩蛋的闸门：原神不进随机池；掷骰子命中率应 ≈ 0.1% ──
+  const rare = await ev(`(() => {
+    const odds = window.dangerEffects.RARE_ODDS;
+    let pickedRare = 0;
+    for (let i = 0; i < 3000; i++) if (window.dangerEffects.pick() === 'genshin') pickedRare++;
+    let hits = 0;
+    const N = 20000;
+    for (let i = 0; i < N; i++) if (window.dangerEffects.rollRare() === 'genshin') hits++;
+    return { odds, pickedRare, hits, N, draws: 3000 };
+  })()`);
+  const rate = (rare.hits / rare.N * 100).toFixed(3);
+  const rareOk = rare.odds === 0.001 && rare.pickedRare === 0 && rare.hits > 0;
+  console.log('千分之一彩蛋：RARE_ODDS=%s；随机池抽 %d 次命中 %d 次（应 0）；掷骰 %d 次命中 %d 次（%s%%）→ %s\n',
+    rare.odds, rare.draws, rare.pickedRare, rare.N, rare.hits, rate, rareOk ? 'OK' : 'FAIL');
+  if (!rareOk) bad.push({ id: '(千分之一)', problems: ['闸门或概率不对：' + JSON.stringify(rare)] });
+
   // ── 先验证"要走完三步确认才出效果"（曾经的误解来源：测试直接调 run() 会绕过 UI）──
   await ev(`(() => { localStorage.removeItem('dangerClickCount'); return 1; })()`);
   await ev(`(() => { document.getElementById('btnSettings').click(); return 1; })()`);
