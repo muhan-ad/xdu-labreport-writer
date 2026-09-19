@@ -722,18 +722,6 @@
                 ⚠ 请勿点击 ⚠
               </button>
             </div>
-            <!-- 解谜入口默认藏起来：五分钟内连续触发十次彩蛋才会出现（见 src/danger-puzzle.js） -->
-            <div class="settings-section danger-section" id="puzzleSection" hidden>
-              <h4 class="danger-title">🔒 解谜</h4>
-              <div class="form-hint danger-hint">谜题：请输入管理员姓名。<br />提示：I'll eat my head</div>
-              <button class="btn btn-lg btn-outline btn-block" id="btnDangerPuzzle" type="button">
-                请输入管理员姓名
-              </button>
-              <button class="btn btn-lg btn-outline btn-block" id="btnRecords" type="button" hidden>
-                📖 打开档案室
-              </button>
-              <div class="form-hint" id="puzzleStateHint"></div>
-            </div>
           </div>
           <!-- 检查更新页 -->
           <div class="settings-pane" id="paneUpdate">
@@ -949,65 +937,6 @@
     </div>
   </div>
 
-  <!-- 解谜弹窗：一张便条（谜题 + "吃掉脑袋"刮刮卡） -->
-  <div class="modal-overlay" id="puzzleModal">
-    <div class="modal note-modal">
-      <div class="modal-header">
-        <h3>📜 一张便条</h3>
-        <button class="modal-close" id="btnNoteClose">×</button>
-      </div>
-      <div class="modal-body">
-        <div class="note-line">你点了很多次。有人让我留个问题给你 ——</div>
-        <div class="note-prompt">请输入管理员姓名。提示：<b>I'll eat my head</b></div>
-        <div class="scratch-wrap" id="scratchWrap">
-          <div class="scratch-reveal" id="scratchReveal">《雾都孤儿》里那位总说要吃掉自己脑袋的老先生。</div>
-          <canvas id="scratchCanvas"></canvas>
-        </div>
-        <div class="form-hint" id="scratchTip">按住鼠标在便条上蹭一蹭 —— 把他的头吃掉。</div>
-        <div class="form-group">
-          <input type="text" id="puzzleInput" placeholder="写下他的名字" autocomplete="off" spellcheck="false" />
-        </div>
-        <div class="form-hint" id="puzzleMsg"></div>
-        <div class="skill-actions">
-          <button class="btn btn-sm btn-primary" id="btnPuzzleSubmit" type="button">写下答案</button>
-          <button class="btn btn-sm btn-outline" id="btnPuzzleCancel" type="button">我再想想</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 档案室（答对后进入）：管理员档案 + 你的解谜记录 + 彩蛋手册 + 留言 -->
-  <div class="modal-overlay" id="recordsModal">
-    <div class="modal records-modal">
-      <div class="modal-header">
-        <h3>📖 档案室</h3>
-        <button class="modal-close" id="btnRecordsClose">×</button>
-      </div>
-      <div class="modal-body records-body">
-        <div class="records-card" id="adminCard"></div>
-        <div class="records-section">
-          <h4>你的解谜记录</h4>
-          <div class="records-lines" id="solveRecords"></div>
-        </div>
-        <div class="records-section">
-          <h4>彩蛋手册<span class="records-sub" id="handbookCount"></span></h4>
-          <div class="handbook" id="eggHandbook"></div>
-        </div>
-        <div class="records-section">
-          <h4>留言（只记在这台电脑上）</h4>
-          <div class="form-group">
-            <input type="text" id="guestbookInput" placeholder="留下一句话，给下一个摸到这里的人" maxlength="80" />
-          </div>
-          <div class="skill-actions">
-            <button class="btn btn-sm btn-primary" id="btnGuestbookPost" type="button">留下</button>
-            <button class="btn btn-sm btn-outline" id="btnNoteReplay" type="button">再看一遍便条</button>
-          </div>
-          <div class="guestbook-list" id="guestbookList"></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- 变体 AI 调整弹窗 -->
   <div class="modal-overlay" id="variantAIModal">
     <div class="modal modal-xl">
@@ -1062,6 +991,5 @@
   <script src="renderer.js"></script>
   <script src="ocr.js"></script>
   <script src="danger-effects.js"></script>
-  <script src="danger-puzzle.js"></script>
 </body>
 </html>

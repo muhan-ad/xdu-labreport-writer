@@ -79,44 +79,6 @@
 
   // ── 效果池 ──────────────────────────────────────────────
   const POOL = [
-    // 解谜成功的庆祝：礼花 + 底部提示条。权重 0 → 不进随机池，只由 danger-puzzle.js 触发。
-    {
-      id: 'unlock', name: '解谜成功庆祝（礼花）', weight: 0, maxMs: 9000,
-      async run(h) {
-        const el = h.layer({ pointer: false, css: 'background:rgba(12,14,20,.55)' });
-        const cv = document.createElement('canvas');
-        cv.style.cssText = 'width:100%;height:100%;display:block';
-        el.appendChild(cv);
-        const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-        const W = window.innerWidth, H = window.innerHeight;
-        cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
-        const c = cv.getContext('2d'); c.scale(dpr, dpr);
-        const conf = Array.from({ length: 260 }, () => ({
-          x: W / 2 + rnd(-40, 40), y: H / 2 + rnd(-20, 20),
-          vx: rnd(-700, 700), vy: rnd(-950, -180),
-          s: rnd(4, 12), col: `hsl(${rnd(0, 360)},85%,62%)`, rot: rnd(0, 6.28), vr: rnd(-9, 9),
-        }));
-        let raf = 0; const stop = { v: false };
-        h.onCleanup(() => { stop.v = true; cancelAnimationFrame(raf); });
-        const t0 = performance.now();
-        const step = now => {
-          if (stop.v) return;
-          const dt = 1 / 60;
-          c.clearRect(0, 0, W, H);
-          for (const p of conf) {
-            p.vy += 1500 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.rot += p.vr * dt;
-            if (p.y > H + 20) { p.y = -20; p.vy = rnd(-500, -200); p.vx = rnd(-300, 300); }
-            c.save(); c.translate(p.x, p.y); c.rotate(p.rot); c.fillStyle = p.col;
-            c.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); c.restore();
-          }
-          if (now - t0 > 4200) return;               // 礼花放完就停
-          raf = requestAnimationFrame(step);
-        };
-        raf = requestAnimationFrame(step);
-        h.caption('📖 解谜成功：档案室为你打开了', 3600);
-        await h.sleep(4600);
-      },
-    },
     // 千分之一彩蛋：不进随机池（权重 0 且 rare 标记），由 runDangerEffect 单独掷骰子触发。
     // 纯动画：不联网、不下载、不写任何文件 —— 末尾会自己说明"什么都没下载"。
     {
@@ -920,7 +882,6 @@
       m[eff.id] = (Number(m[eff.id]) || 0) + 1;
       localStorage.setItem(key, JSON.stringify(m));
     } catch (_) {}
-    noteTriggerTime();                               // 记录触发时刻：5 分钟内满 10 次 → 露出解谜入口
     const watchdog = setTimeout(() => cancel(), eff.maxMs || 12000);
     try {
       await eff.run(h);
@@ -947,33 +908,6 @@
     return cand[0].id;
   }
 
-  // ── 「五分钟内连续触发十次」→ 露出解谜入口 ──
-  // 只在触发时刻记一笔（本地时区的时间戳），只保留 5 分钟内的；满 10 次就置位并广播事件，
-  // 由 danger-puzzle.js 负责把「请勿点击」页里的解谜区块显示出来。
-  const WINDOW_MS = 5 * 60 * 1000;
-  const NEEDED = 10;
-  const TIMES_KEY = 'dangerClickTimes';
-  function readTimes() {
-    try {
-      const arr = JSON.parse(localStorage.getItem(TIMES_KEY) || '[]');
-      const now = Date.now();
-      return Array.isArray(arr) ? arr.filter(t => typeof t === 'number' && now - t <= WINDOW_MS) : [];
-    } catch (_) { return []; }
-  }
-  function noteTriggerTime() {
-    try {
-      const now = Date.now();
-      const times = readTimes();
-      times.push(now);
-      localStorage.setItem(TIMES_KEY, JSON.stringify(times.slice(-40)));
-      if (times.length >= NEEDED && localStorage.getItem('dangerPuzzleEntry') !== '1') {
-        localStorage.setItem('dangerPuzzleEntry', '1');
-        document.dispatchEvent(new CustomEvent('danger:puzzle-entry', { detail: { times: times.length } }));
-      }
-    } catch (_) {}
-  }
-  function clickWindow() { return readTimes().length; }
-
   // 千分之一彩蛋：命中就返回 'genshin'，否则 null
   const RARE_ODDS = 0.0001;   // 万分之一
   function rollRare() { return Math.random() < RARE_ODDS ? 'genshin' : null; }
@@ -989,7 +923,6 @@
     RARE_ODDS,
     remember,
     isRunning: () => !!running,
-    clickWindow,               // 5 分钟窗口内已触发的次数（解谜入口条件：≥10）
     cancel,
   };
 })();
