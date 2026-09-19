@@ -582,21 +582,6 @@ handle('danger-disk-space', () => {
   return { ok: true, drives: out };
 });
 
-// 「假时间回滚」要"回滚到装这个软件的那一刻"：读 exe 与用户数据目录的创建时间（只读）。
-// 打包态 exe 的创建时间 ≈ 安装时间；开发态读到的是 electron.exe，退而用 userData。
-handle('danger-install-time', () => {
-  const fmt = d => {
-    const p = v => String(v).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-  };
-  let exeTime = null, userDataTime = null;
-  try { exeTime = fs.statSync(process.execPath).birthtime; } catch (_) {}
-  try { userDataTime = fs.statSync(app.getPath('userData')).birthtime; } catch (_) {}
-  const pick = app.isPackaged ? (exeTime || userDataTime) : (userDataTime || exeTime);
-  if (!pick) return { ok: false, error: '取不到时间' };
-  return { ok: true, text: fmt(pick), exeTime: exeTime ? fmt(exeTime) : '', userDataTime: userDataTime ? fmt(userDataTime) : '' };
-});
-
 // ── IPC: 读取 schema.json（方式三：表单模式）──
 handle('read-schema', (_, expPath) => {
   try {

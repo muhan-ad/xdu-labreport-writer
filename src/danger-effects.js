@@ -610,37 +610,6 @@
       },
     },
     {
-      id: 'time-rollback', name: '假时间回滚', weight: 2, maxMs: 12000,
-      async run(h) {
-        const el = h.layer({ css: 'background:rgba(15,18,25,.92);display:flex;align-items:center;justify-content:center;color:#d7ffd7;font-family:Consolas,monospace' });
-        const box = document.createElement('div');
-        box.style.cssText = 'font-size:14px;line-height:2;min-width:420px';
-        el.appendChild(box);
-        // 目标时间 = 用户机器上的真实安装时间（读 exe / userData 的创建时间，只读）
-        let installAt = '';
-        try {
-          const t = await window.labAPI.dangerInstallTime();
-          if (t && t.ok && t.text) installAt = t.text;
-        } catch (_) {}
-        const lines = [
-          '> 检测到高危点击操作，启动安全回滚…',
-          installAt ? '> 目标时间：' + installAt + ' —— 你把这个软件装进电脑的那一刻'
-                    : '> 目标时间：这台电脑第一次运行本软件的那一刻',
-          '> 正在解压时间机器驱动 …… 87%',
-          '> 正在回收这段时间里生成的实验报告 …… 已完成',
-          '> 正在联系那天的你 …… 对方拒绝接听',
-          '> 回滚失败：时间机器未安装（装它要 88GB，算了）',
-          '> 已放弃回滚：数据保持原样，你的报告一份都没少 ✓',
-        ];
-        for (const l of lines) {
-          if (h.cancelled()) return;
-          const d = document.createElement('div'); d.textContent = l; box.appendChild(d);
-          await h.sleep(l.includes('87%') ? 900 : 620);
-        }
-        await h.sleep(1100);
-      },
-    },
-    {
       id: 'fake-experiment', name: '假解锁第 27 个实验', weight: 2, maxMs: 12000,
       async run(h) {
         const el = h.layer({ css: 'background:rgba(15,18,25,.5);display:flex;align-items:center;justify-content:center' });
