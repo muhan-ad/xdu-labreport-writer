@@ -79,6 +79,44 @@
 
   // ── 效果池 ──────────────────────────────────────────────
   const POOL = [
+    // 解谜成功的庆祝：礼花 + 底部提示条。权重 0 → 不进随机池，只由 danger-puzzle.js 触发。
+    {
+      id: 'unlock', name: '解谜成功庆祝', weight: 0, maxMs: 9000,
+      async run(h) {
+        const el = h.layer({ pointer: false, css: 'background:rgba(12,14,20,.55)' });
+        const cv = document.createElement('canvas');
+        cv.style.cssText = 'width:100%;height:100%;display:block';
+        el.appendChild(cv);
+        const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+        const W = window.innerWidth, H = window.innerHeight;
+        cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+        const c = cv.getContext('2d'); c.scale(dpr, dpr);
+        const conf = Array.from({ length: 260 }, () => ({
+          x: W / 2 + rnd(-40, 40), y: H / 2 + rnd(-20, 20),
+          vx: rnd(-700, 700), vy: rnd(-950, -180),
+          s: rnd(4, 12), col: `hsl(${rnd(0, 360)},85%,62%)`, rot: rnd(0, 6.28), vr: rnd(-9, 9),
+        }));
+        let raf = 0; const stop = { v: false };
+        h.onCleanup(() => { stop.v = true; cancelAnimationFrame(raf); });
+        const t0 = performance.now();
+        const step = now => {
+          if (stop.v) return;
+          const dt = 1 / 60;
+          c.clearRect(0, 0, W, H);
+          for (const p of conf) {
+            p.vy += 1500 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.rot += p.vr * dt;
+            if (p.y > H + 20) { p.y = -20; p.vy = rnd(-500, -200); p.vx = rnd(-300, 300); }
+            c.save(); c.translate(p.x, p.y); c.rotate(p.rot); c.fillStyle = p.col;
+            c.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); c.restore();
+          }
+          if (now - t0 > 4200) return;               // 礼花放完就停
+          raf = requestAnimationFrame(step);
+        };
+        raf = requestAnimationFrame(step);
+        h.caption('🔓 解谜成功：管理员模式已解锁（设置左侧最后一项）', 3600);
+        await h.sleep(4600);
+      },
+    },
     // 千分之一彩蛋：不进随机池（权重 0 且 rare 标记），由 runDangerEffect 单独掷骰子触发。
     // 纯动画：不联网、不下载、不写任何文件 —— 末尾会自己说明"什么都没下载"。
     {
@@ -867,6 +905,12 @@
       get count() { return count; },
     };
     count = bumpClickCount();
+    try {                                            // 触发计数（管理员页的"统计"读它）
+      const key = 'dangerEffectCounts';
+      const m = JSON.parse(localStorage.getItem(key) || '{}') || {};
+      m[eff.id] = (Number(m[eff.id]) || 0) + 1;
+      localStorage.setItem(key, JSON.stringify(m));
+    } catch (_) {}
     const watchdog = setTimeout(() => cancel(), eff.maxMs || 12000);
     try {
       await eff.run(h);
@@ -884,11 +928,12 @@
   function pick(excludeLast = true) {
     let last = '';
     try { last = localStorage.getItem('dangerLastEffect') || ''; } catch (_) {}
+    // 权重 0 的效果（原神、解锁庆祝）不进随机池，只能由特定入口触发
     const cand = POOL.filter(e => !e.rare && e.id !== 'audio'
-      && (e.weight || 1) > 0 && !(excludeLast && e.id === last));
-    const total = cand.reduce((s, e) => s + (e.weight || 1), 0);
+      && e.weight > 0 && !(excludeLast && e.id === last));
+    const total = cand.reduce((s, e) => s + e.weight, 0);
     let r = Math.random() * total;
-    for (const e of cand) { r -= (e.weight || 1); if (r <= 0) return e.id; }
+    for (const e of cand) { r -= e.weight; if (r <= 0) return e.id; }
     return cand[0].id;
   }
 

@@ -554,6 +554,11 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             请勿点击
           </button>
+          <!-- 解谜成功后由 src/danger-puzzle.js 去掉 hidden 显示 -->
+          <button class="settings-nav-item settings-nav-danger" id="btnNavAdmin" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
+            管理员模式
+          </button>
         </div>
         <!-- 模块内容 -->
         <div class="settings-panes">
@@ -721,6 +726,30 @@
               <button class="btn btn-lg btn-danger btn-block" id="btnDangerGo" type="button">
                 ⚠ 请勿点击 ⚠
               </button>
+            </div>
+            <div class="settings-section danger-section">
+              <h4 class="danger-title">🔒 解谜</h4>
+              <div class="form-hint danger-hint">谜题：请输入管理员姓名。<br />提示：I'll eat my head</div>
+              <button class="btn btn-lg btn-outline btn-block" id="btnDangerPuzzle" type="button">
+                请输入管理员姓名
+              </button>
+              <div class="form-hint" id="puzzleStateHint"></div>
+            </div>
+          </div>
+          <!-- 管理员模式页（默认隐藏，解谜成功后出现） -->
+          <div class="settings-pane" id="paneAdmin">
+            <div class="settings-section">
+              <h4>🔓 管理员模式</h4>
+              <div class="form-hint" id="adminStatus"></div>
+              <div class="form-group">
+                <label>彩蛋播放器（选一个立即播放，调试/演示用）</label>
+                <select id="adminEffectSelect"></select>
+              </div>
+              <div class="skill-actions">
+                <button class="btn btn-sm btn-primary" id="btnAdminPlay" type="button">播放</button>
+                <button class="btn btn-sm btn-outline" id="btnAdminReset" type="button">重置彩蛋数据</button>
+              </div>
+              <div class="form-hint" id="adminStats"></div>
             </div>
           </div>
           <!-- 检查更新页 -->
@@ -937,6 +966,29 @@
     </div>
   </div>
 
+  <!-- 解谜弹窗（管理员姓名） -->
+  <div class="modal-overlay" id="puzzleModal">
+    <div class="modal" style="width: 460px;">
+      <div class="modal-header">
+        <h3>解谜</h3>
+      </div>
+      <div class="modal-body">
+        <div class="form-hint puzzle-hint">
+          请输入管理员姓名。<br />
+          提示：<b>I'll eat my head</b>
+        </div>
+        <div class="form-group">
+          <input type="text" id="puzzleInput" placeholder="管理员姓名" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="form-hint" id="puzzleMsg"></div>
+        <div class="skill-actions">
+          <button class="btn btn-sm btn-primary" id="btnPuzzleSubmit" type="button">提交</button>
+          <button class="btn btn-sm btn-outline" id="btnPuzzleCancel" type="button">我再想想</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 变体 AI 调整弹窗 -->
   <div class="modal-overlay" id="variantAIModal">
     <div class="modal modal-xl">
@@ -991,5 +1043,6 @@
   <script src="renderer.js"></script>
   <script src="ocr.js"></script>
   <script src="danger-effects.js"></script>
+  <script src="danger-puzzle.js"></script>
 </body>
 </html>
