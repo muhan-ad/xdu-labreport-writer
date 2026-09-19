@@ -1910,15 +1910,32 @@ body {
   flex: 0 0 150px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  /* 4px → 3px：11 项在 560px 高的弹窗里放得下（见 .settings-nav-item 的 padding 注释） */
+  gap: 3px;
   border-right: 1px solid var(--border-light);
   padding-right: 16px;
+  /* 弹窗是固定高度（560px），导航已有 11 项（最后一项是「请勿点击」）：
+     不滚动的话最后几项会被父级 overflow:hidden 直接裁掉 —— 表现就是
+     "请勿点击都看不到了"。这里允许滚轮滚动，并配一条细滚动条。 */
+  overflow-y: auto;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
 }
+.settings-nav::-webkit-scrollbar { width: 6px; }
+.settings-nav::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.16);
+  border-radius: 3px;
+}
+.settings-nav::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.28); }
+.settings-nav::-webkit-scrollbar-track { background: transparent; }
 .settings-nav-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
+  /* 10px → 8px：11 项在 560px 高的弹窗里能全放下（实测 442px > 435px 会裁掉最后一项），
+     不必滚动就能看到「请勿点击」；万一以后再加项，导航本身也能滚 */
+  padding: 8px 12px;
   border: none;
   border-radius: 8px;
   background: transparent;
