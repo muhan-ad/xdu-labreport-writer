@@ -2744,3 +2744,30 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   word-break: break-word;
 }
 .ai-stream-preview:empty { display: none; }
+
+/* ── 设置 · 请勿点击彩蛋：效果池（src/danger-effects.js）的公共样式 ── */
+@keyframes dx-slide {
+  from { transform: translateX(0); }
+  to   { transform: translateX(calc(-100vw - 100%)); }
+}
+@keyframes dx-fall {
+  from { transform: translateY(0) rotate(0deg); }
+  to   { transform: translateY(calc(100vh + 80px)) rotate(28deg); }
+}
+@keyframes dx-rise {
+  from { transform: translateY(10px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+@keyframes dx-shake {
+  0%, 100% { transform: translate(0, 0); }
+  20% { transform: translate(-7px, 3px); }
+  40% { transform: translate(6px, -4px); }
+  60% { transform: translate(-5px, -3px); }
+  80% { transform: translate(5px, 4px); }
+}
+.dx-layer { user-select: none; }
+.dx-card { animation: dx-pop .18s ease-out; }
+@keyframes dx-pop {
+  from { transform: translate(-50%, -50%) scale(.92); opacity: 0; }
+  to   { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}

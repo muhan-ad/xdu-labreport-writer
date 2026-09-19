@@ -2704,7 +2704,6 @@ async function doContributeUpload() {
   }
 }
 let dangerStep = 0;          // 0 一级 / 1 二级 / 2 三级
-let dangerAudio = null;      // 当前 Audio 对象（防止 GC 中断播放）
 
 const DANGER_STEPS = [
   {
@@ -2743,32 +2742,33 @@ function proceedDangerFlow() {
     showDangerStep(dangerStep);
     return;
   }
-  // 三级确认通过：关闭弹窗，播放内置音频
+  // 三级确认通过：关掉确认弹窗，跑一个彩蛋效果，跑完（或被 Esc 中断）再回主界面
   closeModal('dangerModal');
-  playDangerAudio();
+  runDangerEffect();
+}
+
+// 效果池在 src/danger-effects.js：第一次点永远是原来那段音频（保留节目），
+// 之后每次从池里随机抽一个，且不与上一次重复。
+async function runDangerEffect() {
+  // 已经在跑就不重复触发（按钮虽已隐藏，但程序化连点仍会走到这里）
+  if (window.dangerEffects && window.dangerEffects.isRunning()) return;
+  const first = Number(localStorage.getItem('dangerClickCount') || 0) === 0;
+  const id = first ? 'audio' : (window.dangerEffects ? window.dangerEffects.pick() : 'audio');
+  try {
+    await window.dangerEffects.run(id);
+  } catch (err) {
+    console.error('[danger] 效果异常，退回音频', err);
+    try { await window.dangerEffects.run('audio'); } catch (_) {}
+  } finally {
+    backToMain();
+  }
 }
 
 function exitDangerFlow() {
-  if (dangerAudio) { dangerAudio.pause(); dangerAudio = null; }
+  // 中途退出（还没到三级）时效果池没在跑，这里兜一下以防万一
+  if (window.dangerEffects) window.dangerEffects.cancel();
   closeModal('dangerModal');
   showToast('info', '已退出', '还好你及时收手了', 2500);
-}
-
-async function playDangerAudio() {
-  try {
-    const r = await window.labAPI.readAudioFile();
-    if (!r.ok) throw new Error(r.error);
-    const url = `data:${r.mime};base64,${r.data}`;
-    const audio = new Audio(url);
-    dangerAudio = audio;
-    await audio.play();
-    audio.onended = () => { dangerAudio = null; backToMain(); };
-    audio.onerror = () => { dangerAudio = null; backToMain(); };
-  } catch (err) {
-    dangerAudio = null;
-    showToast('error', '播放失败', err.message, 4000);
-    backToMain();
-  }
 }
 
 function backToMain() {

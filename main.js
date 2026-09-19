@@ -520,6 +520,44 @@ listen('window-maximize', () => {
 });
 listen('window-close', () => { if (mainWindow) mainWindow.close(); });
 
+// ── IPC: 「请勿点击」彩蛋的窗口级效果（抖动 / 闪退）──
+// 三条纪律：不真关闭窗口、不动用户数据、**任何情况下都要复原**（setBounds 复原写在
+// 定时器的退出分支里；渲染层另有看门狗）。窗口是 frameless 的，所以没有"改标题"这条路，
+// 假未响应由渲染层改自绘标题栏实现。
+handle('danger-window-shake', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, error: '窗口不可用' };
+  if (mainWindow.isMaximized() || mainWindow.isFullScreen() || mainWindow.isMinimized()) {
+    return { ok: false, reason: 'maximized' };      // 渲染层退回内容抖动
+  }
+  const start = mainWindow.getBounds();
+  let i = 0;
+  const timer = setInterval(() => {
+    if (!mainWindow || mainWindow.isDestroyed() || i >= 9) {
+      clearInterval(timer);
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBounds(start);
+      return;
+    }
+    i += 1;
+    const dx = (i % 2 ? 1 : -1) * (12 - i);
+    const dy = (i % 3 ? 1 : -1) * (7 - Math.floor(i / 2));
+    mainWindow.setBounds({ x: start.x + dx, y: start.y + dy, width: start.width, height: start.height });
+  }, 90);
+  return { ok: true };
+});
+
+handle('danger-window-vanish', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, error: '窗口不可用' };
+  const wasMaximized = mainWindow.isMaximized();
+  mainWindow.hide();
+  setTimeout(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.show();
+    if (wasMaximized) mainWindow.maximize();
+    mainWindow.focus();
+  }, 1600);
+  return { ok: true };
+});
+
 // ── IPC: 读取 schema.json（方式三：表单模式）──
 handle('read-schema', (_, expPath) => {
   try {

@@ -45,6 +45,9 @@ contextBridge.exposeInMainWorld('labAPI', {
   readDocxBuffer: (filePath) => ipcRenderer.invoke('read-docx-buffer', filePath),
   // 内置音频（彩蛋播放）
   readAudioFile: () => ipcRenderer.invoke('read-audio-file'),
+  // 「请勿点击」彩蛋的窗口级效果（主进程侧保证复原；渲染层另有看门狗）
+  dangerShake: () => ipcRenderer.invoke('danger-window-shake'),
+  dangerVanish: () => ipcRenderer.invoke('danger-window-vanish'),
   // 检查更新（仅版本校对 + 浏览器打开下载链接）
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   checkForUpdate: (cfg) => ipcRenderer.invoke('check-for-update', cfg),
