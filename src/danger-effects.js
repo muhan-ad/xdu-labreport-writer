@@ -396,7 +396,16 @@
           const dt = Math.min(0.032, (now - last) / 1000); last = now;
           // 惯性：窗口这一帧移动了多少，粒子就反向被"甩"多少（取负号 = 惯性滞后），
           // 系数 2.2 是手感值：拖快了明显荡，慢慢拖几乎无感
-          const dwx = (window.screenX - winX) * 2.2, dwy = (window.screenY - winY) * 2.2;
+          // 窗口最小化时 screenX/screenY 是 -16000 这类哨兵值，直接算位移会得到巨大的假冲量
+          // （恢复窗口时会把粒子甩飞），所以这里先判断：最小化/隐藏就当作没动。
+          const hidden = document.hidden || window.screenX <= -10000 || window.screenY <= -10000;
+          let dwx = 0, dwy = 0;
+          if (!hidden) {
+            dwx = (window.screenX - winX) * 2.2;
+            dwy = (window.screenY - winY) * 2.2;
+            const LIM = 400;                      // 单帧位移超过这个数不可能是"拖窗口"
+            if (Math.abs(dwx) > LIM || Math.abs(dwy) > LIM) { dwx = 0; dwy = 0; }
+          }
           winX = window.screenX; winY = window.screenY;
           ctx.clearRect(0, 0, W, H);
           let moving = 0;
@@ -911,6 +920,7 @@
       m[eff.id] = (Number(m[eff.id]) || 0) + 1;
       localStorage.setItem(key, JSON.stringify(m));
     } catch (_) {}
+    noteTriggerTime();                               // 记录触发时刻：5 分钟内满 10 次 → 露出解谜入口
     const watchdog = setTimeout(() => cancel(), eff.maxMs || 12000);
     try {
       await eff.run(h);
@@ -937,6 +947,33 @@
     return cand[0].id;
   }
 
+  // ── 「五分钟内连续触发十次」→ 露出解谜入口 ──
+  // 只在触发时刻记一笔（本地时区的时间戳），只保留 5 分钟内的；满 10 次就置位并广播事件，
+  // 由 danger-puzzle.js 负责把「请勿点击」页里的解谜区块显示出来。
+  const WINDOW_MS = 5 * 60 * 1000;
+  const NEEDED = 10;
+  const TIMES_KEY = 'dangerClickTimes';
+  function readTimes() {
+    try {
+      const arr = JSON.parse(localStorage.getItem(TIMES_KEY) || '[]');
+      const now = Date.now();
+      return Array.isArray(arr) ? arr.filter(t => typeof t === 'number' && now - t <= WINDOW_MS) : [];
+    } catch (_) { return []; }
+  }
+  function noteTriggerTime() {
+    try {
+      const now = Date.now();
+      const times = readTimes();
+      times.push(now);
+      localStorage.setItem(TIMES_KEY, JSON.stringify(times.slice(-40)));
+      if (times.length >= NEEDED && localStorage.getItem('dangerPuzzleEntry') !== '1') {
+        localStorage.setItem('dangerPuzzleEntry', '1');
+        document.dispatchEvent(new CustomEvent('danger:puzzle-entry', { detail: { times: times.length } }));
+      }
+    } catch (_) {}
+  }
+  function clickWindow() { return readTimes().length; }
+
   // 千分之一彩蛋：命中就返回 'genshin'，否则 null
   const RARE_ODDS = 0.0001;   // 万分之一
   function rollRare() { return Math.random() < RARE_ODDS ? 'genshin' : null; }
@@ -952,6 +989,7 @@
     RARE_ODDS,
     remember,
     isRunning: () => !!running,
+    clickWindow,               // 5 分钟窗口内已触发的次数（解谜入口条件：≥10）
     cancel,
   };
 })();

@@ -727,7 +727,8 @@
                 ⚠ 请勿点击 ⚠
               </button>
             </div>
-            <div class="settings-section danger-section">
+            <!-- 解谜入口默认藏起来：五分钟内连续触发十次彩蛋才会出现（见 src/danger-puzzle.js） -->
+            <div class="settings-section danger-section" id="puzzleSection" hidden>
               <h4 class="danger-title">🔒 解谜</h4>
               <div class="form-hint danger-hint">谜题：请输入管理员姓名。<br />提示：I'll eat my head</div>
               <button class="btn btn-lg btn-outline btn-block" id="btnDangerPuzzle" type="button">

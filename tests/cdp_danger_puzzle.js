@@ -62,7 +62,8 @@ function send(ws, method, params = {}) {
 
   // 0. 干净起点
   await ev(`(() => {
-    ['dangerAdminUnlocked','dangerPuzzleTries','dangerAdminUnlockedAt','dangerEffectCounts','dangerClickCount']
+    ['dangerAdminUnlocked','dangerPuzzleTries','dangerAdminUnlockedAt','dangerEffectCounts','dangerClickCount',
+     'dangerPuzzleEntry','dangerPuzzleAutoOpened','dangerClickTimes']
       .forEach(k => localStorage.removeItem(k));
     if (window.dangerPuzzle) window.dangerPuzzle.applyUnlock();
     document.getElementById('btnSettings').click();
@@ -72,21 +73,51 @@ function send(ws, method, params = {}) {
   await ev(`(() => { document.getElementById('btnNavDanger').click(); return 1; })()`);
   await wait(300);
 
-  // 1. 初始状态
+  // 1. 初始状态：解谜入口必须藏着（要 5 分钟内点满 10 次才出现）
   const init = await ev(`(() => ({
     navHidden: document.getElementById('btnNavAdmin').hidden,
     paneExists: !!document.getElementById('paneAdmin'),
+    entryHidden: document.getElementById('puzzleSection').hidden,
     entry: !!document.getElementById('btnDangerPuzzle'),
-    hintOnPane: document.getElementById('paneDanger').innerText.includes("I'll eat my head"),
+    hintText: document.getElementById('paneDanger').innerText,
     unlocked: window.dangerPuzzle.unlocked(),
+    window: window.dangerEffects.clickWindow(),
   }))()`);
-  check('初始：管理员项隐藏 / 解谜入口与提示在页面上',
-    init.navHidden && init.paneExists && init.entry && init.hintOnPane && !init.unlocked,
-    JSON.stringify(init));
+  check('初始：管理员项与解谜入口都隐藏（谜面不可见）',
+    init.navHidden && init.paneExists && init.entryHidden && init.entry
+      && !init.hintText.includes("I'll eat my head") && !init.unlocked,
+    JSON.stringify(init).slice(0, 220));
 
-  // 2. 打开弹窗（走真实点击）
-  await ev(`(() => { document.getElementById('btnDangerPuzzle').click(); return 1; })()`);
-  await wait(350);
+  // 2. 触发计数：9 次不够，第 10 次才露出入口（并能自动弹出谜题）
+  for (let i = 1; i <= 9; i++) {
+    await ev(`window.dangerEffects.run('pixelate'); 1`);
+    await wait(320);
+    await ev(`window.dangerEffects.cancel()`);
+    await wait(180);
+  }
+  const nine = await ev(`(() => ({
+    window: window.dangerEffects.clickWindow(),
+    hidden: document.getElementById('puzzleSection').hidden,
+  }))()`);
+  check('第 9 次触发：入口仍然藏着', nine.window === 9 && nine.hidden === true, JSON.stringify(nine));
+
+  await ev(`window.dangerEffects.run('pixelate'); 1`);
+  await wait(400);
+  await ev(`window.dangerEffects.cancel()`);
+  await wait(1200);
+  const ten = await ev(`(() => ({
+    window: window.dangerEffects.clickWindow(),
+    revealed: window.dangerPuzzle.entryRevealed(),
+    hidden: document.getElementById('puzzleSection').hidden,
+    modalShown: document.getElementById('puzzleModal').classList.contains('show'),
+    hint: document.getElementById('paneDanger').innerText,
+  }))()`);
+  check('第 10 次触发：入口出现 + 谜题自动弹出',
+    ten.window >= 10 && ten.revealed === true && ten.hidden === false
+      && ten.modalShown === true && ten.hint.includes("I'll eat my head"),
+    JSON.stringify(ten).slice(0, 220));
+
+  // 3. 弹窗已在眼前，直接用它（下面继续按原流程验证判定）
   const modal = await ev(`(() => ({
     shown: document.getElementById('puzzleModal').classList.contains('show'),
     text: document.getElementById('puzzleModal').innerText.replace(/\\s+/g, ' ').trim(),
@@ -95,7 +126,7 @@ function send(ws, method, params = {}) {
     modal.shown && modal.text.includes('请输入管理员姓名') && modal.text.includes("I'll eat my head"),
     JSON.stringify(modal).slice(0, 200));
 
-  // 3. 空输入 / 错误答案
+  // 4. 空输入 / 错误答案
   await ev(`(() => { document.getElementById('btnPuzzleSubmit').click(); return 1; })()`);
   await wait(200);
   const emptyMsg = await ev(`document.getElementById('puzzleMsg').textContent`);
@@ -115,7 +146,7 @@ function send(ws, method, params = {}) {
     !wrongState.unlocked && wrongState.tries === 3 && /不对/.test(wrongState.msg),
     JSON.stringify(wrongState));
 
-  // 4. 正确答案的几种写法都能过（先试一个错的写法，再试正确的）
+  // 5. 正确答案的几种写法都能过（先试一个错的写法，再试正确的）
   const variants = ['Mr. Grimwig', 'grimwig', '  GRIMWIG  ', 'mr_grimwig'];
   let unlockOk = true, firstResult = '';
   for (const v of variants) {
@@ -129,7 +160,7 @@ function send(ws, method, params = {}) {
   }
   check('正确答案各种写法都能解锁（' + variants.join(' / ') + '）', unlockOk, firstResult);
 
-  // 5. 解锁后的管理员页
+  // 6. 解锁后的管理员页
   await wait(1200);
   const admin = await ev(`(() => {
     const nav = document.getElementById('btnNavAdmin');
@@ -145,7 +176,7 @@ function send(ws, method, params = {}) {
   check('统计里有点击与触发记录',
     /累计点击/.test(admin.stats) && /各效果触发次数/.test(admin.stats), admin.stats.slice(0, 160));
 
-  // 6. 播放器能真的播（选 audio，等它跑完）
+  // 7. 播放器能真的播（选 audio，等它跑完）
   await ev(`(() => {
     const sel = document.getElementById('adminEffectSelect');
     sel.value = 'pixelate';
@@ -165,7 +196,7 @@ function send(ws, method, params = {}) {
     filter: (document.getElementById('app') || document.body).style.filter || '' }))()`);
   check('效果收尾干净', after.layers === 0 && after.filter === '', JSON.stringify(after));
 
-  // 7. 重置
+  // 8. 重置
   await ev(`(() => { document.getElementById('btnSettings').click(); return 1; })()`);
   await wait(350);
   await ev(`(() => { document.getElementById('btnNavAdmin').click(); return 1; })()`);
@@ -180,12 +211,15 @@ function send(ws, method, params = {}) {
   await wait(700);
   const reset = await ev(`(() => ({
     navHidden: document.getElementById('btnNavAdmin').hidden,
+    entryHidden: document.getElementById('puzzleSection').hidden,
     unlocked: window.dangerPuzzle.unlocked(),
     tries: Number(localStorage.getItem('dangerPuzzleTries') || 0),
     clicks: Number(localStorage.getItem('dangerClickCount') || 0),
+    window: window.dangerEffects.clickWindow(),
   }))()`);
-  check('重置（走确认弹窗）：管理员项藏回、计数清零',
-    reset.navHidden && !reset.unlocked && reset.tries === 0 && reset.clicks === 0, JSON.stringify(reset));
+  check('重置（走确认弹窗）：管理员项与解谜入口都藏回、计数清零',
+    reset.navHidden && reset.entryHidden && !reset.unlocked && reset.tries === 0
+      && reset.clicks === 0 && reset.window === 0, JSON.stringify(reset));
 
   console.log('\n页面控制台错误：%d %s', errors.length, errors.slice(0, 3).join(' | '));
   if (errors.length) bad.push({ name: '(控制台)', detail: errors.slice(0, 3).join(' | ') });

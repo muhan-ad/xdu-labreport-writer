@@ -4,6 +4,10 @@
 // 谜底：Grimwig —— 典出狄更斯《雾都孤儿》里的 Mr. Grimwig，他的口头禅就是
 //       "I'll eat my head"（动不动就要吃掉自己的脑袋）。
 //
+// 入口条件：**五分钟内连续触发十次彩蛋**（「请勿点击」点满 10 次，见 danger-effects.js 的
+//          noteTriggerTime()）——达标前「请勿点击」页里连"解谜"这一块都不显示；达标那一刻
+//          自动把谜题弹窗推到眼前。之后入口常驻（除非在管理员页里重置彩蛋数据）。
+//
 // 判定：归一化后比较（去空格/连字符/点/中英标点、转小写），接受
 //        grimwig / mr grimwig / mr.grimwig / muhan 等写法。改谜底只改 ANSWERS 一行。
 //
@@ -97,17 +101,36 @@
     $('adminStats').innerHTML = ''
       + `解锁时间：${fmtTime(read(UNLOCK_AT_KEY)) || '（未知）'}<br />`
       + `「请勿点击」累计点击：${clicks} 次　解谜尝试：${tries()} 次<br />`
+      + `近 5 分钟内触发：${window.dangerEffects ? window.dangerEffects.clickWindow() : 0} 次`
+      + `（满 10 次露出解谜入口）<br />`
       + `各效果触发次数：${top || '（还没有记录）'}`;
   }
+
+  // ── 入口（五分钟内 10 次才露出来）──
+  const ENTRY_KEY = 'dangerPuzzleEntry';
+  const AUTO_OPENED_KEY = 'dangerPuzzleAutoOpened';
+  const entryRevealed = () => read(ENTRY_KEY) === '1';
+
+  function showEntry(auto) {
+    const sec = $('puzzleSection');
+    if (sec) sec.hidden = false;
+    // 条件刚达成那一刻把谜题推到眼前（只自动弹一次，之后入口常驻）
+    if (auto && read(AUTO_OPENED_KEY) !== '1') {
+      write(AUTO_OPENED_KEY, '1');
+      setTimeout(() => openPuzzle(), 700);
+    }
+  }
+
+  function applyEntryState() { if (entryRevealed()) showEntry(false); }
 
   function applyUnlock(announce) {
     const nav = $('btnNavAdmin');
     if (nav) nav.hidden = !unlocked();      // 只有解锁后才露面（applyUnlock 也被"重置"和启动时调用）
     const hint = $('puzzleStateHint');
     if (hint) {
-      hint.textContent = unlocked()
-        ? `已解开（${fmtTime(read(UNLOCK_AT_KEY))}）：设置左侧多了「管理员模式」`
-        : '';
+      if (unlocked()) hint.textContent = `已解开（${fmtTime(read(UNLOCK_AT_KEY))}）：设置左侧多了「管理员模式」`;
+      else if (entryRevealed()) hint.textContent = '入口是你自己点出来的 —— 谜底和这个软件的主人有关。';
+      else hint.textContent = '';
     }
     if (!$('adminEffectSelect')) return;
     const list = effectList();
@@ -121,10 +144,13 @@
   }
 
   function reset() {
-    [UNLOCK_KEY, TRIES_KEY, UNLOCK_AT_KEY, 'dangerEffectCounts', 'dangerClickCount', 'dangerLastEffect']
+    [UNLOCK_KEY, TRIES_KEY, UNLOCK_AT_KEY, 'dangerEffectCounts', 'dangerClickCount', 'dangerLastEffect',
+     ENTRY_KEY, AUTO_OPENED_KEY, 'dangerClickTimes']
       .forEach(k => { try { localStorage.removeItem(k); } catch (_) {} });
     const nav = $('btnNavAdmin');
     if (nav) nav.hidden = true;
+    const sec = $('puzzleSection');
+    if (sec) sec.hidden = true;                 // 入口也重新藏起来（要再点 10 次才会出现）
     const hint = $('puzzleStateHint');
     if (hint) hint.textContent = '彩蛋数据已重置（管理员页也藏回去了）。';
     if (typeof switchSettingsPane === 'function') switchSettingsPane('danger');
@@ -167,7 +193,17 @@
         if (ok) reset();
       };
     }
+    document.addEventListener('danger:puzzle-entry', () => {
+      showEntry(true);
+      if (!unlocked()) showToastSafe('你成功了', '连续点击已达标：解谜入口已出现', 3600);
+    });
     applyUnlock();
+    applyEntryState();
+  }
+
+  // 轻量 toast（渲染层有 showToast 就用它；没有就算了，别让彩蛋把主流程拖垮）
+  function showToastSafe(title, detail, ms) {
+    try { if (typeof showToast === 'function') showToast('warning', title, detail, ms); } catch (_) {}
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
@@ -180,6 +216,8 @@
     submit,
     unlocked,
     tries,
+    entryRevealed,
+    showEntry,
     reset,
     applyUnlock,
     renderStats,

@@ -57,6 +57,15 @@ function send(ws, method, params = {}) {
 }
 
 (async () => {
+  // 先把窗口还原并居中：最小化时 Chromium 不派发 rAF，动画类效果会"冻住"，测不出真结果
+  try {
+    const { execFileSync } = require('node:child_process');
+    const out = execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+      require('node:path').join(__dirname, 'center-window.ps1')], { encoding: 'utf8', timeout: 20000 });
+    console.log('窗口居中：' + out.trim());
+  } catch (e) { console.log('窗口居中失败（继续）：' + String(e.message).split('\n')[0]); }
+  await wait(600);
+
   const page = (await listTargets()).find(t => t.type === 'page' && /index\.html/.test(t.url));
   if (!page) throw new Error('未找到应用页面');
   const ws = await new Promise((res, rej) => { const w = new WebSocket(page.webSocketDebuggerUrl); w.onopen = () => res(w); w.onerror = rej; });
