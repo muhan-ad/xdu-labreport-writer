@@ -1,18 +1,21 @@
-// 「解谜彩蛋 + 管理员模式」验收
+// 「解谜彩蛋 → 档案室」验收
 //
 // 需先启动（隔离用户目录）：
 //   npx electron . --remote-debugging-port=9222 --user-data-dir=<临时目录>
 // 用法：node tests/cdp_danger_puzzle.js [端口，默认 9222]
 //
 // 断言：
-//   1. 初始状态：管理员导航项隐藏、解谜入口在「请勿点击」页；
-//   2. 空输入 / 错误姓名 → 拒绝并给出提示，尝试次数 +1；
-//   3. 正确姓名（Grimwig 的几种写法，含大小写/空格/前缀）→ 解锁；
-//   4. 解锁后：管理员导航项出现、能打开、彩蛋播放器列全了效果、统计里有内容；
-//   5. 播放器可用：选一个效果能真的播放；
-//   6. 重置：导航项重新隐藏、计数清零。
+//   1. 初始：解谜入口隐藏（谜面不可见）；
+//   2. 触发计数：第 9 次仍藏着，第 10 次入口出现 + 便条自动弹出；
+//   3. 便条：能刮开（CDP 真实鼠标拖动 → 刮开比例上升、线索露出）；
+//   4. 判定：空输入/错误答案被拒并给递进提示；Grimwig 的带前缀写法也能过；
+//   5. 档案室：管理员档案（姓名/身份/出处/口头禅）+ 解谜记录 + 彩蛋手册 + 留言；
+//   6. 留言：写一条 → 出现在列表里，重开档案室仍在；
+//   7. 「再看一遍便条」可用；重开后记录仍在（不是一次性的）。
 'use strict';
 const http = require('node:http');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const PORT = Number(process.argv[2] || 9222);
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
@@ -37,6 +40,14 @@ function send(ws, method, params = {}) {
 }
 
 (async () => {
+  // 先还原并居中窗口（最小化时画布尺寸/焦点都会异常）
+  try {
+    const out = execFileSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+      path.join(__dirname, 'center-window.ps1')], { encoding: 'utf8', timeout: 20000 });
+    console.log('窗口居中：' + out.trim());
+  } catch (e) { console.log('窗口居中失败（继续）'); }
+  await wait(600);
+
   const page = (await listTargets()).find(t => t.type === 'page' && /index\.html/.test(t.url));
   if (!page) throw new Error('未找到应用页面');
   const ws = await new Promise((res, rej) => { const w = new WebSocket(page.webSocketDebuggerUrl); w.onopen = () => res(w); w.onerror = rej; });
@@ -62,10 +73,11 @@ function send(ws, method, params = {}) {
 
   // 0. 干净起点
   await ev(`(() => {
-    ['dangerAdminUnlocked','dangerPuzzleTries','dangerAdminUnlockedAt','dangerEffectCounts','dangerClickCount',
-     'dangerPuzzleEntry','dangerPuzzleAutoOpened','dangerClickTimes']
+    ['dangerPuzzleEntry','dangerPuzzleAutoOpened','dangerPuzzleSolvedAt','dangerPuzzleTries',
+     'dangerPuzzleScratchPct','dangerPuzzleNoteReads','dangerGuestbook','dangerEffectCounts',
+     'dangerClickCount','dangerClickTimes','dangerAdminUnlocked','dangerAdminUnlockedAt']
       .forEach(k => localStorage.removeItem(k));
-    if (window.dangerPuzzle) window.dangerPuzzle.applyUnlock();
+    if (window.dangerPuzzle) window.dangerPuzzle.applyEntryState();
     document.getElementById('btnSettings').click();
     return 1;
   })()`);
@@ -73,157 +85,147 @@ function send(ws, method, params = {}) {
   await ev(`(() => { document.getElementById('btnNavDanger').click(); return 1; })()`);
   await wait(300);
 
-  // 1. 初始状态：解谜入口必须藏着（要 5 分钟内点满 10 次才出现）
+  // 1. 初始
   const init = await ev(`(() => ({
-    navHidden: document.getElementById('btnNavAdmin').hidden,
-    paneExists: !!document.getElementById('paneAdmin'),
     entryHidden: document.getElementById('puzzleSection').hidden,
-    entry: !!document.getElementById('btnDangerPuzzle'),
-    hintText: document.getElementById('paneDanger').innerText,
-    unlocked: window.dangerPuzzle.unlocked(),
-    window: window.dangerEffects.clickWindow(),
+    paneDangerText: document.getElementById('paneDanger').innerText,
+    recordsBtnHidden: document.getElementById('btnRecords').hidden,
   }))()`);
-  check('初始：管理员项与解谜入口都隐藏（谜面不可见）',
-    init.navHidden && init.paneExists && init.entryHidden && init.entry
-      && !init.hintText.includes("I'll eat my head") && !init.unlocked,
-    JSON.stringify(init).slice(0, 220));
+  check('初始：解谜入口隐藏、谜面不可见、档案室按钮未出现',
+    init.entryHidden && !init.paneDangerText.includes("I'll eat my head") && init.recordsBtnHidden,
+    JSON.stringify(init).slice(0, 200));
 
-  // 2. 触发计数：9 次不够，第 10 次才露出入口（并能自动弹出谜题）
+  // 2. 触发计数：9 次不够，第 10 次入口出现 + 便条自动弹出
   for (let i = 1; i <= 9; i++) {
     await ev(`window.dangerEffects.run('pixelate'); 1`);
-    await wait(320);
+    await wait(300);
     await ev(`window.dangerEffects.cancel()`);
-    await wait(180);
+    await wait(160);
   }
-  const nine = await ev(`(() => ({
-    window: window.dangerEffects.clickWindow(),
-    hidden: document.getElementById('puzzleSection').hidden,
-  }))()`);
-  check('第 9 次触发：入口仍然藏着', nine.window === 9 && nine.hidden === true, JSON.stringify(nine));
+  const nine = await ev(`(() => ({ n: window.dangerEffects.clickWindow(),
+    hidden: document.getElementById('puzzleSection').hidden }))()`);
+  check('第 9 次触发：入口仍藏着', nine.n === 9 && nine.hidden === true, JSON.stringify(nine));
 
   await ev(`window.dangerEffects.run('pixelate'); 1`);
   await wait(400);
   await ev(`window.dangerEffects.cancel()`);
-  await wait(1200);
+  await wait(1400);
   const ten = await ev(`(() => ({
-    window: window.dangerEffects.clickWindow(),
-    revealed: window.dangerPuzzle.entryRevealed(),
+    n: window.dangerEffects.clickWindow(),
     hidden: document.getElementById('puzzleSection').hidden,
-    modalShown: document.getElementById('puzzleModal').classList.contains('show'),
-    hint: document.getElementById('paneDanger').innerText,
+    noteShown: document.getElementById('puzzleModal').classList.contains('show'),
+    noteText: document.getElementById('puzzleModal').innerText.replace(/\\s+/g, ' '),
   }))()`);
-  check('第 10 次触发：入口出现 + 谜题自动弹出',
-    ten.window >= 10 && ten.revealed === true && ten.hidden === false
-      && ten.modalShown === true && ten.hint.includes("I'll eat my head"),
-    JSON.stringify(ten).slice(0, 220));
+  check('第 10 次触发：入口出现 + 便条自动弹出（含谜面与提示）',
+    ten.n >= 10 && ten.hidden === false && ten.noteShown
+      && ten.noteText.includes('请输入管理员姓名') && ten.noteText.includes("I'll eat my head"),
+    JSON.stringify(ten).slice(0, 240));
 
-  // 3. 弹窗已在眼前，直接用它（下面继续按原流程验证判定）
-  const modal = await ev(`(() => ({
-    shown: document.getElementById('puzzleModal').classList.contains('show'),
-    text: document.getElementById('puzzleModal').innerText.replace(/\\s+/g, ' ').trim(),
+  // 3. 刮开便条（CDP 真实鼠标拖动）
+  const box = await ev(`(() => { const r = document.getElementById('scratchCanvas').getBoundingClientRect();
+    return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) }; })()`);
+  await send(ws, 'Input.dispatchMouseEvent', {
+    type: 'mousePressed', x: box.x + 6, y: box.y + Math.round(box.h / 2), button: 'left', clickCount: 1,
+  });
+  for (let i = 0; i <= 14; i++) {
+    await send(ws, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved', button: 'left',
+      x: Math.round(box.x + 6 + (box.w - 12) * i / 14),
+      y: Math.round(box.y + 12 + (box.h - 24) * ((i % 3) / 2)),
+    });
+    await wait(30);
+  }
+  await send(ws, 'Input.dispatchMouseEvent', {
+    type: 'mouseReleased', x: box.x + box.w - 6, y: box.y + Math.round(box.h / 2), button: 'left', clickCount: 1,
+  });
+  await wait(300);
+  const scr = await ev(`(() => ({
+    pct: window.dangerPuzzle.scratchState().pct,
+    stored: Number(localStorage.getItem('dangerPuzzleScratchPct') || 0),
+    reveal: document.getElementById('scratchReveal').textContent,
   }))()`);
-  check('弹窗出现且带谜面与提示',
-    modal.shown && modal.text.includes('请输入管理员姓名') && modal.text.includes("I'll eat my head"),
-    JSON.stringify(modal).slice(0, 200));
+  check('刮开便条：刮开比例上升、线索露出（' + scr.pct + '%）',
+    scr.pct >= 25 && scr.stored >= 25 && /雾都孤儿/.test(scr.reveal), JSON.stringify(scr).slice(0, 200));
 
-  // 4. 空输入 / 错误答案
+  // 4. 判定
   await ev(`(() => { document.getElementById('btnPuzzleSubmit').click(); return 1; })()`);
   await wait(200);
   const emptyMsg = await ev(`document.getElementById('puzzleMsg').textContent`);
-  check('空输入被拦下', /先填个名字/.test(emptyMsg), emptyMsg);
+  check('空输入被拦下', /先写个名字/.test(emptyMsg), emptyMsg);
 
-  for (const wrong of ['admin', '慕寒寒', 'grim']) {
+  for (const wrong of ['admin', 'Grimwigg', '慕寒寒']) {
     await ev(`(() => { document.getElementById('puzzleInput').value = ${JSON.stringify(wrong)};
       document.getElementById('btnPuzzleSubmit').click(); return 1; })()`);
     await wait(180);
   }
-  const wrongState = await ev(`(() => ({
-    msg: document.getElementById('puzzleMsg').textContent,
-    tries: window.dangerPuzzle.tries(),
-    unlocked: window.dangerPuzzle.unlocked(),
+  const wrongState = await ev(`(() => ({ msg: document.getElementById('puzzleMsg').textContent,
+    tries: window.dangerPuzzle.tries(), solved: window.dangerPuzzle.solved() }))()`);
+  check('错误答案被拒 + 尝试计数 + 提示递进',
+    !wrongState.solved && wrongState.tries === 3 && /不对/.test(wrongState.msg), JSON.stringify(wrongState));
+
+  await ev(`(() => { document.getElementById('puzzleInput').value = 'Mr. GRIMWIG';
+    document.getElementById('btnPuzzleSubmit').click(); return 1; })()`);
+  await wait(1500);
+  const solvedState = await ev(`(() => ({
+    solved: window.dangerPuzzle.solved(),
+    recordsShown: document.getElementById('recordsModal').classList.contains('show'),
+    noteClosed: !document.getElementById('puzzleModal').classList.contains('show'),
+    recordsBtnHidden: document.getElementById('btnRecords').hidden,
   }))()`);
-  check('错误答案被拒 + 尝试计数 + 提示升级',
-    !wrongState.unlocked && wrongState.tries === 3 && /不对/.test(wrongState.msg),
-    JSON.stringify(wrongState));
+  check('答对：便条关闭 + 档案室打开 + 「打开档案室」按钮常驻',
+    solvedState.solved && solvedState.recordsShown && solvedState.noteClosed && !solvedState.recordsBtnHidden,
+    JSON.stringify(solvedState));
 
-  // 5. 正确答案的几种写法都能过（先试一个错的写法，再试正确的）
-  const variants = ['Mr. Grimwig', 'grimwig', '  GRIMWIG  ', 'mr_grimwig'];
-  let unlockOk = true, firstResult = '';
-  for (const v of variants) {
-    await ev(`(() => { localStorage.removeItem('dangerAdminUnlocked');
-      document.getElementById('puzzleInput').value = ${JSON.stringify(v)};
-      document.getElementById('btnPuzzleSubmit').click(); return 1; })()`);
-    await wait(300);
-    const ok = await ev(`window.dangerPuzzle.unlocked()`);
-    if (!firstResult) firstResult = v + ' → ' + ok;
-    if (!ok) unlockOk = false;
-  }
-  check('正确答案各种写法都能解锁（' + variants.join(' / ') + '）', unlockOk, firstResult);
+  // 5. 档案室内容
+  const rec = await ev(`(() => ({
+    card: document.getElementById('adminCard').innerText.replace(/\\s+/g, ' '),
+    solve: document.getElementById('solveRecords').innerText.replace(/\\s+/g, ' '),
+    count: document.getElementById('handbookCount').textContent,
+    items: document.querySelectorAll('#eggHandbook .handbook-item').length,
+    on: document.querySelectorAll('#eggHandbook .handbook-item.on').length,
+  }))()`);
+  check('档案：姓名/身份/出处/口头禅都在',
+    /Grimwig/.test(rec.card) && /秋荻文学社社长/.test(rec.card) && /武协/.test(rec.card)
+      && /雾都孤儿/.test(rec.card) && /eat my head/.test(rec.card),
+    rec.card.slice(0, 220));
+  check('解谜记录：解开时间/用时/尝试/刮开比例',
+    /首次解开/.test(rec.solve) && /从头到尾用了/.test(rec.solve) && /吃掉/.test(rec.solve),
+    rec.solve.slice(0, 220));
+  check('彩蛋手册：列出全部效果并显示点亮进度（' + String(rec.count).trim() + '）',
+    rec.items >= 20 && rec.on >= 1 && /已点亮/.test(rec.count),
+    JSON.stringify({ items: rec.items, on: rec.on, count: rec.count }));
 
-  // 6. 解锁后的管理员页
-  await wait(1200);
-  const admin = await ev(`(() => {
-    const nav = document.getElementById('btnNavAdmin');
-    const sel = document.getElementById('adminEffectSelect');
-    return {
-      navHidden: nav.hidden,
-      options: sel ? sel.options.length : 0,
-      stats: (document.getElementById('adminStats') || {}).innerText || '',
-    };
-  })()`);
-  check('解锁后：导航项出现 + 播放器有选项',
-    !admin.navHidden && admin.options >= 19, JSON.stringify(admin).slice(0, 200));
-  check('统计里有点击与触发记录',
-    /累计点击/.test(admin.stats) && /各效果触发次数/.test(admin.stats), admin.stats.slice(0, 160));
+  // 6. 留言
+  await ev(`(() => { document.getElementById('guestbookInput').value = '到此一游，文武双全。';
+    document.getElementById('btnGuestbookPost').click(); return 1; })()`);
+  await wait(400);
+  const gb1 = await ev(`document.getElementById('guestbookList').innerText.replace(/\\s+/g, ' ')`);
+  check('留言：写进去后出现在列表里', /到此一游/.test(gb1), gb1.slice(0, 160));
 
-  // 7. 播放器能真的播（选 audio，等它跑完）
-  await ev(`(() => {
-    const sel = document.getElementById('adminEffectSelect');
-    sel.value = 'pixelate';
-    document.getElementById('btnSettings').click();  // 关掉设置，别挡着
-    return 1;
-  })()`);
-  await wait(300);
-  await ev(`(() => { document.getElementById('btnSettings').click(); return 1; })()`);
-  await wait(300);
-  await ev(`(() => { document.getElementById('btnAdminPlay').click(); return 1; })()`);
-  await wait(600);
-  const playing = await ev(`window.dangerEffects.isRunning()`);
-  check('播放器能触发效果（pixelate）', playing === true, 'isRunning=' + playing);
-  for (let i = 0; i < 40 && await ev(`window.dangerEffects.isRunning()`); i++) await wait(250);
-  await wait(500);
-  const after = await ev(`(() => ({ layers: document.querySelectorAll('.dx-layer').length,
-    filter: (document.getElementById('app') || document.body).style.filter || '' }))()`);
-  check('效果收尾干净', after.layers === 0 && after.filter === '', JSON.stringify(after));
+  // 7. 「再看一遍便条」+ 重开档案室
+  await ev(`(() => { document.getElementById('btnNoteReplay').click(); return 1; })()`);
+  await wait(800);
+  const replay = await ev(`(() => ({
+    noteShown: document.getElementById('puzzleModal').classList.contains('show'),
+    recordsClosed: !document.getElementById('recordsModal').classList.contains('show'),
+    reads: Number(localStorage.getItem('dangerPuzzleNoteReads') || 0),
+  }))()`);
+  check('再看一遍便条：便条重开、档案室收起、翻开次数 +1',
+    replay.noteShown && replay.recordsClosed && replay.reads === 2, JSON.stringify(replay));
 
-  // 8. 重置
-  await ev(`(() => { document.getElementById('btnSettings').click(); return 1; })()`);
-  await wait(350);
-  await ev(`(() => { document.getElementById('btnNavAdmin').click(); return 1; })()`);
-  await wait(250);
-  await ev(`(() => { document.getElementById('btnAdminReset').click(); return 1; })()`);
-  await wait(500);
-  // 应用用的是自己的确认弹窗（不是 window.confirm）：点它的"确定"
-  const confirmShown = await ev(`document.getElementById('confirmModal').classList.contains('show')`);
-  if (confirmShown) {
-    await ev(`(() => { document.getElementById('btnConfirmOk').click(); return 1; })()`);
-  }
+  await ev(`(() => { window.dangerPuzzle.close(); window.dangerPuzzle.openRecords(); return 1; })()`);
   await wait(700);
-  const reset = await ev(`(() => ({
-    navHidden: document.getElementById('btnNavAdmin').hidden,
-    entryHidden: document.getElementById('puzzleSection').hidden,
-    unlocked: window.dangerPuzzle.unlocked(),
-    tries: Number(localStorage.getItem('dangerPuzzleTries') || 0),
-    clicks: Number(localStorage.getItem('dangerClickCount') || 0),
-    window: window.dangerEffects.clickWindow(),
+  const again = await ev(`(() => ({
+    card: document.getElementById('adminCard').innerText.length,
+    guest: document.getElementById('guestbookList').innerText.replace(/\\s+/g, ' '),
+    solved: window.dangerPuzzle.solved(),
   }))()`);
-  check('重置（走确认弹窗）：管理员项与解谜入口都藏回、计数清零',
-    reset.navHidden && reset.entryHidden && !reset.unlocked && reset.tries === 0
-      && reset.clicks === 0 && reset.window === 0, JSON.stringify(reset));
+  check('重开档案室：档案与留言都还在（不是一次性的）',
+    again.card > 40 && /到此一游/.test(again.guest) && again.solved, JSON.stringify(again).slice(0, 200));
 
   console.log('\n页面控制台错误：%d %s', errors.length, errors.slice(0, 3).join(' | '));
   if (errors.length) bad.push({ name: '(控制台)', detail: errors.slice(0, 3).join(' | ') });
-  console.log(bad.length ? '\nFAIL: ' + JSON.stringify(bad, null, 1) : '\nPASS: 解谜彩蛋与管理员模式全部通过');
+  console.log(bad.length ? '\nFAIL: ' + JSON.stringify(bad, null, 1) : '\nPASS: 解谜（便条 + 刮卡）与档案室全部通过');
   ws.close();
   process.exit(bad.length ? 1 : 0);
 })().catch(e => { console.error('ERROR:', e.message); process.exit(2); });

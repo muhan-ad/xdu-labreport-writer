@@ -1,225 +1,325 @@
-// danger-puzzle.js — 「请勿点击」里的解谜彩蛋：请输入管理员姓名
+// danger-puzzle.js — 「请勿点击」里的解谜彩蛋：一张便条 → 档案室
 //
-// 谜面：请输入管理员姓名。提示：I'll eat my head
-// 谜底：Grimwig —— 典出狄更斯《雾都孤儿》里的 Mr. Grimwig，他的口头禅就是
-//       "I'll eat my head"（动不动就要吃掉自己的脑袋）。
+// 流线：
+//   ① 五分钟内连续触发十次彩蛋（见 danger-effects.js 的 noteTriggerTime()）→ 「请勿点击」页
+//      里冒出「🔒 解谜」区块，并自动把便条推到眼前；
+//   ② 便条上是一道题：请输入管理员姓名。提示：I'll eat my head。便条下半张被"糊住"了，
+//      按住鼠标蹭一蹭（把他的头吃掉 = 擦掉上层）会露出线索：
+//      「《雾都孤儿》里那位总说要吃掉自己脑袋的老先生。」→ 写下 Grimwig；
+//   ③ 答对 → 进入【档案室】页面：管理员档案 + 你的解谜记录 + 彩蛋手册（收集进度）+ 留言。
 //
-// 入口条件：**五分钟内连续触发十次彩蛋**（「请勿点击」点满 10 次，见 danger-effects.js 的
-//          noteTriggerTime()）——达标前「请勿点击」页里连"解谜"这一块都不显示；达标那一刻
-//          自动把谜题弹窗推到眼前。之后入口常驻（除非在管理员页里重置彩蛋数据）。
+// 谜底：Grimwig —— 狄更斯《雾都孤儿》里的 Mr. Grimwig，口头禅就是 "I'll eat my head"。
+// 判定：归一化后比较（去空格/连字符/点/中英标点、转小写），改谜底只改 ANSWERS 一行。
 //
-// 判定：归一化后比较（去空格/连字符/点/中英标点、转小写），接受
-//        grimwig / mr grimwig / mr.grimwig / muhan 等写法。改谜底只改 ANSWERS 一行。
-//
-// 解谜成功 → 解锁隐藏的「管理员模式」页（设置左侧导航最后一项），里面有：
-//   · 彩蛋播放器：选任意效果立即播放（演示/调试用）
-//   · 统计：点击次数、解谜尝试次数、各效果触发次数、解锁时间
-//   · 重置彩蛋数据：清空上面这些（会重新藏起管理员页）
+// 记录（全部只存本机 localStorage，不上传）：
+//   dangerPuzzleSolvedAt / dangerPuzzleTries / dangerPuzzleScratchPct / dangerPuzzleNoteReads
+//   dangerClickCount / dangerClickTimes / dangerEffectCounts / dangerGuestbook
 'use strict';
 (() => {
   const $ = id => document.getElementById(id);
-  const UNLOCK_KEY = 'dangerAdminUnlocked';
+  const ENTRY_KEY = 'dangerPuzzleEntry';
+  const AUTO_OPENED_KEY = 'dangerPuzzleAutoOpened';
+  const SOLVED_KEY = 'dangerPuzzleSolvedAt';
   const TRIES_KEY = 'dangerPuzzleTries';
-  const UNLOCK_AT_KEY = 'dangerAdminUnlockedAt';
+  const SCRATCH_KEY = 'dangerPuzzleScratchPct';
+  const READS_KEY = 'dangerPuzzleNoteReads';
+  const GUEST_KEY = 'dangerGuestbook';
   // 谜底（归一化后比较）。想换谜底改这里即可。
   const ANSWERS = ['grimwig', 'mrgrimwig', 'muhan', '慕寒'];
+  // 档案（这个人是谁）——只在档案室里展示，不参与判定
+  const PROFILE = {
+    name: 'Grimwig',
+    aka: 'Mr. Grimwig',
+    lines: [
+      ['身份', '秋荻文学社社长 · 武协管理者之一'],
+      ['出处', '狄更斯《雾都孤儿》'],
+      ['口头禅', '“I’ll eat my head.”'],
+    ],
+    quote: '凡是他说要吃掉脑袋的事，最后都没发生 —— 除了这次被你点出来了。',
+  };
 
   const norm = s => String(s == null ? '' : s)
     .trim().toLowerCase()
     .replace(/[\s_\-·.。，,、'’"“”()（）!！?？:：;；]/g, '');
+  const read = (k, d = '') => { try { return localStorage.getItem(k) || d; } catch (_) { return d; } };
+  const write = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
+  const num = (k, d = 0) => {
+    const raw = read(k, '');
+    const n = Number(raw);
+    return raw !== '' && Number.isFinite(n) ? n : d;
+  };
 
-  const read = (key, dflt = '') => { try { return localStorage.getItem(key) || dflt; } catch (_) { return dflt; } };
-  const write = (key, val) => { try { localStorage.setItem(key, val); } catch (_) {} };
+  const solved = () => !!read(SOLVED_KEY);
+  const entryRevealed = () => read(ENTRY_KEY) === '1';
+  const tries = () => num(TRIES_KEY, 0);
 
-  const unlocked = () => read(UNLOCK_KEY) === '1';
-  const tries = () => Number(read(TRIES_KEY, '0')) || 0;
-
-  function bumpTries() { const n = tries() + 1; write(TRIES_KEY, String(n)); return n; }
-
-  function fmtTime(ts) {
-    if (!ts) return '';
+  const fmtTime = ts => {
+    if (!ts) return '—';
     const d = new Date(Number(ts));
     const p = v => String(v).padStart(2, '0');
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const fmtDur = ms => {
+    if (!Number.isFinite(ms) || ms <= 0) return '—';
+    const s = Math.round(ms / 1000);
+    return s < 60 ? `${s} 秒` : `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+  };
+  const toast = (t, d, ms) => { try { if (typeof showToast === 'function') showToast('warning', t, d, ms); } catch (_) {} };
+
+  // ── 刮刮卡：擦掉上层（"把他的头吃掉"），露出下面的线索 ──
+  const scratch = { ready: false, pct: 0, cells: null, cols: 0, rows: 0, drawing: false };
+  function initScratch() {
+    const cv = $('scratchCanvas');
+    const wrap = $('scratchWrap');
+    if (!cv || !wrap) return;
+    const w = wrap.clientWidth || 420, h = wrap.clientHeight || 96;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    cv.style.width = '100%'; cv.style.height = '100%';
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#c9c2b4';                       // "糊住的头"：一层带纹理的灰纸
+    ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < 90; i++) {
+      ctx.fillStyle = `rgba(${120 + Math.random() * 80 | 0},${115 + Math.random() * 70 | 0},${100 + Math.random() * 60 | 0},.5)`;
+      ctx.fillRect(Math.random() * w, Math.random() * h, 3 + Math.random() * 9, 2 + Math.random() * 4);
+    }
+    ctx.fillStyle = 'rgba(60,52,40,.75)';
+    ctx.font = '600 13px system-ui, "Microsoft YaHei", sans-serif';
+    ctx.fillText('把头吃掉 →', 14, h / 2 + 5);
+    ctx.globalCompositeOperation = 'destination-out';
+    scratch.cols = Math.max(1, Math.ceil(w / 14));
+    scratch.rows = Math.max(1, Math.ceil(h / 14));
+    scratch.cells = new Uint8Array(scratch.cols * scratch.rows);
+    scratch.pct = 0;
+    scratch.ready = true;
+  }
+  function scratchAt(clientX, clientY) {
+    const cv = $('scratchCanvas');
+    if (!cv || !scratch.ready) return;
+    const r = cv.getBoundingClientRect();
+    const x = clientX - r.left, y = clientY - r.top;
+    if (x < -20 || y < -20 || x > r.width + 20 || y > r.height + 20) return;
+    const ctx = cv.getContext('2d');
+    ctx.beginPath();
+    ctx.arc(x, y, 13, 0, Math.PI * 2);
+    ctx.fill();
+    const c = Math.min(scratch.cols - 1, Math.max(0, Math.floor(x / 14)));
+    const rr = Math.min(scratch.rows - 1, Math.max(0, Math.floor(y / 14)));
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const cc = c + dx, rrr = rr + dy;
+        if (cc < 0 || rrr < 0 || cc >= scratch.cols || rrr >= scratch.rows) continue;
+        scratch.cells[rrr * scratch.cols + cc] = 1;
+      }
+    }
+    let hit = 0;
+    for (let i = 0; i < scratch.cells.length; i++) hit += scratch.cells[i];
+    scratch.pct = Math.round(hit / scratch.cells.length * 100);
+    if (scratch.pct > num(SCRATCH_KEY, 0)) write(SCRATCH_KEY, String(scratch.pct));
+    if (scratch.pct >= 55) {
+      const tip = $('scratchTip');
+      if (tip) tip.textContent = `露出来了（你吃掉了 ${scratch.pct}% 的脑袋）—— 写下他的名字。`;
+    }
+  }
+  function bindScratch() {
+    const cv = $('scratchCanvas');
+    if (!cv) return;
+    cv.addEventListener('mousedown', e => { scratch.drawing = true; scratchAt(e.clientX, e.clientY); e.preventDefault(); });
+    window.addEventListener('mouseup', () => { scratch.drawing = false; });
+    cv.addEventListener('mousemove', e => { if (scratch.drawing) scratchAt(e.clientX, e.clientY); });
+    cv.addEventListener('mouseleave', () => { scratch.drawing = false; });
+    cv.addEventListener('touchstart', e => { scratch.drawing = true; const t = e.touches[0]; scratchAt(t.clientX, t.clientY); }, { passive: true });
+    cv.addEventListener('touchmove', e => { if (!scratch.drawing) return; const t = e.touches[0]; scratchAt(t.clientX, t.clientY); }, { passive: true });
+    cv.addEventListener('touchend', () => { scratch.drawing = false; });
   }
 
-  // ── 弹窗 ──
-  function openPuzzle() {
+  // ── 便条 ──
+  function openNote() {
     if ($('puzzleMsg')) $('puzzleMsg').textContent = '';
     if ($('puzzleInput')) $('puzzleInput').value = '';
-    if (unlocked()) {
-      if ($('puzzleMsg')) $('puzzleMsg').textContent = '你已经解开了这个谜题。';
-    }
+    write(READS_KEY, String(num(READS_KEY, 0) + 1));
     if (typeof openModal === 'function') openModal('puzzleModal');
-    setTimeout(() => { const i = $('puzzleInput'); if (i) i.focus(); }, 60);
+    setTimeout(() => {
+      initScratch();
+      const i = $('puzzleInput');
+      if (i) i.focus();
+    }, 80);
   }
-
-  function closePuzzle() { if (typeof closeModal === 'function') closeModal('puzzleModal'); }
+  const closeNote = () => { if (typeof closeModal === 'function') closeModal('puzzleModal'); };
 
   function submit() {
-    const raw = $('puzzleInput') ? $('puzzleInput').value : '';
-    const guess = norm(raw);
-    if (!guess) {
-      $('puzzleMsg').textContent = '先填个名字吧。';
-      return false;
-    }
-    const n = bumpTries();
+    const guess = norm($('puzzleInput') ? $('puzzleInput').value : '');
+    if (!guess) { $('puzzleMsg').textContent = '先写个名字吧 —— 便条下半张就是线索。'; return false; }
+    const n = tries() + 1;
+    write(TRIES_KEY, String(n));
     if (ANSWERS.includes(guess)) {
-      write(UNLOCK_KEY, '1');
-      write(UNLOCK_AT_KEY, String(Date.now()));
-      applyUnlock();
-      closePuzzle();
+      if (!solved()) write(SOLVED_KEY, String(Date.now()));
+      closeNote();
+      openRecords();
       celebrate();
       return true;
     }
     const hints = [
-      '不是这个名字。提示就在谜面上：想想"吃掉脑袋"这句话是谁的口头禅。',
-      '再想想：这是位小说人物的名字，他把"吃掉我的头"当赌咒语。',
-      '去搜索一下「I\'ll eat my head」这句话，会有人告诉你他叫什么。',
+      '不是这个名字。便条上那句 I\'ll eat my head 是线索 —— 想想谁把它当口头禅。',
+      '再想想：这是位小说人物，动不动就拿"吃掉我的脑袋"起誓。',
+      '提示到这儿：那句话出自狄更斯的《雾都孤儿》，去搜一下它是谁的口头禅。',
     ];
     $('puzzleMsg').textContent = '不对。' + hints[Math.min(n - 1, hints.length - 1)];
     return false;
   }
 
-  // ── 解锁后的管理员页 ──
-  function effectList() {
-    try {
-      if (!window.dangerEffects) return [];
-      const ids = window.dangerEffects.ids();
-      const names = window.dangerEffects.names();
-      return names.map((n, i) => ({ id: ids[i], label: n }));
-    } catch (_) { return []; }
+  // ── 档案室 ──
+  function renderAdminCard() {
+    const el = $('adminCard');
+    if (!el) return;
+    el.innerHTML = ''
+      + '<div class="records-avatar">⚔️📖</div>'
+      + `<div class="records-name">${PROFILE.name}<span class="records-aka">（${PROFILE.aka}）</span></div>`
+      + '<div class="records-lines">'
+      + PROFILE.lines.map(([k, v]) => `<div><span class="records-k">${k}</span>${v}</div>`).join('')
+      + '</div>'
+      + `<div class="records-quote">${PROFILE.quote}</div>`;
   }
 
-  function renderStats() {
-    if (!$('adminStats')) return;
-    const clicks = Number(read('dangerClickCount', '0')) || 0;
+  function renderSolveRecords() {
+    const el = $('solveRecords');
+    if (!el) return;
+    let times = [];
+    try { times = JSON.parse(read('dangerClickTimes', '[]')) || []; } catch (_) {}
+    const solvedAt = num(SOLVED_KEY, 0);
+    const firstTrigger = times.length ? Math.min(...times) : 0;
+    const span = solvedAt && firstTrigger ? fmtDur(solvedAt - firstTrigger) : '—';
+    el.innerHTML = ''
+      + `<div><span class="records-k">首次解开</span>${fmtTime(solvedAt)}</div>`
+      + `<div><span class="records-k">从头到尾用了</span>${span}（从这一轮第一次触发彩蛋算起）</div>`
+      + `<div><span class="records-k">解谜尝试</span>${tries()} 次　·　便条翻开 ${num(READS_KEY, 0)} 次</div>`
+      + `<div><span class="records-k">吃掉的脑袋</span>${num(SCRATCH_KEY, 0)}%（刮开比例）</div>`
+      + `<div><span class="records-k">「请勿点击」累计</span>${num('dangerClickCount', 0)} 次　·　近 5 分钟 `
+      + `${window.dangerEffects ? window.dangerEffects.clickWindow() : 0} 次</div>`;
+  }
+
+  function renderHandbook() {
+    const el = $('eggHandbook');
+    if (!el || !window.dangerEffects) return;
     let counts = {};
     try { counts = JSON.parse(read('dangerEffectCounts', '{}')) || {}; } catch (_) {}
-    const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 10)
-      .map(([id, n]) => `${id} ×${n}`).join('、');
-    $('adminStats').innerHTML = ''
-      + `解锁时间：${fmtTime(read(UNLOCK_AT_KEY)) || '（未知）'}<br />`
-      + `「请勿点击」累计点击：${clicks} 次　解谜尝试：${tries()} 次<br />`
-      + `近 5 分钟内触发：${window.dangerEffects ? window.dangerEffects.clickWindow() : 0} 次`
-      + `（满 10 次露出解谜入口）<br />`
-      + `各效果触发次数：${top || '（还没有记录）'}`;
+    const ids = window.dangerEffects.ids();
+    const names = window.dangerEffects.names();          // 'id: 中文名'
+    const seen = ids.filter(id => counts[id] > 0).length;
+    if ($('handbookCount')) $('handbookCount').textContent = `　已点亮 ${seen}/${ids.length}`;
+    el.innerHTML = ids.map((id, i) => {
+      const label = String(names[i] || id).split(': ')[1] || id;
+      const n = Number(counts[id]) || 0;
+      return `<span class="handbook-item${n ? ' on' : ''}" title="${id}">${n ? '✦' : '·'} ${label}${n > 1 ? ' ×' + n : ''}</span>`;
+    }).join('');
   }
 
-  // ── 入口（五分钟内 10 次才露出来）──
-  const ENTRY_KEY = 'dangerPuzzleEntry';
-  const AUTO_OPENED_KEY = 'dangerPuzzleAutoOpened';
-  const entryRevealed = () => read(ENTRY_KEY) === '1';
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
 
+  function renderGuestbook() {
+    const el = $('guestbookList');
+    if (!el) return;
+    let list = [];
+    try { list = JSON.parse(read(GUEST_KEY, '[]')) || []; } catch (_) {}
+    if (!list.length) { el.innerHTML = '<div class="guest-empty">还没有人留下字 —— 你是第一个摸到这儿的。</div>'; return; }
+    el.innerHTML = list.slice().reverse().map(g =>
+      `<div class="guest-row"><span class="guest-who">${escapeHtml(g.who || '无名')}</span>`
+      + `<span class="guest-time">${fmtTime(g.t)}</span><div class="guest-text">${escapeHtml(g.text)}</div></div>`
+    ).join('');
+  }
+
+  function postGuestbook() {
+    const inp = $('guestbookInput');
+    const text = ((inp && inp.value) || '').trim();
+    if (!text) { toast('还没写字', '写一句再留下吧', 2200); return false; }
+    let who = '无名';
+    try {
+      if (typeof loadStudentInfo === 'function') {
+        const s = loadStudentInfo() || {};
+        who = s.name || s.id || '无名';
+      }
+    } catch (_) {}
+    let list = [];
+    try { list = JSON.parse(read(GUEST_KEY, '[]')) || []; } catch (_) {}
+    list.push({ t: Date.now(), who, text: text.slice(0, 80) });
+    write(GUEST_KEY, JSON.stringify(list.slice(-50)));
+    if (inp) inp.value = '';
+    renderGuestbook();
+    toast('已记下', '这句话留在这台电脑上了', 2400);
+    return true;
+  }
+
+  function openRecords() {
+    renderAdminCard();
+    renderSolveRecords();
+    renderHandbook();
+    renderGuestbook();
+    if ($('btnRecords')) $('btnRecords').hidden = false;
+    if (typeof openModal === 'function') openModal('recordsModal');
+  }
+  const closeRecords = () => { if (typeof closeModal === 'function') closeModal('recordsModal'); };
+
+  // ── 入口（五分钟内 10 次才露出来）──
   function showEntry(auto) {
     const sec = $('puzzleSection');
     if (sec) sec.hidden = false;
-    // 条件刚达成那一刻把谜题推到眼前（只自动弹一次，之后入口常驻）
     if (auto && read(AUTO_OPENED_KEY) !== '1') {
       write(AUTO_OPENED_KEY, '1');
-      setTimeout(() => openPuzzle(), 700);
+      setTimeout(() => openNote(), 700);
     }
   }
-
-  function applyEntryState() { if (entryRevealed()) showEntry(false); }
-
-  function applyUnlock(announce) {
-    const nav = $('btnNavAdmin');
-    if (nav) nav.hidden = !unlocked();      // 只有解锁后才露面（applyUnlock 也被"重置"和启动时调用）
+  function applyEntryState() {
+    if (entryRevealed()) showEntry(false);
     const hint = $('puzzleStateHint');
     if (hint) {
-      if (unlocked()) hint.textContent = `已解开（${fmtTime(read(UNLOCK_AT_KEY))}）：设置左侧多了「管理员模式」`;
+      if (solved()) hint.textContent = `已解开（${fmtTime(num(SOLVED_KEY, 0))}）—— 档案室随时可以再进。`;
       else if (entryRevealed()) hint.textContent = '入口是你自己点出来的 —— 谜底和这个软件的主人有关。';
       else hint.textContent = '';
     }
-    if (!$('adminEffectSelect')) return;
-    const list = effectList();
-    if (!$('adminEffectSelect').dataset.filled) {
-      $('adminEffectSelect').innerHTML = list
-        .map(e => `<option value="${e.id}">${e.label}</option>`).join('');
-      $('adminEffectSelect').dataset.filled = '1';
-    }
-    renderStats();
-    if (announce) nav && nav.scrollIntoView({ block: 'nearest' });
+    if (solved() && $('btnRecords')) $('btnRecords').hidden = false;
   }
 
-  function reset() {
-    [UNLOCK_KEY, TRIES_KEY, UNLOCK_AT_KEY, 'dangerEffectCounts', 'dangerClickCount', 'dangerLastEffect',
-     ENTRY_KEY, AUTO_OPENED_KEY, 'dangerClickTimes']
-      .forEach(k => { try { localStorage.removeItem(k); } catch (_) {} });
-    const nav = $('btnNavAdmin');
-    if (nav) nav.hidden = true;
-    const sec = $('puzzleSection');
-    if (sec) sec.hidden = true;                 // 入口也重新藏起来（要再点 10 次才会出现）
-    const hint = $('puzzleStateHint');
-    if (hint) hint.textContent = '彩蛋数据已重置（管理员页也藏回去了）。';
-    if (typeof switchSettingsPane === 'function') switchSettingsPane('danger');
-    renderStats();
-  }
-
-  // 解锁庆祝：礼花 + 底部提示条（走效果池里的 unlock，权重 0，不会被随机抽到）
-  function celebrate() {
-    try {
-      if (window.dangerEffects) window.dangerEffects.run('unlock');
-    } catch (_) {}
-  }
+  // 通关庆祝：礼花 + 底部提示条（效果池里的 unlock，权重 0，不会被随机抽到）
+  function celebrate() { try { if (window.dangerEffects) window.dangerEffects.run('unlock'); } catch (_) {} }
 
   function bind() {
-    const go = $('btnDangerPuzzle');
-    if (go) go.onclick = openPuzzle;
-    const sub = $('btnPuzzleSubmit');
-    if (sub) sub.onclick = submit;
-    const cancel = $('btnPuzzleCancel');
-    if (cancel) cancel.onclick = closePuzzle;
+    const set = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
+    set('btnDangerPuzzle', openNote);
+    set('btnPuzzleSubmit', submit);
+    set('btnPuzzleCancel', closeNote);
+    set('btnNoteClose', closeNote);
+    set('btnRecords', openRecords);
+    set('btnRecordsClose', closeRecords);
+    set('btnGuestbookPost', postGuestbook);
+    set('btnNoteReplay', () => { closeRecords(); setTimeout(openNote, 250); });
     const input = $('puzzleInput');
-    if (input) {
-      input.addEventListener('keydown', e => {
-        if (e.key === 'Enter') { e.preventDefault(); submit(); }
-      });
-    }
-    const play = $('btnAdminPlay');
-    if (play) {
-      play.onclick = () => {
-        const sel = $('adminEffectSelect');
-        if (sel && sel.value && window.dangerEffects) window.dangerEffects.run(sel.value);
-      };
-    }
-    const resetBtn = $('btnAdminReset');
-    if (resetBtn) {
-      resetBtn.onclick = async () => {
-        const ok = typeof appConfirm === 'function'
-          ? await appConfirm('重置彩蛋数据？\n将清空点击次数、解谜记录与效果触发统计，管理员页也会重新藏起来。', { danger: true })
-          : true;
-        if (ok) reset();
-      };
-    }
+    if (input) input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+    const gb = $('guestbookInput');
+    if (gb) gb.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); postGuestbook(); } });
+    bindScratch();
+
     document.addEventListener('danger:puzzle-entry', () => {
       showEntry(true);
-      if (!unlocked()) showToastSafe('你成功了', '连续点击已达标：解谜入口已出现', 3600);
+      if (!solved()) toast('你成功了', '连续点击已达标：便条出现了', 3600);
     });
-    applyUnlock();
     applyEntryState();
-  }
-
-  // 轻量 toast（渲染层有 showToast 就用它；没有就算了，别让彩蛋把主流程拖垮）
-  function showToastSafe(title, detail, ms) {
-    try { if (typeof showToast === 'function') showToast('warning', title, detail, ms); } catch (_) {}
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
   else bind();
 
   window.dangerPuzzle = {
-    answers: ANSWERS,          // 隐私性无关紧要，方便自测与改谜底
+    answers: ANSWERS, profile: PROFILE,
     normalize: norm,
-    open: openPuzzle,
-    submit,
-    unlocked,
-    tries,
-    entryRevealed,
-    showEntry,
-    reset,
-    applyUnlock,
-    renderStats,
+    open: openNote, submit, close: closeNote,
+    openRecords, closeRecords,
+    postGuestbook, renderGuestbook, renderHandbook, renderSolveRecords,
+    solved, tries, entryRevealed, showEntry, applyEntryState,
+    scratchState: () => ({ ready: scratch.ready, pct: scratch.pct }),
   };
 })();

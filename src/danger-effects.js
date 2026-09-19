@@ -81,7 +81,7 @@
   const POOL = [
     // 解谜成功的庆祝：礼花 + 底部提示条。权重 0 → 不进随机池，只由 danger-puzzle.js 触发。
     {
-      id: 'unlock', name: '解谜成功庆祝', weight: 0, maxMs: 9000,
+      id: 'unlock', name: '解谜成功庆祝（礼花）', weight: 0, maxMs: 9000,
       async run(h) {
         const el = h.layer({ pointer: false, css: 'background:rgba(12,14,20,.55)' });
         const cv = document.createElement('canvas');
@@ -113,7 +113,7 @@
           raf = requestAnimationFrame(step);
         };
         raf = requestAnimationFrame(step);
-        h.caption('🔓 解谜成功：管理员模式已解锁（设置左侧最后一项）', 3600);
+        h.caption('📖 解谜成功：档案室为你打开了', 3600);
         await h.sleep(4600);
       },
     },

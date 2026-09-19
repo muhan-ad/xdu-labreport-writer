@@ -554,11 +554,6 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             请勿点击
           </button>
-          <!-- 解谜成功后由 src/danger-puzzle.js 去掉 hidden 显示 -->
-          <button class="settings-nav-item settings-nav-danger" id="btnNavAdmin" hidden>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
-            管理员模式
-          </button>
         </div>
         <!-- 模块内容 -->
         <div class="settings-panes">
@@ -734,23 +729,10 @@
               <button class="btn btn-lg btn-outline btn-block" id="btnDangerPuzzle" type="button">
                 请输入管理员姓名
               </button>
+              <button class="btn btn-lg btn-outline btn-block" id="btnRecords" type="button" hidden>
+                📖 打开档案室
+              </button>
               <div class="form-hint" id="puzzleStateHint"></div>
-            </div>
-          </div>
-          <!-- 管理员模式页（默认隐藏，解谜成功后出现） -->
-          <div class="settings-pane" id="paneAdmin">
-            <div class="settings-section">
-              <h4>🔓 管理员模式</h4>
-              <div class="form-hint" id="adminStatus"></div>
-              <div class="form-group">
-                <label>彩蛋播放器（选一个立即播放，调试/演示用）</label>
-                <select id="adminEffectSelect"></select>
-              </div>
-              <div class="skill-actions">
-                <button class="btn btn-sm btn-primary" id="btnAdminPlay" type="button">播放</button>
-                <button class="btn btn-sm btn-outline" id="btnAdminReset" type="button">重置彩蛋数据</button>
-              </div>
-              <div class="form-hint" id="adminStats"></div>
             </div>
           </div>
           <!-- 检查更新页 -->
@@ -967,24 +949,60 @@
     </div>
   </div>
 
-  <!-- 解谜弹窗（管理员姓名） -->
+  <!-- 解谜弹窗：一张便条（谜题 + "吃掉脑袋"刮刮卡） -->
   <div class="modal-overlay" id="puzzleModal">
-    <div class="modal" style="width: 460px;">
+    <div class="modal note-modal">
       <div class="modal-header">
-        <h3>解谜</h3>
+        <h3>📜 一张便条</h3>
+        <button class="modal-close" id="btnNoteClose">×</button>
       </div>
       <div class="modal-body">
-        <div class="form-hint puzzle-hint">
-          请输入管理员姓名。<br />
-          提示：<b>I'll eat my head</b>
+        <div class="note-line">你点了很多次。有人让我留个问题给你 ——</div>
+        <div class="note-prompt">请输入管理员姓名。提示：<b>I'll eat my head</b></div>
+        <div class="scratch-wrap" id="scratchWrap">
+          <div class="scratch-reveal" id="scratchReveal">《雾都孤儿》里那位总说要吃掉自己脑袋的老先生。</div>
+          <canvas id="scratchCanvas"></canvas>
         </div>
+        <div class="form-hint" id="scratchTip">按住鼠标在便条上蹭一蹭 —— 把他的头吃掉。</div>
         <div class="form-group">
-          <input type="text" id="puzzleInput" placeholder="管理员姓名" autocomplete="off" spellcheck="false" />
+          <input type="text" id="puzzleInput" placeholder="写下他的名字" autocomplete="off" spellcheck="false" />
         </div>
         <div class="form-hint" id="puzzleMsg"></div>
         <div class="skill-actions">
-          <button class="btn btn-sm btn-primary" id="btnPuzzleSubmit" type="button">提交</button>
+          <button class="btn btn-sm btn-primary" id="btnPuzzleSubmit" type="button">写下答案</button>
           <button class="btn btn-sm btn-outline" id="btnPuzzleCancel" type="button">我再想想</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 档案室（答对后进入）：管理员档案 + 你的解谜记录 + 彩蛋手册 + 留言 -->
+  <div class="modal-overlay" id="recordsModal">
+    <div class="modal records-modal">
+      <div class="modal-header">
+        <h3>📖 档案室</h3>
+        <button class="modal-close" id="btnRecordsClose">×</button>
+      </div>
+      <div class="modal-body records-body">
+        <div class="records-card" id="adminCard"></div>
+        <div class="records-section">
+          <h4>你的解谜记录</h4>
+          <div class="records-lines" id="solveRecords"></div>
+        </div>
+        <div class="records-section">
+          <h4>彩蛋手册<span class="records-sub" id="handbookCount"></span></h4>
+          <div class="handbook" id="eggHandbook"></div>
+        </div>
+        <div class="records-section">
+          <h4>留言（只记在这台电脑上）</h4>
+          <div class="form-group">
+            <input type="text" id="guestbookInput" placeholder="留下一句话，给下一个摸到这里的人" maxlength="80" />
+          </div>
+          <div class="skill-actions">
+            <button class="btn btn-sm btn-primary" id="btnGuestbookPost" type="button">留下</button>
+            <button class="btn btn-sm btn-outline" id="btnNoteReplay" type="button">再看一遍便条</button>
+          </div>
+          <div class="guestbook-list" id="guestbookList"></div>
         </div>
       </div>
     </div>
