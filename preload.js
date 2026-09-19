@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('labAPI', {
   dangerShake: () => ipcRenderer.invoke('danger-window-shake'),
   dangerVanish: () => ipcRenderer.invoke('danger-window-vanish'),
   dangerDiskSpace: () => ipcRenderer.invoke('danger-disk-space'),
+  dangerInstallTime: () => ipcRenderer.invoke('danger-install-time'),
   // 检查更新（仅版本校对 + 浏览器打开下载链接）
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   checkForUpdate: (cfg) => ipcRenderer.invoke('check-for-update', cfg),

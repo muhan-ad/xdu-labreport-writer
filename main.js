@@ -530,17 +530,22 @@ handle('danger-window-shake', () => {
     return { ok: false, reason: 'maximized' };      // 渲染层退回内容抖动
   }
   const start = mainWindow.getBounds();
+  const STEPS = 22;                                 // 22 × 90ms ≈ 2 秒（用户要求时间加长）
   let i = 0;
   const timer = setInterval(() => {
-    if (!mainWindow || mainWindow.isDestroyed() || i >= 9) {
+    if (!mainWindow || mainWindow.isDestroyed() || i >= STEPS) {
       clearInterval(timer);
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setBounds(start);
       return;
     }
     i += 1;
-    const dx = (i % 2 ? 1 : -1) * (12 - i);
-    const dy = (i % 3 ? 1 : -1) * (7 - Math.floor(i / 2));
-    mainWindow.setBounds({ x: start.x + dx, y: start.y + dy, width: start.width, height: start.height });
+    const decay = 1 - i / STEPS;                    // 幅度按比例衰减（不再是 12-i，否则后半段会变负）
+    const dx = (i % 2 ? 1 : -1) * 12 * decay;
+    const dy = (i % 3 ? 1 : -1) * 7 * decay;
+    mainWindow.setBounds({
+      x: Math.round(start.x + dx), y: Math.round(start.y + dy),
+      width: start.width, height: start.height,
+    });
   }, 90);
   return { ok: true };
 });
@@ -548,6 +553,8 @@ handle('danger-window-shake', () => {
 handle('danger-window-vanish', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return { ok: false, error: '窗口不可用' };
   const wasMaximized = mainWindow.isMaximized();
+  const wasMinimized = mainWindow.isMinimized();
+  if (wasMinimized) return { ok: false, reason: 'minimized' };   // 用户自己最小化了，别把人弹回来
   mainWindow.hide();
   setTimeout(() => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -573,6 +580,21 @@ handle('danger-disk-space', () => {
   }
   out.sort((a, b) => b.freeGB - a.freeGB);
   return { ok: true, drives: out };
+});
+
+// 「假时间回滚」要"回滚到装这个软件的那一刻"：读 exe 与用户数据目录的创建时间（只读）。
+// 打包态 exe 的创建时间 ≈ 安装时间；开发态读到的是 electron.exe，退而用 userData。
+handle('danger-install-time', () => {
+  const fmt = d => {
+    const p = v => String(v).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  let exeTime = null, userDataTime = null;
+  try { exeTime = fs.statSync(process.execPath).birthtime; } catch (_) {}
+  try { userDataTime = fs.statSync(app.getPath('userData')).birthtime; } catch (_) {}
+  const pick = app.isPackaged ? (exeTime || userDataTime) : (userDataTime || exeTime);
+  if (!pick) return { ok: false, error: '取不到时间' };
+  return { ok: true, text: fmt(pick), exeTime: exeTime ? fmt(exeTime) : '', userDataTime: userDataTime ? fmt(userDataTime) : '' };
 });
 
 // ── IPC: 读取 schema.json（方式三：表单模式）──

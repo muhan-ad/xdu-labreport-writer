@@ -61,23 +61,6 @@
     return box;
   }
 
-  const MEMES = [
-    '⚠ 已记录你的 IP：<b>127.0.0.1</b>（假的）',
-    '你的不确定度是 <b>±人生</b>',
-    '误差来源：第 5 条 —— <b>手贱</b>',
-    '本次点击的不确定度 <b>u = 1 次点击</b>，尾数只进不舍 → 记为 2 次',
-    '检测到操作者手速异常，已上报教务处（假的）',
-    '警告：继续点击会使实验报告的 <b>R² 下降 0.001</b>',
-    '你已偏离光轴 <b>3°</b>，请自行调节',
-    '系统提示：你点的不是按钮，是寂寞',
-    '该按钮的杨氏模量为 <b>∞</b>，不可拉伸，请勿再拉',
-    '读数错误：你的操作超出了一级千分尺的量程',
-    '⚡ 检测到高危操作：请立即停止并复习《有效数字》',
-    '已为你预约下次实验课：<b>明早 8:00</b>（假的）',
-    '本条提示的不确定度按 A 类评定，置信概率 0%',
-    '⚠ 警告：本按钮已连续被点击，局部温度升高 0.0001 ℃',
-    '你的实验搭子已偷偷记录：这次点击不计入平时分',
-  ];
   const DANMAKU = [
     '别点了', '手贱', '已记录（假的）', '开发者看着呢', '又在点', '这按钮有毒',
     '你的数据好着呢', '再点就 ±∞ 了', 'u=±手贱', '建议复习有效数字',
@@ -121,7 +104,7 @@
           </div>
           <div id="gxLog" style="font-family:Consolas,monospace;font-size:12px;color:#7f8ba3;
                                  margin-top:12px;line-height:1.95;height:132px"></div>
-          <div style="font-size:11.5px;color:#5f6a80;margin-top:10px">（万分之一才会出现的彩蛋 · 祝你好运）</div>`;
+`;
         el.appendChild(box);
         const bar = box.querySelector('#gxBar');
         const pct = box.querySelector('#gxPct');
@@ -136,7 +119,7 @@
 
         line('> 正在解析下载地址 …');
         await h.sleep(700);
-        line('> 已连接 cdn.不存在的网站（延迟 3ms，编的）');
+        line('> 已连接 cdn.不存在的网站');
         await h.sleep(600);
 
         // 真实磁盘检查：挑最空的盘、判断装不装得下（只读容量，不写任何文件）
@@ -171,10 +154,10 @@
         // 进度条：前段慢（"92GB 呢"），中段提速，最后卡在 87% 演一下
         const steps = [
           [2, 1.2, '> 包体大小：92.4 GB（含全部语音包与过场动画）'],
-          [9, 8.6, '> 已连接加速节点：23.5 MB/s（你家网速的最高礼遇）'],
+          [9, 8.6, '> 已连接加速节点：23.5 MB/s'],
           [21, 19.8, '> 剩余时间：约 118 小时 43 分'],
           [38, 24.1, '> ⚠ 顺手提醒：别把游戏装系统盘，装满了 C 盘连报告都存不下'],
-          [55, 31.6, '> 建议关闭占带宽的程序（比如正在生成实验报告的那个）'],
+          [55, 31.6, '> 建议关闭其它占带宽的程序'],
           [74, 42.9, '> 已下载 68.1 GB … 你家路由器开始冒烟了'],
           [87, 0.4, '> 速度骤降：0.4 MB/s（运营商表示这不归它管）'],
         ];
@@ -189,7 +172,7 @@
         await h.sleep(600);
         line(aborted ? '> 安装包已丢弃 …' : '> 下载完成，正在解压 …');
         await h.sleep(700);
-        line(aborted ? '> 未写入任何文件' : '> 解压失败：磁盘空间不足（编的，别当真）');
+        line(aborted ? '> 未写入任何文件' : '> 解压失败：磁盘空间不足');
         await h.sleep(700);
         bar.style.width = '100%';
         pct.textContent = '100%';
@@ -211,6 +194,11 @@
         tip.style.cssText = 'color:#5f6a80;font-size:11.5px;margin-top:8px';
         tip.textContent = '想玩游戏的话 —— 先把实验报告写完。';
         log.appendChild(tip);
+        // 用户要求：这句放到最后才出现（原来是固定显示在开头）
+        const rare = document.createElement('div');
+        rare.style.cssText = 'color:#5f6a80;font-size:11.5px;margin-top:6px';
+        rare.textContent = '（万分之一才会出现的彩蛋 · 祝你好运）';
+        log.appendChild(rare);
         await h.sleep(3600);
       },
     },
@@ -249,7 +237,7 @@
 
         // 从窗口底部中央（"窗口里"）喷出，受重力下落，落地弹跳并堆积
         const parts = [];
-        const N = 150, G = 2100;
+        const N = 260, G = 2100;                     // 按用户要求：数量再多一些
         const born0 = performance.now();
         for (let i = 0; i < N; i++) {
           const ang = rnd(-1.32, -0.28);            // 向上扇形
@@ -258,20 +246,132 @@
             x: W / 2 + rnd(-70, 70), y: H - 10,
             vx: Math.cos(ang) * sp * rnd(0.5, 1), vy: Math.sin(ang) * sp,
             size: rnd(18, 42), rot: rnd(-0.4, 0.4), vr: rnd(-4, 4),
-            born: born0 + i * 4,
+            born: born0 + i * 3,
           });
         }
         let raf = 0, last = performance.now(), frozen = false;
         const stop = { v: false };
         h.onCleanup(() => { stop.v = true; cancelAnimationFrame(raf); });
+        // ── 互不重叠（用户要求）──
+        // 260 个粒子挤在一个喷口里，逐对检查是 O(n²)≈34k 对/帧且两轮松弛根本推不开（实测还差 7px）。
+        // 改成网格宽相位 + 多轮松弛：每格 64px（略大于最大直径），只跟邻格比，于是可以多跑几轮。
+        const CELL = 64;
+        const hash = (cx, cy) => cx * 8191 + cy;
+        let pid = 0;
+        for (const p of parts) p.id = pid++;
+        const buildGrid = () => {
+          const g = new Map();
+          for (const p of parts) {
+            const k = hash(Math.floor(p.x / CELL), Math.floor(p.y / CELL));
+            let b = g.get(k);
+            if (!b) { b = []; g.set(k, b); }
+            b.push(p);
+          }
+          return g;
+        };
+        const relax = (passes, now, ignoreSleep = false) => {
+          for (let pass = 0; pass < passes; pass++) {
+            const grid = buildGrid();
+            for (const p of parts) {
+              if (now < p.born) continue;
+              const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);
+              const rp = p.size * 0.5;
+              for (let gx = cx - 1; gx <= cx + 1; gx++) {
+                for (let gy = cy - 1; gy <= cy + 1; gy++) {
+                  const bucket = grid.get(hash(gx, gy));
+                  if (!bucket) continue;
+                  for (const q of bucket) {
+                    if (q.id <= p.id || now < q.born) continue;   // 每对只处理一次
+                    let dx = q.x - p.x, dy = q.y - p.y;
+                    const minD = rp + q.size * 0.5;
+                    let d2 = dx * dx + dy * dy;
+                    if (d2 >= minD * minD) continue;
+                    let d = Math.sqrt(d2);
+                    if (d < 1e-3) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d = Math.hypot(dx, dy) || 1; }
+                    const nx = dx / d, ny = dy / d, depth = minD - d;
+                    if (depth > 0.5) { p.touch = true; q.touch = true; }
+                    // 睡着的粒子当"墙"：只推醒着的那个；压实阶段（ignoreSleep）人人可动
+                    let wp = 0.5, wq = 0.5;
+                    if (!ignoreSleep) {
+                      if (p.sleep && !q.sleep) { wp = 0; wq = 1; }
+                      else if (q.sleep && !p.sleep) { wp = 1; wq = 0; }
+                    }
+                    p.x -= nx * depth * wp; p.y -= ny * depth * wp;
+                    q.x += nx * depth * wq; q.y += ny * depth * wq;
+                    if (!p.sleep && !q.sleep) {
+                      const rel = (q.vx - p.vx) * nx + (q.vy - p.vy) * ny;
+                      if (rel < 0) {
+                        p.vx += nx * rel * 0.5; p.vy += ny * rel * 0.5;
+                        q.vx -= nx * rel * 0.5; q.vy -= ny * rel * 0.5;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        };
+        const clampAll = now => {
+          for (const p of parts) {
+            if (now < p.born) continue;
+            const r = p.size * 0.5;
+            if (p.x < r) p.x = r; else if (p.x > W - r) p.x = W - r;
+            if (p.y > H - r) p.y = H - r;
+          }
+        };
+        // 一次性压实：所有粒子都可动，反复推挤到几乎零重叠（只在静止后跑一次，几百轮也就几毫秒）
+        const packAll = now => {
+          for (let it = 0; it < 300; it++) { relax(1, now, true); clampAll(now); }
+          relax(30, now, true);
+          clampAll(now);
+        };
+        const worstOverlap = now => {
+          const grid = buildGrid();
+          let worst = 0;
+          for (const p of parts) {
+            if (now < p.born) continue;
+            const cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);
+            const rp = p.size * 0.5;
+            for (let gx = cx - 1; gx <= cx + 1; gx++) {
+              for (let gy = cy - 1; gy <= cy + 1; gy++) {
+                const bucket = grid.get(hash(gx, gy));
+                if (!bucket) continue;
+                for (const q of bucket) {
+                  if (q.id <= p.id || now < q.born) continue;
+                  const d = Math.hypot(q.x - p.x, q.y - p.y);
+                  const over = (rp + q.size * 0.5) - d;
+                  if (over > worst) worst = over;
+                }
+              }
+            }
+          }
+          return worst;
+        };
+        // 供验收脚本核对「粒子数」与「互不重叠」：只读暴露，效果结束即删除
+        window.__dxEruption = { parts, overlap: () => worstOverlap(performance.now()) };
+        h.onCleanup(() => { delete window.__dxEruption; });
+        // 窗口被拖动时，⚠ 要跟着"甩"：按窗口位移给粒子加惯性冲量（用户要求）
+        let winX = window.screenX, winY = window.screenY;
+        let lastWake = performance.now();            // 上次"被唤醒"的时间：静止 4.2 秒后压实冻结
         const step = now => {
           if (stop.v) return;
           const dt = Math.min(0.032, (now - last) / 1000); last = now;
+          // 惯性：窗口这一帧移动了多少，粒子就反向被"甩"多少（取负号 = 惯性滞后），
+          // 系数 2.2 是手感值：拖快了明显荡，慢慢拖几乎无感
+          const dwx = (window.screenX - winX) * 2.2, dwy = (window.screenY - winY) * 2.2;
+          winX = window.screenX; winY = window.screenY;
           ctx.clearRect(0, 0, W, H);
           let moving = 0;
+          if (dwx || dwy) {                          // 窗口一动，全部叫醒（惯性会带着它们晃）
+            lastWake = now;
+            for (const p of parts) { p.sleep = false; p.still = 0; }
+          }
           for (const p of parts) {
             if (now < p.born) { moving += 1; continue; }
-            p.vy += G * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.rot += p.vr * dt;
+            if (p.sleep) continue;                   // 睡着了就不再积分（堆才会真正静止）
+            p.vy += G * dt;
+            if (dwx || dwy) { p.vx -= dwx; p.vy -= dwy; }
+            p.x += p.vx * dt; p.y += p.vy * dt; p.rot += p.vr * dt;
             if (p.y > H - p.size * 0.5) {           // 触底：弹跳 + 摩擦，最终堆在底部
               p.y = H - p.size * 0.5;
               p.vy *= -0.42; p.vx *= 0.72; p.vr *= 0.6;
@@ -279,19 +379,40 @@
             }
             if (p.x < p.size * 0.5) { p.x = p.size * 0.5; p.vx = Math.abs(p.vx) * 0.7; }
             if (p.x > W - p.size * 0.5) { p.x = W - p.size * 0.5; p.vx = -Math.abs(p.vx) * 0.7; }
+            const cap = 2600;                       // 惯性冲量别把粒子甩飞
+            if (p.vx > cap) p.vx = cap; else if (p.vx < -cap) p.vx = -cap;
+            if (p.vy > cap) p.vy = cap; else if (p.vy < -cap) p.vy = -cap;
+            // 阻尼 + 入睡：堆里松弛的冲量会一直互相"喂"能量，不睡的话 10 秒后还在抖
+            p.vx *= 0.985; p.vy *= 0.985; p.vr *= 0.98;
+            if (Math.hypot(p.vx, p.vy) < 26) p.still = (p.still || 0) + 1; else p.still = 0;
+            if (p.still > 10) { p.sleep = true; p.vx = 0; p.vy = 0; p.vr = 0; }
             if (Math.abs(p.vx) > 4 || Math.abs(p.vy) > 4 || Math.abs(p.vr) > 0.05) moving += 1;
+          }
+          relax(4, now);                            // 分离：4 轮松弛（网格宽相位，够便宜）
+          // 接触阻尼：被下面粒子托住的那个，重力每帧还在往上加速度，不衰减就会越压越深
+          for (const p of parts) {
+            if (now < p.born) continue;
+            if (p.touch) { p.vx *= 0.55; p.vy *= 0.55; p.vr *= 0.6; p.touch = false; }
+          }
+          clampAll(now);
+          for (const p of parts) {
+            if (now < p.born) continue;
             const c = Math.cos(p.rot), s = Math.sin(p.rot), w = p.size, hh = p.size;
             ctx.setTransform(dpr * c, dpr * s, -dpr * s, dpr * c, dpr * p.x, dpr * p.y);
             ctx.drawImage(sprite, -w / 2, -hh / 2, w, hh);
           }
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-          // 全部静止就不再重绘（剩下的时间只是静置，不再空转主线程）
-          if (!moving) { frozen = true; return; }
+          // 落定 4.2 秒后：整体压实到零重叠并冻结画面（之后不再逐帧积分，画面是干净的）
+          // 窗口一动就唤醒（惯性带它们晃），晃完再自动压实一次
+          if (now - lastWake > 4200) {
+            packAll(now);
+            frozen = true;
+            return;
+          }
           raf = requestAnimationFrame(step);
         };
         raf = requestAnimationFrame(step);
-        h.caption('⚠ 警告标志喷发中 —— 受重力影响，10 秒后自动清理', 3200);
-        await h.sleep(9000);
+        await h.sleep(9000);                        // 不再出提示条（用户要求）
         if (!frozen) { /* 还在动也无妨，下面直接淡出 */ }
         cv.style.transition = 'opacity .9s'; cv.style.opacity = '0';
         await h.sleep(900);
@@ -310,8 +431,7 @@
             <div style="font-size:13px;opacity:.75;margin-top:22px">正在收集错误信息… 3%</div>
           </div>`;
         await h.sleep(3200);
-        el.remove();
-        await h.say('吓到了吧 😄', 2200, '你的报告好着呢，一个字没动');
+        el.remove();          // 用户要求：不放"吓到了吧"的收尾卡片，蓝屏结束就回到界面
       },
     },
     {
@@ -322,14 +442,11 @@
         num.style.cssText = 'font-size:120px;font-weight:800;color:#ff5a5a;font-variant-numeric:tabular-nums';
         const txt = document.createElement('div');
         txt.style.cssText = 'font-size:19px;margin-top:8px;opacity:.95';
-        const sub = document.createElement('div');
-        sub.style.cssText = 'font-size:13px;margin-top:6px;opacity:.6';
-        el.append(num, txt, sub);
+        el.append(num, txt);      // 用户要求：不再显示那两行小字旁白
         for (let i = 10; i > 0; i--) {
           if (h.cancelled()) return;
           num.textContent = String(i);
           txt.textContent = '秒后删除本机全部实验报告与数据';
-          sub.textContent = i > 6 ? '（玩笑，但你可以先深呼吸）' : '（再等等…）';
           await h.sleep(900);
         }
         num.textContent = '0';
@@ -359,14 +476,11 @@
             c.save(); c.translate(p.x, p.y); c.rotate(p.rot); c.fillStyle = p.col;
             c.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); c.restore();
           }
-          if (now - t0 > 2400) {
-            c.font = '700 26px system-ui'; c.textAlign = 'center'; c.fillStyle = '#fff';
-            c.fillText('恭喜，你被吓到了 😄', W / 2, H / 2);
-            return;                      // 礼花放完就停，剩下的时间静置（不再空转主线程）
-          }
+          if (now - t0 > 2400) return;   // 礼花放完就停，剩下的时间静置（结论文案改用底部提示条）
           raf = requestAnimationFrame(step);
         };
         raf = requestAnimationFrame(step);
+        h.caption('开玩笑的', 3000);      // 用户要求：结尾用灰黑长圆底部提示条
         await h.sleep(3600);
       },
     },
@@ -387,8 +501,8 @@
         root.style.transition = 'transform .35s';
         root.style.transform = 'scaleX(-1)';
         h.onCleanup(() => { root.style.transform = ''; root.style.transition = ''; });
-        h.caption('镜像世界：左右反了，数据没反', 2400);
-        await h.sleep(2600);
+        h.caption('镜像世界：左右反了，数据没反', 2600);
+        await h.sleep(5000);          // 用户要求：时间长一点（原 2.6 秒）
       },
     },
     {
@@ -410,6 +524,11 @@
       id: 'cursor-army', name: '光标大军', weight: 2, maxMs: 9000,
       async run(h) {
         const el = h.layer({ pointer: false });
+        // 用户要求：隐藏真实鼠标指针（只留这群假光标）；用临时样式覆盖所有元素的光标
+        const hideCursor = document.createElement('style');
+        hideCursor.textContent = '*{cursor:none !important}';
+        document.head.appendChild(hideCursor);
+        h.onCleanup(() => hideCursor.remove());
         const N = 28, cur = [];
         for (let i = 0; i < N; i++) {
           const c = document.createElement('div');
@@ -452,8 +571,7 @@
           s.onclick = () => { s.textContent = '±∞'; s.style.color = '#7c3aed'; };
           el.appendChild(s);
         }
-        h.caption('点一下那些公式试试', 2600);
-        await h.sleep(9000);
+        await h.sleep(9000);          // 用户要求：不要底部提示条
       },
     },
     {
@@ -473,9 +591,10 @@
           await h.sleep(p < 90 ? 70 : 260);
         }
         await h.sleep(1800);           // 卡在 99%
-        box.innerHTML = '<div style="font-size:16px;font-weight:700">骗你的 😄</div>'
-          + '<div style="font-size:13px;color:#6b7280;margin-top:8px">你的数据一点没动，连时间戳都没改</div>';
-        await h.sleep(1600);
+        // 用户要求：走完 99% 直接整屏白屏（不放"骗你的"文案），3 秒后恢复
+        box.remove();
+        el.style.background = '#ffffff';
+        await h.sleep(3000);
       },
     },
     {
@@ -486,18 +605,8 @@
         card(el, `<div style="font-size:15px;color:#6b7280">第</div>
           <div style="font-size:64px;font-weight:800;line-height:1.1">${n}</div>
           <div style="font-size:15px;color:#6b7280">次点击「请勿点击」</div>
-          <div style="margin-top:14px;font-size:17px;font-weight:700;color:#c53030">当前称号：${TITLES(n)}</div>
-          <div style="margin-top:8px;font-size:12px;color:#9ca3af">${n >= 50 ? '（已无称号可升，佩服）' : '（继续点可以升级，真的）'}</div>`, 'pointer-events:auto');
+          <div style="margin-top:14px;font-size:17px;font-weight:700;color:#c53030">当前称号：${TITLES(n)}</div>`, 'pointer-events:auto');
         await h.sleep(2600);
-      },
-    },
-    {
-      id: 'physics-meme', name: '物理梗弹窗', weight: 3, maxMs: 7000,
-      async run(h) {
-        const el = h.layer({ css: 'background:rgba(15,18,25,.45);display:flex;align-items:center;justify-content:center' });
-        const box = card(el, `<div style="font-size:34px;margin-bottom:10px">⚠</div>
-          <div style="font-size:16px;line-height:1.6">${pickOne(MEMES)}</div>`, 'pointer-events:auto;max-width:460px');
-        await h.sleep(3000);
       },
     },
     {
@@ -507,14 +616,21 @@
         const box = document.createElement('div');
         box.style.cssText = 'font-size:14px;line-height:2;min-width:420px';
         el.appendChild(box);
+        // 目标时间 = 用户机器上的真实安装时间（读 exe / userData 的创建时间，只读）
+        let installAt = '';
+        try {
+          const t = await window.labAPI.dangerInstallTime();
+          if (t && t.ok && t.text) installAt = t.text;
+        } catch (_) {}
         const lines = [
           '> 检测到高危点击操作，启动安全回滚…',
-          '> 目标时间：1970-01-01 00:00:00',
+          installAt ? '> 目标时间：' + installAt + ' —— 你把这个软件装进电脑的那一刻'
+                    : '> 目标时间：这台电脑第一次运行本软件的那一刻',
           '> 正在解压时间机器驱动 …… 87%',
-          '> 正在回收实验报告 …… 已完成',
-          '> 正在联系 1970 年服务器 …… 超时',
-          '> 回滚失败：时间机器未安装（请先修好一台）',
-          '> 已放弃回滚，所有数据保持原样 ✓',
+          '> 正在回收这段时间里生成的实验报告 …… 已完成',
+          '> 正在联系那天的你 …… 对方拒绝接听',
+          '> 回滚失败：时间机器未安装（装它要 88GB，算了）',
+          '> 已放弃回滚：数据保持原样，你的报告一份都没少 ✓',
         ];
         for (const l of lines) {
           if (h.cancelled()) return;
@@ -541,32 +657,54 @@
       },
     },
     {
-      id: 'runaway-button', name: '按钮逃跑', weight: 3, maxMs: 14000,
+      id: 'runaway-button', name: '按钮逃跑', weight: 3, maxMs: 90000,
       async run(h) {
+        // 用户要求：在整个窗口里躲、不设次数上限，一直躲到真的被点到（或 Esc 结束）
         const btn = $('btnDangerGo');
         if (!btn) { await h.sleep(500); return; }
-        btn.style.transition = 'transform .16s ease-out';
-        h.onCleanup(() => { btn.style.transform = ''; btn.style.transition = ''; });
-        let dodges = 0;
-        const dodge = () => {
-          if (h.cancelled() || dodges >= 5) return;
-          dodges += 1;
-          btn.style.transform = `translate(${rnd(-120, 120)}px, ${rnd(-60, 60)}px) rotate(${rnd(-8, 8)}deg)`;
+        const box = btn.getBoundingClientRect();
+        const w = box.width, hgt = box.height;
+        const old = btn.style.cssText;
+        btn.style.position = 'fixed';
+        btn.style.width = w + 'px';
+        btn.style.zIndex = '4700';
+        btn.style.transition = 'left .12s ease-out, top .12s ease-out, transform .12s';
+        btn.style.left = box.left + 'px';
+        btn.style.top = box.top + 'px';
+        h.onCleanup(() => { btn.style.cssText = old; });
+
+        let caught = false;
+        const onCaught = () => { caught = true; };
+        btn.addEventListener('click', onCaught, true);
+
+        const jump = (fromX, fromY) => {
+          const pad = 12;
+          const maxX = Math.max(pad, window.innerWidth - w - pad);
+          const maxY = Math.max(pad, window.innerHeight - hgt - pad);
+          // 优先跳到离鼠标远的地方，省得刚落地又被追上
+          let bx = 0, by = 0, best = -1;
+          for (let i = 0; i < 8; i++) {
+            const x = pad + Math.random() * (maxX - pad);
+            const y = pad + Math.random() * (maxY - pad);
+            const d = Math.hypot(x + w / 2 - fromX, y + hgt / 2 - fromY);
+            if (d > best) { best = d; bx = x; by = y; }
+          }
+          btn.style.left = Math.round(bx) + 'px';
+          btn.style.top = Math.round(by) + 'px';
+          btn.style.transform = `rotate(${rnd(-10, 10)}deg)`;
         };
         const onMove = e => {
           const b = btn.getBoundingClientRect();
           const d = Math.hypot(e.clientX - (b.left + b.width / 2), e.clientY - (b.top + b.height / 2));
-          if (d < 110) dodge();
+          if (d < 110) jump(e.clientX, e.clientY);
         };
         document.addEventListener('mousemove', onMove, true);
-        h.onCleanup(() => document.removeEventListener('mousemove', onMove, true));
-        h.caption('这按钮会跑，追到第 5 次它投降', 2600);
-        await h.sleep(700);
-        while (dodges < 5 && !h.cancelled()) await h.sleep(120);
-        if (h.cancelled()) return;
-        btn.style.transform = '';
-        h.caption('算了，你点吧（按钮已放弃抵抗）', 2600);
-        await h.sleep(4200);
+        h.onCleanup(() => {
+          document.removeEventListener('mousemove', onMove, true);
+          btn.removeEventListener('click', onCaught, true);
+        });
+        // 等到被点到（或看门狗/Esc 收场）
+        while (!caught && !h.cancelled()) await h.sleep(120);
       },
     },
     {
@@ -590,7 +728,6 @@
           o.start(t); o.stop(t + (i === 3 ? 1 : 0.28));
           await h.sleep(i === 3 ? 950 : 300);
         }
-        h.caption(`第 4 声是奖励音 —— 这是你第 ${h.count} 次点击`, 2600);
       },
     },
     {
@@ -602,12 +739,10 @@
           const root = $('app') || document.body;
           root.style.animation = 'dx-shake .5s 3';
           h.onCleanup(() => { root.style.animation = ''; });
-          h.caption('操作过于危险（窗口抖不了，内容替你抖）', 2400);
-          await h.sleep(1600);
+          await h.sleep(1600);        // 用户要求：不出提示条
           return;
         }
-        h.caption('⚠ 操作过于危险：窗口已抖动', 2400);
-        await h.sleep(1800);
+        await h.sleep(1800);        // 用户要求：不出提示条
       },
     },
     {
@@ -627,8 +762,7 @@
         }
         await h.sleep(1200);           // 主进程会在 1.6 秒后把窗口显示回来
         el.remove();
-        h.caption('刚才是「闪退」特效 —— 窗口自己回来了，数据一个字没丢', 3200);
-        await h.sleep(600);
+        await h.sleep(400);            // 用户要求：结束不再出提示条
       },
     },
     {
@@ -671,6 +805,30 @@
         const sub = document.querySelector('.brand-sub');
         const oldSub = sub ? sub.textContent : '';
         if (sub) { sub.textContent = '大学物理 · 咕咕咕咕'; h.onCleanup(() => { sub.textContent = oldSub; }); }
+        // 用户要求：页面上其它文字也逐字换成「咕」（一个字对应一个咕）。
+        // 品牌/标题栏保持鸽子造型；效果自己的图层、脚本样式、用户正在编辑的 textarea 不动；
+        // 原文本逐节点存好，结束时精确还原。
+        const restored = [];
+        try {
+          const skip = '.dx-layer, .brand-mark, .brand-title, .brand-sub, .titlebar-logo, .titlebar-name';
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+            acceptNode(node) {
+              const p = node.parentElement;
+              if (!p) return NodeFilter.FILTER_REJECT;
+              if (/^(SCRIPT|STYLE|NOSCRIPT|TEXTAREA)$/.test(p.tagName)) return NodeFilter.FILTER_REJECT;
+              if (p.closest(skip)) return NodeFilter.FILTER_REJECT;
+              if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+              return NodeFilter.FILTER_ACCEPT;
+            },
+          });
+          const nodes = [];
+          while (walker.nextNode()) nodes.push(walker.currentNode);
+          for (const node of nodes) {
+            restored.push([node, node.nodeValue]);
+            node.nodeValue = node.nodeValue.replace(/\S/g, '咕');
+          }
+        } catch (_) { /* 咕化失败就当没发生，别把效果拖垮 */ }
+        h.onCleanup(() => { for (const [node, val] of restored) node.nodeValue = val; });
         h.caption('已进入摸鱼模式：咕…咕…咕…', 3000);
         await h.sleep(9000);
       },
