@@ -952,24 +952,29 @@ function onFormInput() {
   }
 }
 
+// 只读主表单（#dataTableWrap）内的输入框：核对页 #recogFields 由同一个 renderField 渲染，
+// 用的是同一套 data-key/data-idx，而弹窗关闭只摘 .show 类、DOM 仍留在文档里 —— 按整篇文档
+// 查询会把残留的核对页输入一并读走（数组长度翻倍 →「数组长度错误」，保存/生成全被拦）。
 function readFormData() {
   const data = {};
   if (!currentSchema) return data;
+  const root = $('dataTableWrap');
+  if (!root) return data;
   for (const group of (currentSchema.groups || [])) {
     for (const fld of (group.fields || [])) {
       const key = fld.key;
       if (fld.type === 'number') {
-        const inp = document.querySelector(`input[data-key="${key}"]:not([data-idx]):not([data-row])`);
+        const inp = root.querySelector(`input[data-key="${key}"]:not([data-idx]):not([data-row])`);
         data[key] = (inp && inp.value !== '') ? parseFloat(inp.value) : null;
       } else if (fld.type === 'science') {
-        const m = document.querySelector(`input.science-mantissa[data-key="${key}"]`);
-        const e = document.querySelector(`input.science-exp[data-key="${key}"]`);
+        const m = root.querySelector(`input.science-mantissa[data-key="${key}"]`);
+        const e = root.querySelector(`input.science-exp[data-key="${key}"]`);
         const mv = (m && m.value !== '') ? parseFloat(m.value) : NaN;
         // 指数留空时回退 schema 的默认指数（清除/重填后只填尾数也能合成正确量级）
         const ev = (e && e.value !== '') ? parseInt(e.value, 10) : (fld.expDefault !== undefined ? fld.expDefault : -9);
         data[key] = (isFinite(mv) && isFinite(ev)) ? mv * Math.pow(10, ev) : null;
       } else if (fld.type === 'array') {
-        const inputs = document.querySelectorAll(`input[data-key="${key}"][data-idx]`);
+        const inputs = root.querySelectorAll(`input[data-key="${key}"][data-idx]`);
         data[key] = Array.from(inputs).map(i => i.value !== '' ? parseFloat(i.value) : null);
       } else if (fld.type === 'matrix') {
         const rows = fld.rows || 0, cols = fld.cols || 0;
@@ -977,14 +982,14 @@ function readFormData() {
         for (let r = 0; r < rows; r++) {
           const row = [];
           for (let c = 0; c < cols; c++) {
-            const inp = document.querySelector(`input[data-key="${key}"][data-row="${r}"][data-col="${c}"]`);
+            const inp = root.querySelector(`input[data-key="${key}"][data-row="${r}"][data-col="${c}"]`);
             row.push(inp && inp.value !== '' ? parseFloat(inp.value) : null);
           }
           m.push(row);
         }
         data[key] = m;
       } else {
-        const inp = document.querySelector(`input[data-key="${key}"]`);
+        const inp = root.querySelector(`input[data-key="${key}"]`);
         data[key] = inp ? (inp.value === '' ? null : inp.value) : null;
       }
     }
@@ -2190,7 +2195,11 @@ function bindEvents() {
   // 点击遮罩关闭弹窗
   document.querySelectorAll('.modal-overlay').forEach(overlay => {
     overlay.onclick = (e) => {
-      if (e.target === overlay) overlay.classList.remove('show');
+      if (e.target !== overlay) return;
+      // 识别弹窗必须走统一关闭出口（取消识别 + 清空核对页）：否则进行中的识别不会被取消，
+      // 晚到的结果会把已关闭的核对页重新灌满，残留输入又会串进主表单取值
+      if (overlay.id === 'recognizeModal' && typeof closeRecognizeModal === 'function') { closeRecognizeModal(); return; }
+      overlay.classList.remove('show');
     };
   });
 

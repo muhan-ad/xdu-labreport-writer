@@ -1,10 +1,12 @@
 {
  "title": "感谢声明",
- "updatedAt": "2026-09-17T00:10:52+08:00",
+ "updatedAt": "2026-09-20T13:11:06+08:00",
  "items": [
+  {"name": "咕咕咕", "contribution": "应用推广"},
   {"name": "慕寒", "contribution": "应用架构"},
   {"name": "宇宙创生", "contribution": "脚本开发"},
   {"name": "mozhou周言", "contribution": "OCR识别"},
-  {"name": "怀山", "contribution": "辅助开发"}
+  {"name": "怀山", "contribution": "脚本优化与彩蛋设计"},
+  {"name": "黑心肥宅黄鹤", "contribution": "SKILL贡献"}
  ]
 }

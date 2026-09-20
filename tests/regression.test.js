@@ -358,6 +358,40 @@ test('renderField accepts an override data source for the review UI', async () =
   assert.ok(html.includes('data-key="k1"') && html.includes('value="42"'), '覆盖值应渲染进数据格：' + html);
 });
 
+// 核对页（#recogFields）由同一个 renderField 渲染，输入框与主表单共用 data-key/data-idx；
+// 弹窗关闭只摘 .show 类、DOM 仍留在文档里。历史缺陷：readFormData 用整篇文档选择器读数组，
+// 把残留的核对页输入一并读走 → 数组长度翻倍 → 保存/生成报「数组长度错误」。
+test('readFormData is scoped to the main data form', () => {
+  const start = renderer.indexOf('function readFormData()');
+  const body = renderer.slice(start, renderer.indexOf('async function saveFormData(', start));
+  assert.ok(!/document\.querySelector/.test(body), 'readFormData 不得使用整篇文档选择器（核对页残留会被读进来）');
+  assert.match(body, /\$\('dataTableWrap'\)/, 'readFormData 必须把取值限定在主表单容器内');
+});
+
+test('readFormData reads array fields from the main form container only', () => {
+  const ui = uiContext();
+  ui.currentSchema = { groups: [{ fields: [
+    { key: 'a1', type: 'array', length: 3, label: '数组' },
+    { key: 'n1', type: 'number', label: '数字' },
+  ] }] };
+  const cell = (key, value, extra) => ({
+    dataset: Object.assign({ key }, extra || {}), value, classList: { contains: () => false },
+  });
+  const cells = [cell('a1', '1', { idx: '0' }), cell('a1', '2', { idx: '1' }), cell('a1', '3', { idx: '2' })];
+  const numberEl = cell('n1', '7');
+  // 主表单容器只暴露自己的格子（文档里另有一份同名残留节点，不在这个容器内）
+  ui.$ = (id) => (id === 'dataTableWrap' ? {
+    querySelector: (sel) => (sel.includes('n1') ? numberEl : null),
+    querySelectorAll: (sel) => (sel.includes('a1') && sel.includes('data-idx') ? cells : []),
+  } : null);
+  load(ui, 'function readFormData()', 'async function saveFormData(');
+  const data = ui.readFormData();
+  // vm 领域里造的数组与测试领域原型不同，deepEqual 会因原型失败，这里按值比较
+  assert.equal(data.a1.length, 3, '数组长度必须等于主表单格子数（残留核对页不得混入）');
+  assert.deepEqual(Array.from(data.a1), [1, 2, 3]);
+  assert.equal(data.n1, 7);
+});
+
 test('vision contribution upload assembles photo + ai + proofread + manifest with privacy strip', async () => {
   const ui = uiContext();
   const uploaded = [], submitted = [];
@@ -788,11 +822,11 @@ test('credits list reads the user copy first and falls back to the builtin one',
   const read_credits = h.handlers.get('read-credits');
   assert.ok(typeof read_credits === 'function', 'read-credits handler 已注册');
 
-  // 未推送过名单时：读安装目录的出厂名单（四条初始署名）
+  // 未推送过名单时：读安装目录的出厂名单（六条初始署名）
   const builtin = read_credits();
   assert.equal(builtin.ok, true);
-  assert.deepEqual(builtin.items.map(i => i.name), ['慕寒', '宇宙创生', 'mozhou周言', '怀山']);
-  assert.equal(builtin.items[0].contribution, '应用架构');
+  assert.deepEqual(builtin.items.map(i => i.name), ['咕咕咕', '慕寒', '宇宙创生', 'mozhou周言', '怀山', '黑心肥宅黄鹤']);
+  assert.equal(builtin.items[0].contribution, '应用推广');
 
   // userData 副本优先：数据包更新后的名单必须盖过出厂名单
   put(path.join(h.root, ...CREDITS_REL),

@@ -503,7 +503,6 @@ function renderRecogResult() {
   const onlyEmpty = recogOnlyEmptyPref();
   const onlyEmptyEl = $('recogOnlyEmptyReview');
   if (onlyEmptyEl) onlyEmptyEl.checked = onlyEmpty;   // 沿用上次选择（默认关闭）
-  const live = currentSchema ? readFormData() : {};
   // 识别值摊平为 {key: value}，交给主表单同款数据格渲染（renderField 的 dataOverride）
   const data = {};
   for (const f of recogState.fields) data[f.key] = f.value;
@@ -717,7 +716,9 @@ function collectReviewValues() {
       const wrap = [...root.querySelectorAll('.review-field')].find(el => el.dataset.key === fld.key);
       const cb = wrap ? wrap.querySelector('.recog-pick') : null;
       if (!wrap || (cb && !cb.checked)) { out[fld.key] = null; continue; }
-      const els = [...wrap.querySelectorAll('[data-key]')].filter(el => el.dataset.key === fld.key);
+      // 只收数据格（.field-input）：同一块里还有带 data-key 的勾选框（.recog-pick，value 恒为 'on'），
+      // 不过滤就会被下面的 els[0] 当成字段值读走（number 读成 null 导不进去、text 读成 "on"）
+      const els = [...wrap.querySelectorAll('.field-input[data-key]')].filter(el => el.dataset.key === fld.key);
       if (!els.length) { out[fld.key] = null; continue; }
       if (fld.type === 'science') {
         const m = num(els.find(el => el.classList.contains('science-mantissa')));
@@ -753,6 +754,15 @@ function collectReviewValues() {
     }
   }
   return out;
+}
+
+// 关闭识别弹窗的统一出口：取消进行中的识别 + 清空核对页 DOM + 关弹窗。
+// 核对页输入与主表单共用 data-key，残留下来会串进主表单取值（数组长度翻倍），必须清掉。
+// 三条关闭路径（右上角 ×、底部取消、导入完成后）与点击遮罩都走这里。
+function closeRecognizeModal() {
+  cancelRecognition();
+  $('recogFields').innerHTML = '';
+  closeModal('recognizeModal');
 }
 
 // 核对完成 → 导入表单 + 保存识图训练样本三件套（原图 / AI 识别 / 人工校对）
@@ -839,7 +849,7 @@ async function applyReview() {
   const bits = [`已导入 ${filled} 个字段`];
   if (skipped) bits.push(`跳过 ${skipped} 个已有值`);
   if (stuFilled) bits.push(`学生信息 ${stuFilled} 项`);
-  closeModal('recognizeModal');
+  closeRecognizeModal();
   if (sampleSaved) {
     showToast('success', bits.join(' · '), '识图样本已保存（原图 + AI 识别 + 人工校对），可在「数据贡献 → 识图数据」中贡献', 10000);
   } else {
@@ -856,7 +866,7 @@ function bindRecognizeEvents() {
   if (!$('recognizeModal')) return;
 
   // 关闭弹窗即取消进行中的识别请求：既省一次 API 调用，也避免晚到结果污染状态
-  const closeAndCancel = () => { cancelRecognition(); closeModal('recognizeModal'); };
+  const closeAndCancel = () => closeRecognizeModal();
   $('btnCloseRecognize').onclick = closeAndCancel;
   $('btnCancelRecognize').onclick = closeAndCancel;
   $('btnApplyRecognize').onclick = applyReview;   // 结果页即核对页：直接导入

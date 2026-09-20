@@ -118,3 +118,21 @@ test('OCR recognition is bound to a session and cancellable', () => {
   assert.ok(!/saveTableImage/.test(startBody), '识别开始阶段不再提前保存原图');
   assert.match(ocrUi, /await window\.labAPI\.saveTableImage\(currentExp\.path, recogState\.originalDataUrl\)/, '确认后才保存原图');
 });
+
+// 识图回归（2.1.0 的两个线上缺陷）：
+//  1) 核对页取值必须排除带 data-key 的勾选框（.recog-pick，value 恒为 'on'），否则 number 字段读成 null
+//     导不进去、text 字段读成 "on"；
+//  2) 关闭识别弹窗必须清空核对页并取消识别 —— 核对页输入与主表单共用 data-key，残留下来会被主表单
+//     取值读到（数组长度翻倍 →「数组长度错误」，保存与生成全被拦）。
+test('review page reading skips the pick checkbox and closing clears the review DOM', () => {
+  const ocrUi = fs.readFileSync(path.join(root, 'src', 'ocr.js'), 'utf8');
+  const rendererUi = fs.readFileSync(path.join(root, 'src', 'renderer.js'), 'utf8');
+  assert.match(ocrUi, /wrap\.querySelectorAll\('\.field-input\[data-key\]'\)/,
+    '核对页取值只收数据格（排除勾选框）');
+  assert.match(ocrUi, /function closeRecognizeModal\(\)\s*\{\s*cancelRecognition\(\);\s*\$\('recogFields'\)\.innerHTML = '';\s*closeModal\('recognizeModal'\);/,
+    '统一关闭出口：取消识别 + 清空核对页');
+  assert.match(ocrUi, /const closeAndCancel = \(\) => closeRecognizeModal\(\)/, '× / 取消按钮走统一出口');
+  assert.match(ocrUi, /closeRecognizeModal\(\);\n\s*if \(sampleSaved\)/, '导入完成后也走统一出口');
+  assert.match(rendererUi, /overlay\.id === 'recognizeModal' && typeof closeRecognizeModal === 'function'/,
+    '点遮罩关闭也走统一出口');
+});
