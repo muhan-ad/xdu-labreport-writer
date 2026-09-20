@@ -15,7 +15,7 @@ from common.data_io import load_data
 LAMBDA = 589.3e-6         # 钠光波长 (mm)，589.3 nm
 DELTA_INSTRUMENT = 0.004   # 测量显微镜仪器误差 (mm)
 SKIP_N = 5                 # 逐差法间隔
-T_FACTOR = 1.15            # t 因子 (n=5, df=4, P=0.683)
+T_FACTOR = 1.14            # t 因子 (n=5, df=4, P=0.683) —— 教材表 2-2-1
 
 
 # （方式三：_create_template 已移除，数据真相为 data.json）
@@ -32,19 +32,39 @@ def _compute(data: dict) -> dict:
     D_m2 = [d ** 2 for d in D_m]
 
     # 逐差法（skip-5）：环 20~16 (idx 0~4) 对应 环 15~11 (idx 5~9)
+    # 配对依赖"大环在前"的录入顺序，这里用 rings 显式校验，避免顺序颠倒时
+    # 算出负的曲率半径并静默写进报告
+    if any(rings[i] <= rings[i + 1] for i in range(len(rings) - 1)):
+        print(f"[错误] 暗环序号必须从大到小排列（当前为 {rings}），"
+              "请按 20→11 的顺序录入 d_left / d_right。")
+        return None
     diffs = [D_m2[i] - D_m2[i + SKIP_N] for i in range(5)]
+    bad_diff = [round(x, 4) for x in diffs if x <= 0]
+    if bad_diff:
+        print(f"[错误] 逐差 D²_m − D²_n 出现非正值 {bad_diff}："
+              "较大暗环的直径必须大于较小暗环，请检查 d_left / d_right 的配对。")
+        return None
     avg_diff = mean(diffs)
     std_diff = std_dev(diffs)
 
     # 每组差对应的曲率半径
     R_individual = [d / (4 * SKIP_N * LAMBDA) for d in diffs]
-    R_bar = mean(R_individual)
 
-    # 不确定度分析
-    n_pairs = 5
+    # ── 3σ 坏值检验 ──
+    # 5 个逐差结果 R_i 是同一被测量 R 的等精度重复测定，检验并迭代剔除坏值后
+    # 再用保留数据重算平均值、标准差与不确定度（样本数据无坏值时结果不变）。
+    ot = outlier_test(R_individual)
+    R_kept = ot["kept"]
+    n_pairs = ot["n_kept"]
+    s_R = std_dev(R_kept)
+    sigma_R = ot["sigma"]                       # σ = s × t_{0.683}(n)
+    sigma3_R = ot["sigma3"]                     # 3σ 检验判据
+    t_used = T_FACTOR if n_pairs == 5 else t_factor(n_pairs)   # n=5 用教材值 1.14
+    R_bar = mean(R_kept)
+    sum_sq_R = sum((x - R_bar) ** 2 for x in R_kept)
 
     # Type A：5 个 R_i 的标准误
-    u_A = T_FACTOR * std_dev(R_individual) / math.sqrt(n_pairs)
+    u_A = t_used * s_R / math.sqrt(n_pairs) if n_pairs > 1 else 0.0
 
     # Type B：由仪器误差传播
     # 每个位置读数：u(x) = Δ_仪 / √3
@@ -65,7 +85,9 @@ def _compute(data: dict) -> dict:
         "rings": rings, "d_left": d_left, "d_right": d_right,
         "D_m": D_m, "D_m2": D_m2,
         "diffs": diffs, "avg_diff": avg_diff, "std_diff": std_diff,
-        "R_individual": R_individual, "R_bar": R_bar,
+        "R_individual": R_individual, "R_kept": R_kept, "R_bar": R_bar,
+        "ot": ot, "n_pairs": n_pairs, "s_R": s_R, "sum_sq_R": sum_sq_R,
+        "sigma_R": sigma_R, "sigma3_R": sigma3_R, "t_used": t_used,
         "avg_D": avg_D, "u_A": u_A, "u_B": u_B, "u_c": u_c,
         "rel_u": u_c / R_bar * 100,
     }
@@ -95,11 +117,20 @@ def _generate_docx(data: dict, output_path: str):
     # 2. 数据处理：直径、逐差与不确定度（见 _compute）
     # ═══════════════════════════════════════════════
     r = _compute(data)
+    if r is None:
+        return
     R_bar = r["R_bar"]
     u_A = r["u_A"]
     u_B = r["u_B"]
     u_c = r["u_c"]
-    n_pairs = len(r["diffs"])
+    avg_diff = r["avg_diff"]
+    avg_D = r["avg_D"]
+    s_R = r["s_R"]
+    sum_sq_R = r["sum_sq_R"]
+    sigma_R = r["sigma_R"]
+    sigma3_R = r["sigma3_R"]
+    t_used = r["t_used"]
+    n_pairs = r["n_pairs"]
 
     # ═══════════════════════════════════════════════
     # 5. 生成 docx 报告
@@ -131,27 +162,68 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_inline_math(f"m - n = {SKIP_N}")
     doc.add_run("，将环序 20~16 与 15~11 逐项配对，计算 ")
     doc.add_inline_math("D_m^2 - D_{m-5}^2")
-    doc.add_run(f" 的 {n_pairs} 组差值。")
+    doc.add_run(f" 的 {len(r['diffs'])} 组差值。")
     doc.add_paragraph("曲率半径平均值：")
     doc.add_math(
-        r"\bar{R} = \frac{\overline{D_{m}^{2} - D_{m-5}^{2}}}"
-        r"{4 \cdot 5 \cdot \lambda} = "
-        + format_number(R_bar) + r"\,\mathrm{mm}"
+        r"\bar{R} = \frac{\overline{D_{m}^{2} - D_{m-5}^{2}}}{4 \cdot 5 \cdot \lambda} = "
+        r"\frac{" + format_number(avg_diff, sig_figs=7) + r"}"
+        r"{4 \times 5 \times 589.3 \times 10^{-6}}"
+        r" \approx " + format_number(R_bar, sig_figs=6) + r"\,\mathrm{mm}"
     )
 
-    doc.add_paragraph("A 类不确定度：")
+    # 3σ 坏值检验：5 个逐差结果 R_i 是同一被测量 R 的等精度重复测定
+    doc.add_paragraph("")
+    doc.add_run(f"{r['ot']['n_all']} 个逐差结果 ")
+    doc.add_inline_math("R_i")
+    doc.add_run(" 是同一被测量 R 的等精度重复测定，作 3σ 坏值检验：")
     doc.add_math(
-        r"\Delta\bar{R} = t \cdot \sqrt{"
-        r"\frac{\sum_{i=1}^{5} (R_i - \bar{R})^{2}}{4 \cdot 5}} = "
-        + format_number(u_A) + r"\,\mathrm{mm}"
+        r"s_{R} = \sqrt{\frac{\sum_{i=1}^{" + str(r["ot"]["n_all"])
+        + r"} (R_i - \bar{R})^{2}}{" + str(r["ot"]["n_all"] - 1) + r"}} = "
+        r"\sqrt{\frac{" + format_number(sum_sq_R, sig_figs=6) + r"}{"
+        + str(r["ot"]["n_all"] - 1) + r"}}"
+        r" \approx " + format_number(s_R, sig_figs=3) + r"\,\mathrm{mm}"
+    )
+    doc.add_math(
+        r"\sigma = s_{R} \times t_{0.683} = "
+        + format_number(s_R, sig_figs=3) + r" \times " + format_number(t_used, sig_figs=3)
+        + r" \approx " + format_number(sigma_R, sig_figs=3) + r"\,\mathrm{mm}"
+    )
+    doc.add_math(
+        r"3\sigma = 3 \times " + format_number(sigma_R, sig_figs=3)
+        + r" \approx " + format_number(sigma3_R, sig_figs=3) + r"\,\mathrm{mm}"
+    )
+    doc.add_paragraph(outlier_note(r["ot"], unit=" mm", digits=3))
+
+    doc.add_paragraph("A类不确定度：")
+    doc.add_math(
+        r"\Delta R_{A} = t \cdot \frac{s_{R}}{\sqrt{n}} = "
+        + format_number(t_used, sig_figs=3) + r" \times \frac{"
+        + format_number(s_R, sig_figs=3) + r"}{\sqrt{" + str(n_pairs) + r"}}"
+        r" \approx " + format_number(u_A, sig_figs=3) + r"\,\mathrm{mm}"
+    )
+
+    doc.add_paragraph("")
+    doc.add_run("B 类不确定度由读数误差 ")
+    doc.add_inline_math(r"u(x) = \frac{\Delta_{\text{仪}}}{\sqrt{3}}")
+    doc.add_run(" 经直径 D、D² 及其逐差逐级传播得到：")
+    doc.add_paragraph("B类不确定度：")
+    doc.add_math(
+        r"u(x) = \frac{\Delta_{\text{仪}}}{\sqrt{3}} = "
+        r"\frac{0.004}{\sqrt{3}} \approx 0.0023\,\mathrm{mm}"
+    )
+    doc.add_math(
+        r"\Delta R_{B} = \frac{4 u(x) \bar{R}}{\bar{D}} = "
+        r"\frac{4 \times 0.0023 \times " + format_number(R_bar, sig_figs=6) + r"}"
+        r"{" + format_number(avg_D, sig_figs=5) + r"}"
+        r" \approx " + format_number(u_B, sig_figs=3) + r"\,\mathrm{mm}"
     )
 
     doc.add_paragraph("合成不确定度：")
     doc.add_math(
-        r"\Delta x = \sqrt{\Delta R_A^{2} + \Delta R_B^{2}} = "
-        r"\sqrt{(\Delta\bar{R})^{2} + "
-        r"(\frac{\Delta_{\text{仪}}}{\sqrt{3}})^{2}} = "
-        + format_number(u_c) + r"\,\mathrm{mm}"
+        r"\Delta R = \sqrt{\Delta R_{A}^{2} + \Delta R_{B}^{2}} = "
+        r"\sqrt{" + format_number(u_A, sig_figs=3) + r"^{2} + "
+        + format_number(u_B, sig_figs=3) + r"^{2}}"
+        r" \approx " + format_number(u_c, sig_figs=3) + r"\,\mathrm{mm}"
     )
 
     doc.add_paragraph("曲率半径测量结果：")
@@ -161,6 +233,7 @@ def _generate_docx(data: dict, output_path: str):
         r"R = \bar{R} \pm \Delta R = ("
         + R_display + r" \pm " + u_display + r")\,\mathrm{mm}"
     )
+    doc.add_paragraph("其中不确定度按只进不舍保留 1 位有效数字，测得值末位与其对齐。")
 
     # ── 三、实验结果分析 ──
     doc.add_heading("三、实验结果分析", level=1)
@@ -172,17 +245,17 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_run("本次测量曲率半径 ")
     doc.add_inline_math(f"R = {format_number(R_bar, u_c)} mm")
     doc.add_run("，合成不确定度 ")
-    doc.add_inline_math(f"u_c = {format_number(u_c)} mm")
-    doc.add_run(f"，相对不确定度 {format_number(u_c / R_bar * 100)}%。")
+    doc.add_inline_math(f"u_c \\approx {format_number(u_c, sig_figs=3)} mm")
+    doc.add_run(f"，相对不确定度约为 {format_number(u_c / R_bar * 100, sig_figs=3)}%。")
 
     doc.add_paragraph("")
     doc.add_run("误差主要来源于以下几个方面：")
     doc.add_run("（1）A 类不确定度占主导，来自 5 组逐差结果的统计涨落，")
     doc.add_run("反映在 R_i 的标准偏差较大（")
-    doc.add_inline_math(f"u_A = {format_number(u_A)} mm")
+    doc.add_inline_math(f"u_A \\approx {format_number(u_A, sig_figs=3)} mm")
     doc.add_run("）；（2）B 类不确定度来自测量显微镜的仪器误差，")
     doc.add_run("贡献较小（")
-    doc.add_inline_math(f"u_B = {format_number(u_B)} mm")
+    doc.add_inline_math(f"u_B \\approx {format_number(u_B, sig_figs=3)} mm")
     doc.add_run("）；（3）透镜与平板玻璃接触处的弹性形变和微量灰尘可能引入附加光程差，")
     doc.add_run("但采用逐差法后该系统误差已在 ")
     doc.add_inline_math("D_m^2")
@@ -280,7 +353,10 @@ def main():
         return
 
     _generate_docx(data, DOCX_FILE)
-    print(f"报告已生成: {DOCX_FILE}")
+    if os.path.exists(DOCX_FILE):
+        print(f"报告已生成: {DOCX_FILE}")
+    else:
+        print("[错误] 生成中止，未输出报告，请按上方提示检查数据。")
 
 
 if __name__ == "__main__":

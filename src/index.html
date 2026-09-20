@@ -352,9 +352,9 @@
                       <span class="ai-option-note">标注"可导入"的章节以报告源文为原文（公式保留 LaTeX），润色后可导入并重新生成报告</span>
                     </div>
                     <div class="ai-option-group">
-                      <label>润色技能（可多选，指令按顺序叠加）</label>
+                      <label>润色技能（自动应用已启用的技能）</label>
                       <div class="ai-check-group" id="aiSkillGroup"></div>
-                      <span class="ai-option-note">技能在「设置 → AI 润色技能」中导入与管理；不选则仅用写作风格</span>
+                      <span class="ai-option-note">以上为本次将使用的技能；启用/停用在「设置 → AI 润色技能」中管理</span>
                     </div>
                     <div class="ai-option-group">
                       <label class="checkbox-label"><input type="checkbox" id="chkKbOnly" checked /> 限定知识库：只依据本实验教材原理润色</label>
@@ -392,6 +392,13 @@
                     <div class="ai-spinner"></div>
                     <span id="aiLoadingText">AI 正在润色中...</span>
                     <button class="btn btn-sm btn-outline" id="btnCancelAiPolish" type="button" style="margin-left:12px;">取消润色</button>
+                  </div>
+                  <div class="ai-thinking" id="aiThinkingBar" style="display:none;">
+                    <span id="aiThinkingStat">模型思考中…</span>
+                    <details class="ai-thinking-details">
+                      <summary>思考过程</summary>
+                      <div class="ai-thinking-text" id="aiThinkingText"></div>
+                    </details>
                   </div>
                   <div class="ai-stream-preview" id="aiStreamPreview"></div>
                 </div>
@@ -436,7 +443,7 @@
   <div class="modal-overlay" id="recognizeModal">
     <div class="modal modal-xwide">
       <div class="modal-header">
-        <h3>识别数据表</h3>
+        <h3>识别数据表 / 人工核对</h3>
         <button class="modal-close" id="btnCloseRecognize">×</button>
       </div>
       <div class="modal-body">
@@ -469,6 +476,11 @@
 
         <!-- 阶段三：核对 -->
         <div id="recogResult" style="display:none;">
+          <div class="recog-banner" id="recogBanner">
+            <strong>识图准确率依赖训练数据：</strong>目前缺乏数据来拟合识图效果，希望各位顺手在
+            「数据贡献 → 识图数据」中贡献自己的识图数据 —— 核对导入后会自动生成
+            「原图 + AI 识别 + 人工校对」三件套，打码后即可提交，用于改进大家的识图效果。
+          </div>
           <div class="recog-toolbar">
             <div class="recog-summary" id="recogSummary"></div>
             <div class="recog-legend">
@@ -490,12 +502,42 @@
       </div>
       <div class="modal-footer">
         <label class="recog-only-empty">
-          <input type="checkbox" id="recogOnlyEmpty" />
+          <input type="checkbox" id="recogOnlyEmptyReview" />
           <span>只填空字段（不覆盖已填内容）</span>
         </label>
-        <span class="recog-caveat">AI 抄录可能读错，绿色「已识别」不等于数值正确 —— 填入前请对照左侧原图核对</span>
+        <span class="recog-caveat">AI 抄录可能读错，绿色「已识别」不等于数值正确 —— 请对照左侧原图逐格核对后再导入</span>
         <button class="btn btn-ghost" id="btnCancelRecognize">取消</button>
-        <button class="btn btn-primary" id="btnApplyRecognize" disabled>填入所选</button>
+        <button class="btn btn-primary" id="btnApplyRecognize" disabled>导入数据</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 识图原图放大灯箱（挂在 body 层，避免弹窗的 transform/overflow 影响全屏定位） -->
+  <div id="recogZoom" class="recog-zoom" style="display:none">
+    <img id="recogZoomImg" alt="数据表原图（放大）" />
+    <div class="recog-zoom-hint">点击任意处或按 Esc 关闭</div>
+  </div>
+
+  <!-- 隐私打码编辑器（贡献识图数据用：矩形涂黑） -->
+  <div class="modal-overlay" id="maskModal">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h3>隐私打码</h3>
+        <button class="modal-close" id="btnMaskCancel2">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="recog-banner recog-banner-plain">
+          框选图片中的姓名、学号、班级等隐私信息并涂黑；提交时使用打码后的图片，本地原图不受影响。
+        </div>
+        <div class="mask-wrap"><canvas id="maskCanvas"></canvas></div>
+        <div class="mask-hint" id="maskHint">按住鼠标拖动，框选要涂黑的隐私区域（可多次框选）</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm btn-outline" id="btnMaskUndo">撤销上一块</button>
+        <button class="btn btn-sm btn-outline" id="btnMaskClear">清空</button>
+        <span style="flex:1"></span>
+        <button class="btn btn-ghost" id="btnMaskCancel">取消</button>
+        <button class="btn btn-primary" id="btnMaskDone">完成打码</button>
       </div>
     </div>
   </div>
@@ -649,7 +691,7 @@
               <ul class="help-list">
                 <li>左下角配置学生信息；</li>
                 <li>左侧选择实验，点击「清除数据」即可填写自己的数据，填写后「保存修改」；</li>
-                <li>在变体组合为各章节选择措辞或保持随机，目前 26 个实验均支持变体；</li>
+                <li>在变体组合为各章节选择措辞或保持随机，目前 27 个实验目录（含薄透镜焦距的测量凸透镜 / 凹透镜两个版本）均支持变体；</li>
                 <li>点「生成报告」时会先自动保存当前修改，完成后可在报告预览查看，或用 Word 打开；</li>
                 <li><b>注意：</b>安装包与仓库自带的均为示例数据，生成前必须替换为本人真实测量值，严禁直接提交示例数据产出。</li>
               </ul>
@@ -825,6 +867,7 @@
         <div class="contribute-tabs">
           <button class="contribute-tab active" id="btnCVTabVariant" type="button">贡献变体</button>
           <button class="contribute-tab" id="btnCVTabReport" type="button">贡献实验报告</button>
+          <button class="contribute-tab" id="btnCVTabVision" type="button">识图数据</button>
         </div>
         <div id="cvPaneVariant" class="contribute-pane">
           <div id="cvVariantList"></div>
@@ -867,6 +910,13 @@
             <label>备注（可选）</label>
             <textarea id="cvReportNote" rows="2"></textarea>
           </div>
+        </div>
+        <div id="cvPaneVision" class="contribute-pane" style="display:none">
+          <div class="cv-vision-tip">
+            识图训练样本三件套（数据图片 + AI 识别 + 人工校对）来自「AI 识图 → 人工核对 → 导入数据」。
+            此处只展示<strong>当前实验最近一次</strong>的样本；提交前请完成隐私打码并检查 JSON 中的姓名 / 学号等信息。
+          </div>
+          <div id="cvVisionList"></div>
         </div>
         <div class="form-row">
           <label class="checkbox-label"><input type="checkbox" id="chkContributeAgree" /> 我同意：上述内容仅用于开发者审核与模板优化，不会被公开发布</label>

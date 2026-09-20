@@ -12,15 +12,12 @@ from common.data_io import load_data
 from common.variants import compose
 
 # 给定量（教材，预填入模板）
-D_VALS = [-16.0, -12.0, -8.0, -4.0, 0.0, 4.0, 8.0, 12.0, 16.0]  # 屏上偏转量 D/mm
-U2_LIST = (1000, 900, 800)  # 阳极加速电压 U2/V（三张表相同）
-
-# ---- 数据.xlsx 布局（模板与读取区共用，行号一一对应）----
-T1_TITLE, T1_D, T1_R1000, T1_R900, T1_R800 = 3, 4, 5, 6, 7      # 表1 X轴电偏转 U_dx/V
-T2_TITLE, T2_D, T2_R1000, T2_R900, T2_R800 = 9, 10, 11, 12, 13  # 表2 Y轴电偏转 U_dy/V
-T3_TITLE, T3_D, T3_R1000, T3_R900, T3_R800 = 15, 16, 17, 18, 19  # 表3 磁偏转 I_m/mA
-DATA_START_COL, DATA_END_COL = "B", "J"  # 每表 9 个数据列
-N_POINTS = 9
+# 表1/表2 的 D 为 -16…+16（9 点），表3 的 D 为 -9…+9（7 点，见 rag/原理.md 表3）。
+# 实际取值一律以 schema.json / data.json 为准。
+# 下面各表的行号是 `_row_values` 的内部键（区分"表几的第几行"），与数据文件布局无关。
+T1_D, T1_R1000, T1_R900, T1_R800 = 4, 5, 6, 7       # 表1 X轴电偏转 U_dx/V
+T2_D, T2_R1000, T2_R900, T2_R800 = 10, 11, 12, 13   # 表2 Y轴电偏转 U_dy/V
+T3_D, T3_R1000, T3_R900, T3_R800 = 16, 17, 18, 19   # 表3 磁偏转 I_m/mA
 
 
 # （方式三：_create_template 已移除，数据真相为 data.json）
@@ -276,16 +273,16 @@ def _generate_docx(data: dict, output_path: str):
         _quiz = None
     elif not isinstance(_quiz, dict):
         _quiz = None
-    doc.add_paragraph("1. 由电偏转灵敏度的计算结果，能得出 ")
+    doc.add_paragraph("1. 由电偏转灵敏度的计算结果，能得出 ", bold=True)
     _o = _quiz.get("1") if _quiz else None
     if _o:
         doc.add_paragraph_rich(random.choice(_o))
     else:
 
-        doc.add_inline_math(r"\varepsilon")
-        doc.add_run(" 与 ")
-        doc.add_inline_math(r"U_{2}")
-        doc.add_run(" 有什么关系？")
+        doc.add_inline_math(r"\varepsilon", bold=True)
+        doc.add_run(" 与 ", bold=True)
+        doc.add_inline_math(r"U_{2}", bold=True)
+        doc.add_run(" 有什么关系？", bold=True)
         doc.add_paragraph("答：由式")
         doc.add_math(r"\varepsilon = k_{e}\frac{1}{U_{2}}")
         doc.add_paragraph("知，")
@@ -298,7 +295,7 @@ def _generate_docx(data: dict, output_path: str):
         doc.add_inline_math(r"U_{2}")
         doc.add_run(" 成反比关系。")
 
-    doc.add_paragraph("2. 偏转量的大小与光点的亮度是否有关？为什么？")
+    doc.add_paragraph("2. 偏转量的大小与光点的亮度是否有关？为什么？", bold=True)
     _o = _quiz.get("2") if _quiz else None
     if _o:
         doc.add_paragraph_rich(random.choice(_o))
@@ -306,7 +303,7 @@ def _generate_docx(data: dict, output_path: str):
 
         doc.add_paragraph("答：有关，偏转量的大小会影响聚焦，从而影响光点亮度。")
 
-    doc.add_paragraph("3. 地球表面的磁场对电子显像管中电子的运动有多大影响？能否忽略？")
+    doc.add_paragraph("3. 地球表面的磁场对电子显像管中电子的运动有多大影响？能否忽略？", bold=True)
     _o = _quiz.get("3") if _quiz else None
     if _o:
         doc.add_paragraph_rich(random.choice(_o))

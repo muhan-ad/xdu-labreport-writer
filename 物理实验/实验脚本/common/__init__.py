@@ -7,7 +7,8 @@
 方式三：数据真相为 data.json，不再需要 Excel 读取 / Excel 富文本 / 公式文本输出工具。
 """
 
-from .uncertainty import mean, std_dev, type_a, type_b, combine, propagate_numeric
+from .uncertainty import (mean, std_dev, t_factor, type_a, type_b, combine,
+                          propagate_numeric, outlier_test, outlier_note)
 from .regression import linear_regression, LinearRegressionResult
 from .latex_formatter import (format_number, format_scientific, format_percent,
                               format_measure, format_uncertainty, build_formula)

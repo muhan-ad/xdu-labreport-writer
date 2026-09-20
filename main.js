@@ -345,13 +345,24 @@ function copyDirTo(src, dest, srcRoot, destRoot) {
 }
 
 let builtinFingerprint = null;
+let builtinSyncing = false;
 
 function syncInstalledResources() {
   if (resourceUpdating || generationBusy) return;
   if (!fs.existsSync(EXPERIMENTS_DIR)) return;
+  // 并发保护：syncBuiltin 内部要走「建事务目录 → 复制整棵树 → 改名切换」，
+  // 而指纹只在**成功后**才写入状态，所以首次大同步期间再调一次会又开一笔事务、
+  // 两笔抢着改名同一棵 userData 树 → 一笔抛异常、事务目录只剩 transaction.json。
+  // scan-experiments 开头就调本函数，一抛错整个扫描失败、实验列表变空（曾发生）。
+  if (builtinSyncing) return;
   if (!builtinFingerprint) builtinFingerprint = resourceStore.resourceVersion(EXPERIMENTS_DIR);
   const { udRoot } = getDataRoots();
-  resourceStore.syncBuiltin(EXPERIMENTS_DIR, udRoot, builtinFingerprint, app.getVersion());
+  builtinSyncing = true;
+  try {
+    resourceStore.syncBuiltin(EXPERIMENTS_DIR, udRoot, builtinFingerprint, app.getVersion());
+  } finally {
+    builtinSyncing = false;
+  }
 }
 
 // 用户数据隔离：写操作前若实验目录仍在安装目录（builtin），先镜像/同步到 userData 并返回新路径。
@@ -404,7 +415,7 @@ handle('pick-table-image', async () => {
 });
 
 handle('save-table-image', (_, expPath, dataUrl) => {
-  const match = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(String(dataUrl || ''));
+  const match = String(dataUrl || '').match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/);
   if (!match) throw Error('图片数据无效');
   const bytes = Buffer.from(match[2], 'base64');
   if (!bytes.length || bytes.length > 20 * 1024 * 1024) throw Error('图片为空或超过 20MB 上限');
@@ -416,6 +427,112 @@ handle('save-table-image', (_, expPath, dataUrl) => {
   const file = security.inside(path.join(dir, PHOTO_BASENAME + PHOTO_EXTENSIONS[match[1]]), dir);
   atomic.writeFile(file, bytes, undefined, false);
   return { ok: true, file: path.basename(file) };
+});
+
+// ── IPC: 识图训练样本（三件套：数据图片 + AI 识别 + 人工校对）──
+// 存 userData/识图数据/<实验>/<时间戳>/，供「数据贡献 → 识图数据」提交训练数据。
+// 实验 ID 与时间戳段白名单：中英文/数字/下划线/连字符/括号（实验名含中文与全角括号），
+// 不含点与斜杠 —— 结构上无路径穿越可能，另加 security.inside 兜底
+const VISION_SAMPLE_RE = /^[\w\u4e00-\u9fff（）()\-]{1,80}$/;
+function visionSampleDir(payload) {
+  const expId = String(payload && payload.expId || '');
+  const ts = String(payload && payload.ts || '');
+  if (!VISION_SAMPLE_RE.test(expId) || !VISION_SAMPLE_RE.test(ts)) throw Error('样本标识无效');
+  const root = path.join(app.getPath('userData'), '识图数据');
+  return security.inside(path.join(root, expId, ts), root);   // 显式根目录边界校验
+}
+function parseSamplePhoto(dataUrl) {
+  const match = String(dataUrl || '').match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$/);
+  if (!match) throw Error('图片数据无效');
+  const bytes = Buffer.from(match[2], 'base64');
+  if (!bytes.length || bytes.length > 20 * 1024 * 1024) throw Error('图片为空或超过 20MB 上限');
+  if (!ocr.hasImageSignature(match[1], bytes)) throw Error('图片内容与声明格式不一致');
+  return { mime: match[1], bytes };
+}
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v)
+    && Object.keys(v).length <= 512
+    && JSON.stringify(v).length <= 512 * 1024;
+}
+handle('save-vision-sample', (_, payload) => {
+  try {
+    const dir = visionSampleDir(payload);
+    const photo = parseSamplePhoto(payload && payload.photoDataUrl);
+    const ai = payload && payload.aiData, proofread = payload && payload.proofreadData;
+    if (!isPlainObject(ai) || !isPlainObject(proofread)) throw Error('识别/校对数据无效');
+    fs.mkdirSync(dir, { recursive: true });
+    const ext = photo.mime === 'image/png' ? '.png' : '.jpg';
+    atomic.writeFile(path.join(dir, 'photo' + ext), photo.bytes, undefined, false);
+    atomic.writeFile(path.join(dir, 'ai.json'), JSON.stringify(ai, null, 1), 'utf8', false);
+    atomic.writeFile(path.join(dir, 'proofread.json'), JSON.stringify(proofread, null, 1), 'utf8', false);
+    atomic.writeFile(path.join(dir, 'meta.json'), JSON.stringify({
+      exp: String(payload.expId), ts: String(payload.ts),
+      appVersion: app.getVersion(), savedAt: new Date().toISOString(),
+      photo: 'photo' + ext, submitted: false,
+    }, null, 1), 'utf8', false);
+    return { ok: true, dir: path.basename(path.dirname(dir)) + '/' + path.basename(dir) };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+handle('list-vision-samples', () => {
+  try {
+    const root = path.join(app.getPath('userData'), '识图数据');
+    if (!fs.existsSync(root)) return { ok: true, samples: [] };
+    const samples = [];
+    for (const exp of fs.readdirSync(root, { withFileTypes: true })) {
+      if (!exp.isDirectory()) continue;
+      const expDir = security.inside(path.join(root, exp.name), root);
+      for (const ts of fs.readdirSync(expDir, { withFileTypes: true })) {
+        if (!ts.isDirectory()) continue;
+        const dir = security.inside(path.join(expDir, ts.name), root);
+        let meta = {};
+        try { meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8')); } catch (e) { /* 缺 meta 仍列出 */ }
+        const photo = (meta.photo && fs.existsSync(path.join(dir, meta.photo))) ? meta.photo
+          : ['photo.jpg', 'photo.png'].find(f => fs.existsSync(path.join(dir, f))) || null;
+        samples.push({
+          exp: exp.name, ts: ts.name, dir,
+          photo: photo ? path.join(dir, photo) : null,
+          hasAi: fs.existsSync(path.join(dir, 'ai.json')),
+          hasProofread: fs.existsSync(path.join(dir, 'proofread.json')),
+          submitted: !!meta.submitted,
+          savedAt: meta.savedAt || null,
+        });
+      }
+    }
+    samples.sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
+    return { ok: true, samples };
+  } catch (e) { return { ok: false, error: e.message, samples: [] }; }
+});
+handle('read-vision-sample', (_, payload) => {
+  try {
+    const dir = visionSampleDir(payload);
+    const out = { ok: true, aiData: null, proofreadData: null, photoDataUrl: null };
+    const metaFile = path.join(dir, 'meta.json');
+    if (fs.existsSync(metaFile)) out.meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+    if (fs.existsSync(path.join(dir, 'ai.json'))) out.aiData = JSON.parse(fs.readFileSync(path.join(dir, 'ai.json'), 'utf8'));
+    if (fs.existsSync(path.join(dir, 'proofread.json'))) out.proofreadData = JSON.parse(fs.readFileSync(path.join(dir, 'proofread.json'), 'utf8'));
+    const photo = (out.meta && out.meta.photo) || ['photo.jpg', 'photo.png'].find(f => fs.existsSync(path.join(dir, f)));
+    if (photo) {
+      const mime = photo.endsWith('.png') ? 'image/png' : 'image/jpeg';
+      out.photoDataUrl = `data:${mime};base64,${fs.readFileSync(security.inside(path.join(dir, photo), dir)).toString('base64')}`;
+    }
+    return out;
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+handle('mark-vision-submitted', (_, payload) => {
+  try {
+    const dir = visionSampleDir(payload);
+    const metaFile = security.inside(path.join(dir, 'meta.json'), dir);
+    let meta = {};
+    try { meta = JSON.parse(fs.readFileSync(metaFile, 'utf8')); } catch (e) { /* 新建 */ }
+    meta.exp = String(payload.expId || meta.exp || '');
+    meta.ts = String(payload.ts || meta.ts || '');
+    meta.submitted = true;
+    meta.submittedAt = new Date().toISOString();
+    atomic.writeFile(metaFile, JSON.stringify(meta, null, 1), 'utf8', false);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
 
 function experimentPath(raw) {
@@ -481,7 +598,13 @@ function scanDirEntry(d, source, builtinExpDir) {
 
 // ── IPC: 扫描实验列表 ──
 handle('scan-experiments', () => {
-  syncInstalledResources();
+  // 资源同步失败不能拖垮整个列表：同步只是把出厂脚本刷新到用户数据区，
+  // 失败时用现有数据继续扫描即可（此前同步一抛错，列表直接变空）。
+  try {
+    syncInstalledResources();
+  } catch (e) {
+    log(`scan | 出厂资源同步失败（忽略，继续扫描现有数据）| ${String(e.message || e).slice(0, 200)}`);
+  }
   const { roots } = getDataRoots();
   // 云端下架清单（隐藏式：保留用户数据文件，仅从列表/生成入口屏蔽）
   const removedSet = new Set(((readLocalDataManifest() || {}).removed) || []);
@@ -520,7 +643,7 @@ listen('window-maximize', () => {
 });
 listen('window-close', () => { if (mainWindow) mainWindow.close(); });
 
-// ── IPC: 「请勿点击」彩蛋的窗口级效果（抖动 / 闪退）──
+// ── IPC: 「请勿点击」彩蛋的窗口级效果（抖动 / 闪退 / 磁盘查询）──
 // 三条纪律：不真关闭窗口、不动用户数据、**任何情况下都要复原**（setBounds 复原写在
 // 定时器的退出分支里；渲染层另有看门狗）。窗口是 frameless 的，所以没有"改标题"这条路，
 // 假未响应由渲染层改自绘标题栏实现。
@@ -530,7 +653,7 @@ handle('danger-window-shake', () => {
     return { ok: false, reason: 'maximized' };      // 渲染层退回内容抖动
   }
   const start = mainWindow.getBounds();
-  const STEPS = 22;                                 // 22 × 90ms ≈ 2 秒（用户要求时间加长）
+  const STEPS = 22;                                 // 22 × 90ms ≈ 2 秒
   let i = 0;
   const timer = setInterval(() => {
     if (!mainWindow || mainWindow.isDestroyed() || i >= STEPS) {
@@ -539,7 +662,7 @@ handle('danger-window-shake', () => {
       return;
     }
     i += 1;
-    const decay = 1 - i / STEPS;                    // 幅度按比例衰减（不再是 12-i，否则后半段会变负）
+    const decay = 1 - i / STEPS;                    // 幅度按比例衰减
     const dx = (i % 2 ? 1 : -1) * 12 * decay;
     const dy = (i % 3 ? 1 : -1) * 7 * decay;
     mainWindow.setBounds({
@@ -677,6 +800,32 @@ function seedBuiltinSkills() {
     }
     if (n) log(`已播种出厂技能 ${n} 个 -> ${dst}`);
   } catch (e) { /* 播种失败不影响启动，只是技能少一个 */ }
+}
+
+// 数据包携带的出厂技能同步：把包根 skills/ 下的 .md/.markdown/.txt 落到 userData/skills。
+// 与安装播种的「只补不覆盖」刻意不同——数据包是技能的更新通道，同名即覆盖（随包更新语义）；
+// 用户自装的其它技能文件不受影响。非技能扩展名、超长文件名、超大文件按告警跳过，不阻断整包。
+function syncPackagedSkills(srcDir, warnings) {
+  const dst = getSkillsDir();
+  let n = 0;
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    if (!/\.(md|markdown|txt)$/i.test(entry.name)) { warnings.push(`技能 ${entry.name} 格式不受支持，已跳过`); continue; }
+    if (entry.name.length > 120) { warnings.push(`技能 ${entry.name} 文件名过长，已跳过`); continue; }
+    try {
+      const src = ensureInside(path.join(srcDir, entry.name), srcDir);
+      const data = fs.readFileSync(src);
+      if (data.length > 256 * 1024) { warnings.push(`技能 ${entry.name} 超过 256KB，已跳过`); continue; }
+      const target = ensureInside(path.join(dst, entry.name), dst);
+      if (fs.existsSync(target) && Buffer.compare(fs.readFileSync(target), data) !== 0)
+        warnings.push(`技能 ${entry.name} 已更新（覆盖本地版本）`);
+      fs.writeFileSync(target, data);
+      n++;
+    } catch (e) {
+      warnings.push(`技能 ${entry.name} 同步失败：${String(e.message || e).slice(0, 80)}`);
+    }
+  }
+  return n;
 }
 
 // 解析 SKILL.md frontmatter（--- name/description ---）；无 frontmatter 时用文件名兜底
@@ -1404,7 +1553,7 @@ handle('apply-data-package', async (_, payload) => {
     fs.mkdirSync(staging, { recursive: true });
     await unzipSafe(zipPath, staging);
     updatePackage.verifyTree(staging, manifest);
-    // 包内结构约定：zip 内直接是 实验脚本 树（本目录开头）
+    // 包内结构约定：zip 内直接是 实验脚本 树（本目录开头）；包根 skills/ 为出厂技能（本函数末尾单独同步）
     const warnings = [];
     const stagingRoot = fs.existsSync(path.join(staging, '实验脚本'))
       ? path.join(staging, '实验脚本')
@@ -1429,6 +1578,12 @@ handle('apply-data-package', async (_, payload) => {
     });
     downloadedPackage = null;
     approvedManifest = null;
+    // 数据包携带的出厂技能：随包更新到 userData/skills（在 staging 清理前执行）
+    const pkgSkillsDir = path.join(staging, 'skills');
+    if (fs.existsSync(pkgSkillsDir)) {
+      const n = syncPackagedSkills(pkgSkillsDir, warnings);
+      if (n) log(`data-package | 出厂技能更新 ${n} 个`);
+    }
     // 清理
     fs.rmSync(staging, { recursive: true, force: true });
     try { fs.unlinkSync(zipPath); } catch (e) { /* 忽略 */ }
@@ -2086,6 +2241,22 @@ function extractDeltaFromSSELine(line) {
   }
 }
 
+// SSE 行解析：`data: {...}` → delta.reasoning_content（推理模型的思考增量，DeepSeek 风格）。
+// 思考阶段的 token 不进 content——不转发的话，用户在模型出第一个正文前会面对几十秒的空白。
+function extractReasoningFromSSELine(line) {
+  const s = String(line || '').trim();
+  if (!s.startsWith('data:')) return '';
+  const payload = s.slice(5).trim();
+  if (!payload || payload === '[DONE]') return '';
+  try {
+    const j = JSON.parse(payload);
+    return (j.choices && j.choices[0] && j.choices[0].delta && typeof j.choices[0].delta.reasoning_content === 'string')
+      ? j.choices[0].delta.reasoning_content : '';
+  } catch (e) {
+    return '';
+  }
+}
+
 handle('ai-chat', async (event, params) => {
   if (!params || !Array.isArray(params.messages) || params.messages.length > 30 || Buffer.byteLength(JSON.stringify(params.messages)) > 256 * 1024)
     return { ok: false, error: 'AI 请求内容无效或过大' };
@@ -2094,8 +2265,8 @@ handle('ai-chat', async (event, params) => {
   if (aiAbortControllers.size >= 2 || aiAbortControllers.has(requestId)) return { ok: false, error: 'AI 请求正在处理，请稍后重试' };
   const controller = new AbortController();
   aiAbortControllers.set(requestId, controller);
-  const pushChunk = (delta) => {
-    try { event.sender.send('ai-chat-chunk', { requestId, delta }); } catch (e) { /* 窗口已关闭忽略 */ }
+  const pushChunk = (delta, kind) => {
+    try { event.sender.send('ai-chat-chunk', { requestId, delta, kind: kind || 'content' }); } catch (e) { /* 窗口已关闭忽略 */ }
   };
   try {
     const baseUrl = aiEndpoint(params);
@@ -2121,6 +2292,9 @@ handle('ai-chat', async (event, params) => {
       for (const line of lines) {
         const delta = extractDeltaFromSSELine(line);
         if (delta) { content += delta; pushChunk(delta); }
+        // 思考增量只透传给渲染层做状态展示，不并入返回文本
+        const reasoning = extractReasoningFromSSELine(line);
+        if (reasoning) pushChunk(reasoning, 'reasoning');
       }
     }
     if (!content.trim()) throw Error('AI 返回了空内容');

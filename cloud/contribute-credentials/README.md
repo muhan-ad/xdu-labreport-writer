@@ -12,7 +12,9 @@
 {"files":[{"key":"contributions/feedbacks/20260915/feedback.json","size":128}]}
 ```
 
-同时支持 `contributions/variants/<实验>/<批次>/<文件>`、`contributions/reports/<实验>/<批次>/<文件>` 和 `contributions/feedbacks/<批次>/<文件>`。云端将批次替换成随机 UUID；响应 `key` 保留原请求标识供客户端对应，`objectKey` 是实际对象名。
+同时支持 `contributions/variants/<实验>/<批次>/<文件>`、`contributions/reports/<实验>/<批次>/<文件>`、`contributions/vision/<实验>/<批次>/<文件>`（识图训练数据：photo + ai.json + proofread.json + manifest.json）和 `contributions/feedbacks/<批次>/<文件>`。云端将批次替换成随机 UUID；响应 `key` 保留原请求标识供客户端对应，`objectKey` 是实际对象名。
+
+> 本目录代码更新**不表示云端已部署**：`vision` 前缀需要重新部署本云函数后，用户端「识图数据」的提交才会被接受（未部署时该类型返回 400，其余类型不受影响）。
 
 允许 json/docx/jpg/jpeg/png；单文件最多 20MB，单批次最多 20 个文件、总计 40MB。签名绑定 PUT、对象路径、Content-Type、Content-Length 和 `x-cos-forbid-overwrite: true`，有效期 600 秒。客户端上传必须带同样的请求头。变更大小会导致签名不匹配。
 

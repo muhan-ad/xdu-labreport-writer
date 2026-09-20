@@ -12,8 +12,9 @@ const SECRET_ID = process.env.SECRET_ID || process.env.Secret_Id || '';
 const SECRET_KEY = process.env.SECRET_KEY || process.env.Secret_Key || '';
 const EXPIRES = 600;
 
-// Allowed key shape: contributions/<variants|reports>/<exp>/<timestamp>/<file>
-const KEY_RE = /^contributions\/(?:(?:variants|reports)\/[^/]+\/[^/]+\/[^/]+|feedbacks\/[^/]+\/[^/]+)$/;
+// Allowed key shape: contributions/<variants|reports|vision>/<exp>/<timestamp>/<file>
+// vision = 识图训练数据（数据图片 + AI 识别 JSON + 人工校对 JSON + manifest）
+const KEY_RE = /^contributions\/(?:(?:variants|reports|vision)\/[^/]+\/[^/]+\/[^/]+|feedbacks\/[^/]+\/[^/]+)$/;
 const limits = new Map();
 function takeQuota(ip, bytes) {
   const now = Date.now();

@@ -22,7 +22,7 @@ app.whenReady().then(async () => {
     await until(() => BrowserWindow.getAllWindows().length);
     const contents = BrowserWindow.getAllWindows()[0].webContents;
     const evaluate = code => contents.executeJavaScript(code);
-    await until(() => evaluate('typeof experiments !== "undefined" && experiments.length === 26').catch(() => false));
+    await until(() => evaluate('typeof experiments !== "undefined" && experiments.length === 27').catch(() => false));
     assert.ok(contents.getURL().startsWith('file:'), 'preserve existing localStorage origin across upgrade');
     await evaluate("openUpdateModal({latest:'9.0.0',current:'1.7.6',notes:'test',downloads:[{name:'网盘',url:'https://pan.quark.cn/s/test'}]})");
     const links = await evaluate("({copy:document.querySelectorAll('.cv-copy-link').length,open:document.querySelectorAll('.cv-open-link').length,url:document.querySelector('.update-share-url').value})");

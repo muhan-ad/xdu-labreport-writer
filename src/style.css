@@ -1910,31 +1910,20 @@ body {
   flex: 0 0 150px;
   display: flex;
   flex-direction: column;
-  /* 4px → 3px：11 项在 560px 高的弹窗里放得下（见 .settings-nav-item 的 padding 注释） */
-  gap: 3px;
+  gap: 4px;
   border-right: 1px solid var(--border-light);
   padding-right: 16px;
-  /* 弹窗是固定高度（560px），导航已有 11 项（最后一项是「请勿点击」）：
-     不滚动的话最后几项会被父级 overflow:hidden 直接裁掉 —— 表现就是
-     "请勿点击都看不到了"。这里允许滚轮滚动，并配一条细滚动条。 */
+  /* 设置弹窗固定 560px 高，导航可用高度约 437px；11 项按原内距需 473px，
+     多出的部分被父容器 .settings-center 的 overflow:hidden 直接裁掉——
+     最后一项「请勿点击」曾因此整条消失。这里让导航自身可滚，避免再被裁。 */
   overflow-y: auto;
-  min-height: 0;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
 }
-.settings-nav::-webkit-scrollbar { width: 6px; }
-.settings-nav::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.16);
-  border-radius: 3px;
-}
-.settings-nav::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.28); }
-.settings-nav::-webkit-scrollbar-track { background: transparent; }
 .settings-nav-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  /* 10px → 8px：11 项在 560px 高的弹窗里能全放下（实测 442px > 435px 会裁掉最后一项），
-     不必滚动就能看到「请勿点击」；万一以后再加项，导航本身也能滚 */
+  /* 纵向内距 10px→8px：11 项合计 429px，正好落在 437px 可用高度内，
+     不需要滚动就能全部看到（滚动只作兜底）。 */
   padding: 8px 12px;
   border: none;
   border-radius: 8px;
@@ -1942,6 +1931,7 @@ body {
   font-size: 13px;
   color: var(--text-secondary);
   cursor: pointer;
+  flex-shrink: 0;
   text-align: left;
   transition: background 0.15s, color 0.15s;
 }
@@ -2506,7 +2496,32 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 .ai-check { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; color: #333; cursor: pointer; user-select: none; }
 .ai-check input[type="checkbox"] { accent-color: var(--accent, #4a7cf7); cursor: pointer; }
 .ai-check-empty { font-size: 12px; color: var(--text-muted, #a8a29e); }
+.ai-skill-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  background: var(--bg-hover);
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: default;
+  user-select: none;
+}
 .ai-result-block { border: 1px solid var(--border, #e7e5e4); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.ai-result-block.ai-repolishing { opacity: 0.55; }
+.ai-retry-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--bg-hover);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
 .ai-result-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
 .ai-result-title { font-size: 13px; font-weight: 600; color: #333; margin-right: auto; }
 .ai-result-error { font-size: 12px; color: #c53030; }
@@ -2744,6 +2759,105 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   word-break: break-word;
 }
 .ai-stream-preview:empty { display: none; }
+
+/* 模型思考状态条（reasoning_content 增量驱动，正文开始后隐藏） */
+.ai-thinking {
+  margin-top: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: var(--bg-hover);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.ai-thinking-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ai-thinking-details { flex: 1 1 auto; min-width: 0; }
+.ai-thinking-details summary {
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.ai-thinking-text {
+  margin-top: 5px;
+  max-height: 150px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+/* ── 识图训练数据（贡献弹窗第三个 tab） ── */
+.cv-vision-tip {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: var(--bg-hover);
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+.cv-vision-item { border: 1px solid var(--border-light); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.cv-vision-item.submitted { opacity: 0.6; }
+.cv-vision-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.cv-vision-name { font-size: 13px; color: #333; }
+.cv-vision-tag { font-size: 11px; padding: 1px 8px; border-radius: 999px; background: #eee; color: #888; }
+.cv-vision-tag.new { background: #e6f4ea; color: #2f855a; }
+.cv-vision-body { display: flex; gap: 12px; margin-top: 8px; }
+.cv-vision-thumb {
+  flex: 0 0 150px;
+  height: 104px;
+  border: 1px dashed var(--border-hover);
+  border-radius: 6px;
+  background: var(--bg-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  overflow: hidden;
+  position: relative;
+}
+.cv-vision-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.cv-vision-thumb-hint { font-size: 11px; color: var(--text-muted, #a8a29e); }
+.cv-vision-thumb-tag {
+  position: absolute; left: 4px; bottom: 4px;
+  font-size: 10px; padding: 1px 6px; border-radius: 4px;
+  background: rgba(0,0,0,.65); color: #fff;
+}
+.cv-vision-meta { flex: 1 1 auto; min-width: 0; }
+.cv-vision-actions { display: flex; gap: 8px; margin-bottom: 6px; }
+.cv-vision-strip { font-size: 12px; color: var(--text-secondary); }
+.cv-vision-json-panel { margin-top: 6px; }
+.cv-vision-json-grid { display: flex; gap: 10px; }
+.cv-vision-json-col { flex: 1 1 0; min-width: 0; }
+.cv-vision-json-title { font-size: 12px; font-weight: 600; color: #333; margin-bottom: 4px; }
+.cv-vision-json-line { font-size: 11.5px; color: var(--text-secondary); margin-bottom: 3px; word-break: break-all; }
+.cv-vision-json-pre {
+  max-height: 130px; overflow: auto; margin: 0;
+  padding: 6px 8px; border-radius: 6px; background: var(--bg-hover);
+  font-size: 11px; line-height: 1.5; color: var(--text-secondary);
+  white-space: pre-wrap; word-break: break-all;
+}
+
+/* ── 隐私打码编辑器 ── */
+/* 打码弹窗总是从「数据贡献」弹窗里打开，而它在 DOM 里排在贡献弹窗之前——
+   同为 z-index 100 时会被贡献弹窗盖住（用户报「弹窗在底层」），故单独提升层级 */
+#maskModal { z-index: 200; }
+/* 打码弹窗用大尺寸：画布按可用宽度 1:1 呈现（原来 modal-wide 仅 480px，图片被压得很小） */
+#maskModal .modal {
+  width: min(1100px, 94vw);
+  max-width: 94vw;
+  height: 88vh;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+#maskModal .modal-body { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.mask-wrap { text-align: center; }
+#maskCanvas { max-width: 100%; border: 1px solid var(--border-light); border-radius: 6px; cursor: crosshair; }
+.mask-hint { margin-top: 8px; font-size: 12px; color: var(--text-secondary); text-align: center; }
 
 /* ── 设置 · 请勿点击彩蛋：效果池（src/danger-effects.js）的公共样式 ── */
 @keyframes dx-slide {

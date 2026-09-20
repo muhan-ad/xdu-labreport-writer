@@ -31,6 +31,19 @@ N_POINTS = 9
 # （方式三：_create_template 已移除，数据真相为 data.json）
 
 
+def _hall_voltage(u1: float, u2: float) -> float:
+    """电流换向法霍尔电压：幅值取平均，极性由读数符号确定。
+
+    U₁、U₂ 是换向前后同一测点的两次读数，两者幅值接近、符号相反。
+    写成 (U₁+|U₂|)/2 只对 U₁ ≥ 0 成立——霍尔电压的极性取决于载流子类型与接线，
+    U₁ 为负时该式会把结果算成 ≈0，B 值整表静默归零。
+    本式对"填幅值"和"填带符号读数"两种录入习惯都成立。
+    """
+    mag = (abs(u1) + abs(u2)) / 2.0
+    ref = u1 if u1 != 0 else u2
+    return mag if ref >= 0 else -mag
+
+
 def _plot_curves(im_ma, b1, i_ma, b2, slope, intercept, fig1_path, fig2_path):
     """matplotlib 绘制 B–Im（散点+拟合直线）与 B–I（散点连线）曲线图"""
     import matplotlib
@@ -108,11 +121,11 @@ def _generate_docx(data: dict, output_path: str):
     t2_u1 = [float(v) for v in data["t2_u1"]]
     t2_u2 = [float(v) for v in data["t2_u2"]]
 
-    # ---- 2. 计算：电流换向法 U_H = (U1+|U2|)/2；B = U_H/(K_H·I) ----
+    # ---- 2. 计算：电流换向法 U_H = (±)(|U1|+|U2|)/2；B = U_H/(K_H·I) ----
     # 单位：U/mV、K_H/(V/(A·T))≡(mV/(mA·T))、I/mA → B/T
-    t1_uh = [(u1 + abs(u2)) / 2 for u1, u2 in zip(t1_u1, t1_u2)]
+    t1_uh = [_hall_voltage(u1, u2) for u1, u2 in zip(t1_u1, t1_u2)]
     t1_b = [uh / (kh * i_work) for uh in t1_uh]
-    t2_uh = [(u1 + abs(u2)) / 2 for u1, u2 in zip(t2_u1, t2_u2)]
+    t2_uh = [_hall_voltage(u1, u2) for u1, u2 in zip(t2_u1, t2_u2)]
     t2_b = [uh / (kh * i) for uh, i in zip(t2_uh, t2_i)]
 
     # ---- 3. B–Im 线性回归（Im 换算为 A，斜率单位 T/A）----
@@ -165,11 +178,11 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_heading("二、数据处理", level=1)
     doc.add_paragraph("采用电流换向法消除不等位电压的影响，霍尔电压为")
-    doc.add_math(r"U_{H} = \frac{1}{2}(U_{1} + |U_{2}|)")
+    doc.add_math(r"U_{H} = \frac{1}{2}(|U_{1}| + |U_{2}|)")
     doc.add_paragraph("磁感应强度为")
     doc.add_math(r"B = \frac{U_{H}}{K_{H} I}")
     doc.add_paragraph("以表1第1列数据为例，代入数据：")
-    doc.add_math(r"U_{H} = \frac{1}{2} \times (" + f"{t1_u1[0]:.3f} + {abs(t1_u2[0]):.3f}"
+    doc.add_math(r"U_{H} = \frac{1}{2} \times (" + f"{abs(t1_u1[0]):.3f} + {abs(t1_u2[0]):.3f}"
                  + r") = " + f"{t1_uh[0]:.3f}" + r"\,\mathrm{mV}")
     doc.add_math(r"B = \frac{" + f"{t1_uh[0]:.3f}" + r"}{" + f"{kh:g} \\times {i_work:g}"
                  + r"} \approx " + f"{t1_b[0]:.3f}" + r"\,\mathrm{T}")
@@ -211,7 +224,7 @@ def _generate_docx(data: dict, output_path: str):
     elif not isinstance(_quiz, dict):
         _quiz = None
     doc.add_paragraph("1. 若磁感应强度跟霍尔元件不完全正交，则按 B = U_H/(K_H·I) 计算出的"
-                      "磁感应强度比实际值大还是小？要准确测量磁场应如何操作？")
+                      "磁感应强度比实际值大还是小？要准确测量磁场应如何操作？", bold=True)
     _o = _quiz.get("1") if _quiz else None
     if _o:
         doc.add_paragraph_rich(random.choice(_o))
@@ -221,7 +234,7 @@ def _generate_docx(data: dict, output_path: str):
                           "磁场分量对霍尔电压有贡献，测得的霍尔电压偏小，按公式计算出的磁感应"
                           "强度比实际值小。要准确测量磁场，应缓慢转动霍尔元件的方位，使霍尔"
                           "电压达到最大，此时霍尔片平面与磁场方向严格正交，测得的才是真实磁场。")
-    doc.add_paragraph("2. 如何用霍尔效应法判断 N 型半导体和 P 型半导体？")
+    doc.add_paragraph("2. 如何用霍尔效应法判断 N 型半导体和 P 型半导体？", bold=True)
     _o = _quiz.get("2") if _quiz else None
     if _o:
         doc.add_paragraph_rich(random.choice(_o))

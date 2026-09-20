@@ -56,6 +56,15 @@ def _compute(data: dict) -> dict:
     u_Rg = u_b
     u_Ki = Ki_meas * u_k / abs(k)
 
+    # A 类不确定度的计算过程量（知识库口径：只考虑拟合残差引起的 A 类不确定度）
+    #   s   = 残差标准差 s = √(Σ(R_i − kU_i − b)²/(n−2))
+    #   Sxx = Σ(U_i − Ū)²
+    n = len(U)
+    U_bar = mean(U)
+    S_xx = sum((u - U_bar) ** 2 for u in U)
+    residuals = [R[i] - (k * U[i] + b) for i in range(n)]
+    s_res = math.sqrt(sum(rv ** 2 for rv in residuals) / (n - 2))
+
     # 相对误差
     delta_Ki = abs(Ki_meas / Ki_th - 1.0) * 100.0
     delta_Rg = abs(Rg_meas / Rg_th - 1.0) * 100.0
@@ -66,6 +75,7 @@ def _compute(data: dict) -> dict:
         "U": U, "R": R,
         "k": k, "b": b, "r_squared": reg.r_squared,
         "u_k": u_k, "u_b": u_b,
+        "s_res": s_res, "S_xx": S_xx, "U_bar": U_bar,
         "Rg": Rg_meas, "u_Rg": u_Rg, "Rg_th": Rg_th, "delta_Rg": delta_Rg,
         "Ki": Ki_meas, "u_Ki": u_Ki, "Ki_th": Ki_th, "delta_Ki": delta_Ki,
         # Ki 尾数键：数值以 10⁻⁹ A/mm 为单位，供变体文本配 \times 10^{-9} 使用
@@ -117,6 +127,9 @@ def _generate_docx(data: dict, output_path: str):
     r_squared = r["r_squared"]
     u_k = r["u_k"]
     u_b = r["u_b"]
+    s_res = r["s_res"]
+    S_xx = r["S_xx"]
+    U_bar = r["U_bar"]
     Rg_meas = r["Rg"]
     u_Rg = r["u_Rg"]
     Ki_meas = r["Ki"]
@@ -228,6 +241,26 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("回归结果（不确定度只进不舍取 1 位，测得值末位与它对齐）：")
     doc.add_math(rf"k = {format_measure(k, u_k)}\ \mathrm{{\Omega/V}}")
     doc.add_math(rf"b = {format_measure(b, u_b)}\ \mathrm{{\Omega}}")
+    doc.add_paragraph("A类不确定度：")
+    doc.add_math(
+        rf"\Delta k_A = \sigma_k = \frac{{s}}{{\sqrt{{\sum_{{i=1}}^{{n}}"
+        rf"(U_i - \bar{{U}})^{{2}}}}}} = "
+        rf"\frac{{{format_number(s_res, sig_figs=4)}}}"
+        rf"{{\sqrt{{{format_number(S_xx)}}}}}"
+        rf" \approx {format_number(u_k, sig_figs=3)}\ \mathrm{{\Omega/V}}"
+    )
+    doc.add_math(
+        rf"\Delta b_A = \sigma_b = s\sqrt{{\frac{{1}}{{n}} + "
+        rf"\frac{{\bar{{U}}^{{2}}}}{{\sum_{{i=1}}^{{n}}(U_i - \bar{{U}})^{{2}}}}}} = "
+        rf"{format_number(s_res, sig_figs=4)}"
+        rf"\sqrt{{\frac{{1}}{{{r['n']}}} + "
+        rf"\frac{{{U_bar:.3f}^{{2}}}}{{{format_number(S_xx)}}}}}"
+        rf" \approx {format_number(u_b, sig_figs=3)}\ \mathrm{{\Omega}}"
+    )
+    doc.add_paragraph(
+        rf"其中 s = {format_number(s_res, sig_figs=4)} Ω 为最小二乘拟合的残差标准差。"
+        "按知识库口径，本实验只考虑由拟合残差引起的 A 类不确定度，忽略 B 类不确定度。"
+    )
     doc.add_paragraph("")
     doc.add_run("相关系数 ")
     doc.add_inline_math(f"r^{{2}} = {r_squared:.4f}")
@@ -243,11 +276,23 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("")
     doc.add_run("电流常数的结果表示：")
     doc.add_inline_math(rf"K_i = {format_measure(Ki_meas, u_Ki)}\ \mathrm{{A/mm}}")
+    doc.add_paragraph("A类不确定度：")
+    doc.add_math(
+        rf"\Delta K_i = K_i \cdot \frac{{\Delta k_A}}{{k}} = "
+        rf"{Ki_disp} \times \frac{{{format_number(u_k, sig_figs=3)}}}{{{k_disp}}}"
+        rf" \approx {format_scientific(u_Ki, sig_figs=2)}\ \mathrm{{A/mm}}"
+    )
 
     # 求 Rg
     doc.add_paragraph("由截距求内阻：")
     doc.add_math(
         rf"R_g = -b = -({b_disp}) = {format_measure(Rg_meas, u_Rg)}\ \mathrm{{\Omega}}"
+    )
+    doc.add_paragraph("A类不确定度：")
+    doc.add_math(
+        rf"\Delta R_g = \left|\frac{{d R_g}}{{d b}}\right| \Delta b_A = "
+        rf"1 \times {format_number(u_b, sig_figs=3)}"
+        rf" \approx {format_number(u_Rg, sig_figs=3)}\ \mathrm{{\Omega}}"
     )
 
     # 相对误差公式

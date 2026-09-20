@@ -76,13 +76,29 @@ def _compute(data: dict) -> dict:
 
     # 逐差法
     delta_n = get_n_d(ni)
+    # 逐差量必须为正：读数随砝码增加而减小（录入方向颠倒）会让 Y 变成负值
+    bad_dn = [x for x in delta_n if x <= 0]
+    if bad_dn:
+        print(f"[错误] 逐差 Δn 出现非正值 {[round(x, 4) for x in bad_dn]}："
+              "标尺读数随砝码增加而减小，说明增重/减重两行录反了，请检查 ni_zheng / ni_jian。")
+        return None
     delta_n_a = sum(delta_n) / len(delta_n)
     delta_n_dev = [abs(x - delta_n_a) for x in delta_n]
     delta_n_dev_a = sum(delta_n_dev) / len(delta_n_dev)
 
-    # 钢丝直径
-    d_shi_a = sum(d_shi) / n_d
-    d_shi_u = smartlab_u(d_shi, D_INST_ERR)
+    # 钢丝直径：6 次读数是同一被测量的等精度重复测量，先作 3σ 坏值检验，
+    # 再用保留数据评定 A、B 类不确定度（样本无坏值时结果与原口径完全一致）
+    ot_d = outlier_test(d_shi)
+    d_shi_kept = ot_d["kept"]
+    n_d_kept = ot_d["n_kept"]
+    d_shi_a = sum(d_shi_kept) / n_d_kept
+    s_d_shi = std_dev(d_shi_kept)
+    sum_sq_d = sum((x - d_shi_a) ** 2 for x in d_shi_kept)
+    # A 类用文件原有的 smartlab_ua（= t·s/√n，与 common.type_a 一致），
+    # 合成仍走 smartlab_u，保证与改造前的计算口径逐位一致
+    A_d_shi = smartlab_ua(d_shi_kept)
+    B_d_shi = type_b(D_INST_ERR)
+    d_shi_u = smartlab_u(d_shi_kept, D_INST_ERR)
     d_shi_corrected = d_shi_a - d_0  # 零点修正后
 
     # 杨氏模量：**必须用零点修正后的直径**（d = d_a − d_0）。
@@ -109,8 +125,11 @@ def _compute(data: dict) -> dict:
         "ni_zheng": ni_zheng, "ni_jian": ni_jian, "ni": ni,
         "delta_n": delta_n, "delta_n_a": delta_n_a,
         "delta_n_dev": delta_n_dev, "delta_n_dev_a": delta_n_dev_a,
-        "d_shi": d_shi, "d_shi_a": d_shi_a, "d_shi_u": d_shi_u,
+        "d_shi": d_shi, "d_shi_kept": d_shi_kept, "d_shi_a": d_shi_a, "d_shi_u": d_shi_u,
         "d_shi_corrected": d_shi_corrected,
+        "ot_d": ot_d, "n_d_kept": n_d_kept, "s_d_shi": s_d_shi, "sum_sq_d": sum_sq_d,
+        "A_d_shi": A_d_shi, "B_d_shi": B_d_shi,
+        "sigma_d_shi": ot_d["sigma"], "sigma3_d_shi": ot_d["sigma3"],
         "Y": Y, "Y_u": Y_u,
         # 预格式化字符串（变体用 %s 引用）
         "Y_pm": Y_pm,
@@ -146,6 +165,8 @@ def _print_results(r: dict):
 
 def _generate_docx(data: dict, output_path: str):
     r = _compute(data)
+    if r is None:
+        return
     _print_results(r)
 
     doc = DocxReportWriter(output_path)
@@ -195,12 +216,45 @@ def _generate_docx(data: dict, output_path: str):
         % (r["d_a_disp"], _d0_disp, r["d_disp"], r["d_u_disp"])
     )
     doc.add_paragraph("")
-    doc.add_run("合成不确定度（仪器误差 Δ_inst = 0.005 mm）：")
+    doc.add_run("6 次直径读数 ")
+    doc.add_inline_math("d_i")
+    doc.add_run(" 是同一被测量的等精度重复测量，先作 3σ 坏值检验：")
     doc.add_math(
-        r"u(d) = \sqrt{u_A(d)^2 + \left(\frac{0.005}{\sqrt{3}}\right)^2} = "
-        + r["d_u_disp"]
-        + r" \text{ mm}"
+        r"s_d = \sqrt{\frac{\sum_{i=1}^{" + str(r["n_d_kept"]) + r"} (d_i - \bar{d})^{2}}{n - 1}} = "
+        r"\sqrt{\frac{" + format_scientific(r["sum_sq_d"], 4) + r"}{"
+        + str(r["n_d_kept"] - 1) + r"}}"
+        r" \approx " + format_number(r["s_d_shi"], sig_figs=4) + r" \text{ mm}"
     )
+    doc.add_math(
+        r"\sigma = s_d \times t_{0.683} = " + format_number(r["s_d_shi"], sig_figs=4)
+        + r" \times " + format_number(t_factor(r["n_d_kept"]), sig_figs=3)
+        + r" \approx " + format_number(r["sigma_d_shi"], sig_figs=3) + r" \text{ mm}, \quad "
+        r"3\sigma \approx " + format_number(r["sigma3_d_shi"], sig_figs=3) + r" \text{ mm}"
+    )
+    doc.add_paragraph(outlier_note(r["ot_d"], unit=" mm", digits=5))
+    doc.add_paragraph("A类不确定度：")
+    doc.add_math(
+        r"u_A(d) = t \cdot \frac{s_d}{\sqrt{n}} = "
+        + format_number(t_factor(r["n_d_kept"]), sig_figs=3) + r" \times \frac{"
+        + format_number(r["s_d_shi"], sig_figs=4) + r"}{\sqrt{" + str(r["n_d_kept"]) + r"}}"
+        r" \approx " + format_number(r["A_d_shi"], sig_figs=4) + r" \text{ mm}"
+    )
+    doc.add_paragraph("B类不确定度：")
+    doc.add_math(
+        r"u_B(d) = \frac{\Delta_{\text{仪}}}{\sqrt{3}} = \frac{0.005}{\sqrt{3}}"
+        r" \approx " + format_number(r["B_d_shi"], sig_figs=4) + r" \text{ mm}"
+    )
+    doc.add_paragraph("合成不确定度：")
+    doc.add_math(
+        r"u(d) = \sqrt{u_A(d)^2 + u_B(d)^2} = \sqrt{"
+        + format_number(r["A_d_shi"], sig_figs=4) + r"^2 + "
+        + format_number(r["B_d_shi"], sig_figs=4) + r"^2}"
+        r" \approx " + format_number(r["d_shi_u"], sig_figs=4) + r" \text{ mm}"
+    )
+    doc.add_paragraph("")
+    doc.add_run("不确定度按只进不舍保留 1 位有效数字，记作 ")
+    doc.add_inline_math(r"u(d) \approx %s \text{ mm}" % r["d_u_disp"])
+    doc.add_run("，测得值末位与其对齐。")
 
     doc.add_heading("3. 光杠杆标尺读数与逐差法", level=2)
     doc.add_paragraph("")
@@ -245,12 +299,12 @@ def _generate_docx(data: dict, output_path: str):
         r"Y = \frac{32 \times 9.8 \times " + str(r["L"]) + r" \times " + str(r["H"])
         + r"}{\pi \times (" + r["d_disp"] + r")^2 \times "
         + str(int(r["D"])) + r" \times " + r["delta_n_disp"] + r"}"
-        + r" = " + format_number(r["Y"], r["Y_u"]) + r" \times 10^{11} \text{ Pa}"
+        + r" \approx " + format_number(r["Y"], r["Y_u"]) + r" \times 10^{11} \text{ Pa}"
     )
 
     doc.add_heading("5. 不确定度评定", level=2)
     doc.add_paragraph("")
-    doc.add_run("相对不确定度合成（L、H 仪器误差 0.003 m，D 仪器误差 0.003 m）：")
+    doc.add_run("相对不确定度合成（L、H、D 的仪器允差 Δ仪 = 0.003 m）：")
     doc.add_math(
         r"\frac{u(Y)}{Y} = \sqrt{\left(\frac{0.003}{L}\right)^2 + \left(\frac{0.003}{H}\right)^2"
         r" + \left(2\frac{u(d)}{d}\right)^2 + \left(\frac{0.003}{D/1000}\right)^2"
@@ -265,7 +319,7 @@ def _generate_docx(data: dict, output_path: str):
         + r" + \left(\frac{0.003}{" + format_number(r["D"] / 1000.0, sig_figs=3) + r"}\right)^2"
         + r" + \left(\frac{" + format_number(r["delta_n_dev_a"], r["delta_n_dev_a"]) + r"}{"
         + r["delta_n_disp"] + r"}\right)^2}"
-        + r" = " + format_percent(r["Y_u"] / r["Y"] * 100) + r"\%"
+        + r" \approx " + format_percent(r["Y_u"] / r["Y"] * 100) + r"\%"
     )
     # 相对不确定度换算到绝对不确定度：只进不舍保留 1 位有效数字（课程 2-4），
     # 故 7% × 2.1 与 0.2 不是精确相等，用 \approx 而不是 =
@@ -373,7 +427,10 @@ def main():
         print("未找到 data.json 或数据为空，请先在应用中填写数据。")
         return
     _generate_docx(data, DOCX_FILE)
-    print(f"报告已生成: {DOCX_FILE}")
+    if os.path.exists(DOCX_FILE):
+        print(f"报告已生成: {DOCX_FILE}")
+    else:
+        print("[错误] 生成中止，未输出报告，请按上方提示检查数据。")
 
 
 if __name__ == "__main__":

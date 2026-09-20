@@ -89,8 +89,10 @@ def _read_and_validate(data: dict):
         print(f"[错误] 表2 至少需要填写 {MIN_POINTS} 个频率点（当前 {len(t2)} 个）。")
         ok = False
     for row_no, _f, a, b in t2:
-        if b > a:
-            print(f"[错误] 表2 第 {row_no} 行：B格读数 ({b}) 大于 A格读数 ({a})，"
+        # 允许录入带符号的读数（知识库「修正后的数据」表里 B 格就是负的），
+        # 故按幅值判定义域，避免把负读数误判成越界。
+        if abs(b) > a:
+            print(f"[错误] 表2 第 {row_no} 行：B格读数 ({b}) 的幅值大于 A格读数 ({a})，"
                   "超出 arcsin 定义域，请检查数据。")
             ok = False
     if not ok:
@@ -264,17 +266,29 @@ def _compute(data: dict) -> dict:
     t1_f = [p[1] for p in t1]
     t1_i = [p[3] / R_ohm * 1000.0 for p in t1]
 
-    # 表2：φ = ±arcsin(B/A)，f < f0' 时电流超前、φ 取负；按 f 升序排列
+    # 表2：φ = ±arcsin(|B|/A)，符号由 f 与 f0' 的关系唯一决定
+    # 知识库口径（rag/原理.md:45「数据在记录时未添加负号，下面是修正后的数据」+ :47 修正表；
+    # variants.json「低于 f0' 时电流超前取负，高于 f0' 时电流滞后取正」）：
+    #   谐振频率以下 φ 为负、以上为正。因此一律取幅值参与 arcsin——这样无论录入的是
+    #   幅值还是已带符号的读数，结果都与知识库修正表一致，不会二次取反把符号翻回去。
     t2 = sorted(payload["t2"], key=lambda p: p[1])
     t2_f = [p[1] for p in t2]
     t2_a = [p[2] for p in t2]
     t2_b = []
     t2_phi = []
-    for _row, f, a, b in t2:
+    t2_signed_input = any(b < 0 for _row, _f, _a, b in t2)
+    for row_no, f, a, b in t2:
+        mag = abs(b)
+        if mag == 0:
+            t2_b.append(0.0)
+            t2_phi.append(0.0)
+            continue
         sign = -1.0 if f < f0p else 1.0
-        b_signed = 0.0 if b == 0 else sign * b
-        t2_b.append(b_signed)
-        t2_phi.append(0.0 if b == 0 else sign * math.asin(b / a))
+        if b < 0 and sign > 0:
+            print(f"[提示] 表2 第 {row_no} 行：f = {f} kHz 在谐振频率之上，"
+                  "该行 B 格读数的负号按物理规律修正为正。")
+        t2_b.append(sign * mag)
+        t2_phi.append(sign * math.asin(mag / a))
 
     # 通频带与派生特征量
     thr, f1, f2 = _find_bandwidth(t1_f, t1_i)
@@ -286,6 +300,7 @@ def _compute(data: dict) -> dict:
         "f0": f0, "f0p": f0p, "eta": eta,
         "t1_f": t1_f, "t1_i": t1_i,
         "t2_f": t2_f, "t2_a": t2_a, "t2_b": t2_b, "t2_phi": t2_phi,
+        "t2_signed_input": t2_signed_input,
         "i_max": i_max, "thr": thr, "f1": f1, "f2": f2, "df": df, "q": q,
     }
 
@@ -329,6 +344,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     t2_a = r["t2_a"]
     t2_b = r["t2_b"]
     t2_phi = r["t2_phi"]
+    t2_signed_input = r["t2_signed_input"]
     thr = r["thr"]
     f1 = r["f1"]
     f2 = r["f2"]
@@ -397,7 +413,10 @@ def _generate_docx(data: dict, output_path: str) -> bool:
 
     # 3. 相频特性的测量
     doc.add_heading("3. 相频特性的测量", level=2)
-    doc.add_paragraph("实际上，上文的数据在记录时未添加负号，下面是修正后的数据：")
+    if t2_signed_input:
+        doc.add_paragraph("数据记录时已带符号，下表按谐振频率前后核对相位符号后的相频数据：")
+    else:
+        doc.add_paragraph("实际上，上文的数据在记录时未添加负号，下面是修正后的数据：")
     _write_phase_table(doc, t2_f, t2_a, t2_b, t2_phi)
     doc.add_paragraph("由数据得到 φ～f 特性曲线如下：")
     doc.add_image(phase_plot, width_cm=14)
@@ -437,7 +456,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     elif not isinstance(_quiz, dict):
         _quiz = None
 
-    doc.add_paragraph("1. RLC 串联电路中谐振时的特点是什么？")
+    doc.add_paragraph("1. RLC 串联电路中谐振时的特点是什么？", bold=True)
     _o = _quiz.get("1") if _quiz else None
     if _o:
         doc.add_paragraph_rich(random.choice(_o))
@@ -449,13 +468,13 @@ def _generate_docx(data: dict, output_path: str) -> bool:
         )
 
         doc.add_paragraph("")
-        doc.add_run("2. RLC 串联电路实验中 U 和 ")
-        doc.add_inline_math(r"U_{R}")
-        doc.add_run("、")
-        doc.add_inline_math(r"U_{C}")
-        doc.add_run(" 以及 ")
-        doc.add_inline_math(r"U_{L}")
-        doc.add_run(" 不是代数和的关系，请问原因是什么？")
+        doc.add_run("2. RLC 串联电路实验中 U 和 ", bold=True)
+        doc.add_inline_math(r"U_{R}", bold=True)
+        doc.add_run("、", bold=True)
+        doc.add_inline_math(r"U_{C}", bold=True)
+        doc.add_run(" 以及 ", bold=True)
+        doc.add_inline_math(r"U_{L}", bold=True)
+        doc.add_run(" 不是代数和的关系，请问原因是什么？", bold=True)
 
         doc.add_paragraph("")
         doc.add_run("答：因为这些电压之间存在相位差。在交流电路中，电压和电流均为正弦量，"

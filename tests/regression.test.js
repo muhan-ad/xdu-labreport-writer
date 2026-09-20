@@ -113,6 +113,7 @@ function uiContext() {
     currentExp: { id: 'A', path: 'A', reportFile: 'A.docx' }, currentSchema: {},
     isGenerating: false, isBatchRunning: false, isSavingData: false, isSwitchingExperiment: false,
     isDataModified: true, isAiPolishing: false,
+    aiPolishRequestIds: new Set(), aiFlightOrder: new Map(), aiFollowedRequestId: null, aiThinkingChars: 0,
     $: id => nodes[id] ??= { style: {}, value: '', checked: false },
     showToast: () => {}, setResultState: () => {}, switchTab: () => {}, updateAiStatus: () => {},
   });
@@ -162,7 +163,7 @@ test('multi-section polishing uses the original snapshot after switching experim
       return { ok: true, content: 'mock' };
     } } },
   });
-  load(ui, 'async function runAiPolish()', '// 渲染多对象润色结果');
+  load(ui, 'async function runAiPolish(', '// 渲染多对象润色结果');
   const pending = ui.runAiPolish();
   ui.currentExp = { id: 'B', path: 'B', reportFile: 'B.docx' };
   ui.currentSections = { one: 'B first', two: 'B second' };
@@ -183,7 +184,7 @@ test('AI polish refuses quiz results that modify topics (strong constraint)', as
     document: { querySelector: () => null, querySelectorAll: s => s.includes('aiScopeGroup') ? [{ value: 'quiz' }] : [] },
     window: { labAPI: { aiChat: async () => ({ ok: true, content: '1. 被改写的题目\n新回答' }) } },
   });
-  load(ui, 'async function runAiPolish()', '// 渲染多对象润色结果');
+  load(ui, 'async function runAiPolish(', '// 渲染多对象润色结果');
   await ui.runAiPolish();
   const r = ui.lastPolishResults[0];
   assert.ok(r && !r.polished && /题目/.test(r.error || ''), '修改题目的结果应被拒绝：' + JSON.stringify(r));
@@ -202,7 +203,7 @@ test('AI polish restores original formulas and tolerates AI-added wrappers (stro
     document: { querySelector: () => null, querySelectorAll: s => s.includes('aiScopeGroup') ? [{value:'sec:one'}] : [] },
     window: { labAPI: { aiChat: async () => ({ ok: true, content: '原理公式为 $E = mc^2$，误差 $0.05$ 内完全适用。' }) } },   // 原文公式保留 + AI 给数字新增 $ 包裹
   });
-  load(ui, 'async function runAiPolish()', '// 渲染多对象润色结果');
+  load(ui, 'async function runAiPolish(', '// 渲染多对象润色结果');
   await ui.runAiPolish();
   const r = ui.lastPolishResults[0];
   assert.ok(r && !!r.polished, '原文公式未被删改时应放行：' + JSON.stringify(r));
@@ -227,6 +228,192 @@ test('AI polish restores original formulas and tolerates AI-added wrappers (stro
   const r4 = ui.lastPolishResults[0];
   assert.ok(r4 && !!r4.polished, '写法差异应放行：' + JSON.stringify(r4));
   assert.ok(r4.polished.includes('$0.05\%$'), '公式回填为原文写法：' + r4.polished);
+});
+
+test('AI polish retry re-runs only the failed item and keeps the rest of the round', async () => {
+  const ui = uiContext();
+  let oneCalls = 0;
+  Object.assign(ui, {
+    currentSections: { one: 'A first', two: 'A second' }, skillsCache: [],
+    loadSettings: () => ({ hasApiKey: true }), getAiStylePrompt: () => '', renderAiResults: () => {},
+    document: { querySelector: () => null, querySelectorAll: s => s.includes('aiScopeGroup') ? [{value:'sec:one'}, {value:'sec:two'}] : [] },
+    window: { labAPI: { aiChat: async ({ messages }) => {
+      const which = /「two」/.test(messages[1].content) ? 'two' : 'one';
+      if (which === 'one' && ++oneCalls === 1) return { ok: false, error: '模拟失败' };
+      return { ok: true, content: which === 'one' ? 'ONE 改写' : 'TWO 改写' };
+    } } },
+  });
+  load(ui, 'async function runAiPolish(', '// 渲染多对象润色结果');
+  await ui.runAiPolish();
+  assert.deepEqual(Array.from(ui.lastPolishResults, r => !!r.polished), [false, true], '首轮：one 失败、two 成功');
+  assert.equal(ui.$('aiResultCard').style.display, 'none', '整轮润色隐藏结果卡');
+  ui.$('aiResultCard').style.display = 'block';   // 真实应用中 renderAiResults 会把结果卡显示回来（此处 mock 为 no-op）
+  await ui.runAiPolish('sec:one');   // 单项重润：只重跑失败项
+  assert.equal(ui.$('aiResultCard').style.display, 'block', '重润不得隐藏结果卡（已成功文本保持可见）');
+  assert.equal(oneCalls, 2, '重润只发起一次请求');
+  assert.equal(ui.lastPolishResults.length, 2, '结果仍为两个对象');
+  assert.equal(ui.lastPolishResults[0].polished, 'ONE 改写', '失败项重润成功');
+  assert.equal(ui.lastPolishResults[1].polished, 'TWO 改写', '成功项保留上一轮结果');
+  assert.ok(ui.lastPolishResults.every(r => r.scopeVal), '每项携带 scopeVal 供重润定位');
+});
+
+test('AI polish batch retry re-runs every failed item through the queue', async () => {
+  const ui = uiContext();
+  let round = 0;   // 0=首轮全部失败，1=重跑全部成功
+  Object.assign(ui, {
+    currentSections: { one: 'A first', two: 'A second', three: 'A third' }, skillsCache: [],
+    loadSettings: () => ({ hasApiKey: true }), getAiStylePrompt: () => '', renderAiResults: () => {},
+    document: { querySelector: () => null, querySelectorAll: s => s.includes('aiScopeGroup') ? [{value:'sec:one'},{value:'sec:two'},{value:'sec:three'}] : [] },
+    window: { labAPI: { aiChat: async ({ messages }) => {
+      const c = messages[1].content;
+      const which = /「two」/.test(c) ? 'two' : /「three」/.test(c) ? 'three' : 'one';
+      if (round === 0) return { ok: false, error: '模拟失败' };
+      return { ok: true, content: which.toUpperCase() + ' 改写' };
+    } } },
+  });
+  load(ui, 'async function runAiPolish(', '// 渲染多对象润色结果');
+  await ui.runAiPolish();
+  assert.equal(Array.from(ui.lastPolishResults).filter(r => !!r.polished).length, 0, '首轮三个对象全部失败');
+  round = 1;   // 之后所有重跑成功
+  await ui.runAiPolish(['sec:three', 'sec:one', 'sec:two']);   // 批量重新润色（队列两路并行）
+  assert.deepEqual(Array.from(ui.lastPolishResults, r => !!r.polished), [true, true, true], '批量重跑后全部成功');
+  assert.deepEqual(Array.from(ui.lastPolishResults, r => r.polished), ['ONE 改写', 'TWO 改写', 'THREE 改写'], '结果按原顺序落位');
+  assert.ok(Array.from(ui.lastPolishResults, r => r.scopeVal).every(v => v === 'sec:one' || v === 'sec:two' || v === 'sec:three'), 'scopeVal 保留');
+});
+
+test('AI polish retry feeds the rejection reason back to the model', async () => {
+  const ui = uiContext();
+  const seen = [];
+  Object.assign(ui, {
+    currentSections: { one: '原理公式为 $E = mc^2$ 且适用。' }, skillsCache: [],
+    loadSettings: () => ({ hasApiKey: true }), getAiStylePrompt: () => '', renderAiResults: () => {},
+    document: { querySelector: () => null, querySelectorAll: s => s.includes('aiScopeGroup') ? [{value:'sec:one'}] : [] },
+    window: { labAPI: { aiChat: async ({ messages }) => {
+      seen.push(messages[1].content);
+      if (seen.length === 1) return { ok: true, content: '原理公式为 $E = mc^3$ 且适用。' };   // 改了公式 → 被拒
+      return { ok: true, content: '原理公式为 $E = mc^2$ 且适用。' };   // 带反馈重试后放行
+    } } },
+  });
+  load(ui, 'async function runAiPolish(', '// 渲染多对象润色结果');
+  await ui.runAiPolish();
+  assert.ok(ui.lastPolishResults[0] && !ui.lastPolishResults[0].polished, '首轮被公式校验拒绝');
+  await ui.runAiPolish('sec:one');
+  assert.ok(/【上一次尝试被系统拒绝——原因：删改了原文公式】/.test(seen[1]), '重试请求携带失败原因');
+  assert.ok(seen[1].includes('$E = mc^2$'), '反馈包含必须逐字保留的公式清单');
+  assert.ok(seen[1].includes('$E = mc^3$'), '反馈包含上次被拒的输出供参照');
+  assert.ok(ui.lastPolishResults[0] && !!ui.lastPolishResults[0].polished, '带反馈的重润成功');
+});
+
+test('AI polish applies settings-enabled skills without per-run checkboxes', async () => {
+  const ui = uiContext();
+  let systemPrompt = '';
+  Object.assign(ui, {
+    currentSections: { one: '原文内容' }, skillsCache: [
+      { id: 's1.md', name: '技能一', content: '技能一指令内容' },
+      { id: 's2.md', name: '技能二', content: '技能二指令内容' },
+    ],
+    loadSettings: () => ({ hasApiKey: true, skillStates: { 's2.md': false } }),
+    getAiStylePrompt: () => '', renderAiResults: () => {},
+    document: { querySelector: () => null, querySelectorAll: s => s.includes('aiScopeGroup') ? [{value:'sec:one'}] : [] },
+    window: { labAPI: { aiChat: async ({ messages }) => { systemPrompt = messages[0].content; return { ok: true, content: '改写' }; } } },
+  });
+  load(ui, 'async function runAiPolish(', '// 渲染多对象润色结果');
+  await ui.runAiPolish();
+  assert.ok(systemPrompt.includes('技能一指令内容'), '启用的技能应注入提示词');
+  assert.ok(!systemPrompt.includes('技能二指令内容'), '停用的技能不得注入');
+});
+
+test('save-vision-sample stores the training triplet and lists/marks samples', t => {
+  const h = mainHarness(t);
+  const png = 'data:image/png;base64,' + Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]).toString('base64');
+  const expId = '薄透镜焦距的测量（凸透镜）';
+  const save = h.handlers.get('save-vision-sample')({}, {
+    expId, ts: '20260920_120000', photoDataUrl: png,
+    aiData: { fields: { f_auto: { value: [15.0], confidence: 'high' } }, student: { name: '张三' } },
+    proofreadData: { fields: { f_auto: { value: [15.02] } } },
+  });
+  assert.equal(save.ok, true, save.error);
+  const dir = path.join(h.root, '识图数据', expId, '20260920_120000');
+  assert.ok(fs.existsSync(path.join(dir, 'photo.png')), '图片应落盘');
+  assert.equal(JSON.parse(read(path.join(dir, 'ai.json'))).fields.f_auto.confidence, 'high', 'AI 识别数据原样保存');
+  assert.equal(JSON.parse(read(path.join(dir, 'proofread.json'))).fields.f_auto.value[0], 15.02, '人工校对数据保存');
+  assert.equal(JSON.parse(read(path.join(dir, 'meta.json'))).submitted, false);
+  // 非法标识（含穿越）必须拒绝
+  assert.equal(h.handlers.get('save-vision-sample')({}, { expId: '../evil', ts: 'x', photoDataUrl: png, aiData: {}, proofreadData: {} }).ok, false);
+  assert.equal(h.handlers.get('save-vision-sample')({}, { expId: 'ok', ts: 'a/b', photoDataUrl: png, aiData: {}, proofreadData: {} }).ok, false);
+  // 列表 + 提交标记
+  const list = h.handlers.get('list-vision-samples')({});
+  assert.equal(list.ok, true);
+  assert.equal(list.samples.length, 1);
+  assert.equal(list.samples[0].exp, expId);
+  assert.equal(h.handlers.get('mark-vision-submitted')({}, { expId, ts: '20260920_120000' }).ok, true);
+  assert.equal(h.handlers.get('list-vision-samples')({}).samples[0].submitted, true);
+});
+
+test('renderField accepts an override data source for the review UI', async () => {
+  const ui = uiContext();
+  ui.escapeHtml = (s) => String(s);
+  load(ui, 'function renderField(fld, dataOverride)', 'function onFormInput()');
+  const html = ui.renderField({ key: 'k1', label: '标签', type: 'number' }, { k1: 42 });
+  assert.ok(html.includes('data-key="k1"') && html.includes('value="42"'), '覆盖值应渲染进数据格：' + html);
+});
+
+test('vision contribution upload assembles photo + ai + proofread + manifest with privacy strip', async () => {
+  const ui = uiContext();
+  const uploaded = [], submitted = [];
+  let credFiles = null;
+  Object.assign(ui, {
+    TextEncoder, atob,
+    currentExp: { id: '刚体转动惯量的测量', path: 'x', reportFile: 'r.docx' },
+    $: (id) => (id === 'cvVisionList' ? {
+      innerHTML: '', style: {},
+      // 模拟列表里有一个勾选中的样本（collectCVVisionSel 从 DOM 收集）
+      querySelectorAll: () => [{
+        dataset: { key: '刚体转动惯量的测量/20260920_120000' },
+        querySelector: (sel) => (sel === '.cv-vision-pick' ? { checked: true, disabled: false } : null),
+      }],
+      querySelector: () => null,
+    } : {
+      style: {}, value: '', textContent: '', innerHTML: '',
+      classList: { toggle: () => {}, add: () => {}, remove: () => {} },
+      checked: id === 'chkContributeAgree',
+      querySelectorAll: () => [], querySelector: () => null,
+    }),
+    window: { labAPI: {
+      getAppVersion: async () => '9.9.9',
+      listVisionSamples: async () => ({ ok: true, samples: [] }),
+      readVisionSample: async () => ({
+        ok: true,
+        photoDataUrl: 'data:image/jpeg;base64,AAAA',
+        aiData: { fields: { a: { value: 1 } }, student: { name: '张三', id: '2021001' } },
+        proofreadData: { fields: { a: { value: 2 } }, student: { name: '张三', id: '2021001' } },
+      }),
+      contributeGetCredentials: async (p) => {
+        credFiles = p.files;
+        return { ok: true, items: p.files.map(f => ({ key: f.key, putUrl: 'https://cos/' + f.key })) };
+      },
+      contributeUpload: async (p) => { uploaded.push(p); return { ok: true }; },
+      markVisionSubmitted: async (p) => { submitted.push(p); return { ok: true }; },
+    } },
+  });
+  load(ui, 'let cvMode = ', 'let dangerStep');
+  // 状态是脚本级词法绑定，外部预设属性会被声明遮蔽：改为调用 slice 内部函数设置
+  ui.switchCVTab('vision');
+  ui.collectCVVisionSel();
+  await ui.doContributeUpload();
+  assert.equal(credFiles.length, 4, '每个样本 4 个文件：' + JSON.stringify(credFiles.map(f => f.key)));
+  const keys = credFiles.map(f => f.key);
+  assert.ok(keys.every(k => k.startsWith('contributions/vision/刚体转动惯量的测量/20260920_120000/')), '对象键按 vision 前缀：' + keys.join('、'));
+  assert.ok(keys.some(k => k.endsWith('/photo.jpg')) && keys.some(k => k.endsWith('/ai.json'))
+    && keys.some(k => k.endsWith('/proofread.json')) && keys.some(k => k.endsWith('/manifest.json')), '三件套 + manifest 齐全');
+  const aiFile = uploaded.find(p => p.putUrl.endsWith('/ai.json'));
+  const aiObj = JSON.parse(Buffer.from(aiFile.data).toString('utf8'));
+  assert.ok(!aiObj.student, '默认移除学生信息');
+  assert.equal(aiObj.fields.a.value, 1, '识别数据保留');
+  const manifest = JSON.parse(Buffer.from(uploaded.find(p => p.putUrl.endsWith('/manifest.json')).data).toString('utf8'));
+  assert.equal(manifest.kind, 'vision');
+  assert.equal(manifest.masked, false);
+  assert.equal(submitted.length, 1, '上传成功后标记已提交');
 });
 
 function mainHarness(t, failUpdateCopy = false) {
@@ -268,7 +455,7 @@ function mainHarness(t, failUpdateCopy = false) {
     fs.copyFileSync(from, to);
   } };
   const mockedRequire = name => name === 'electron' ? fakeElectron : name === 'child_process' ? childTools : name === 'fs' ? fileTools : nativeRequire(name);
-  const controls = new Function('require', '__dirname', read(mainFile) + '\nreturn { unzipScript: UNZIP_SCRIPT, extractDelta: extractDeltaFromSSELine, setPackage: value => { downloadedPackage = value; }, merge: (stage, target, bases) => { const warnings = []; mergeDataTree(stage, target, EXPERIMENTS_DIR, warnings, true, bases); return warnings; } };')(mockedRequire, path.dirname(mainFile));
+  const controls = new Function('require', '__dirname', read(mainFile) + '\nreturn { unzipScript: UNZIP_SCRIPT, extractDelta: extractDeltaFromSSELine, extractReasoning: extractReasoningFromSSELine, setPackage: value => { downloadedPackage = value; }, merge: (stage, target, bases) => { const warnings = []; mergeDataTree(stage, target, EXPERIMENTS_DIR, warnings, true, bases); return warnings; } };')(mockedRequire, path.dirname(mainFile));
   ready();
   const authorize = (zip, files, removed, version) => {
     const crypto = require('node:crypto');
@@ -278,7 +465,7 @@ function mainHarness(t, failUpdateCopy = false) {
     manifest.signature = crypto.sign(null, Buffer.from(require('../src/main/update-package').canonical(manifest)), testKeys.privateKey).toString('base64');
     controls.setPackage({ path: zip, manifest });
   };
-  return { root, handlers, rawHandlers, children, kills, authorize, merge: controls.merge, unzipScript: controls.unzipScript, copied, extractDelta: controls.extractDelta };
+  return { root, handlers, rawHandlers, children, kills, authorize, merge: controls.merge, unzipScript: controls.unzipScript, copied, extractDelta: controls.extractDelta, extractReasoning: controls.extractReasoning };
 }
 
 test('main process rejects concurrent generation and cancels by killing the python tree', async t => {
@@ -419,6 +606,25 @@ test('restored experiments reappear once a package omits the removal list', asyn
   assert.ok(!state.manifest || !state.manifest.removed, '恢复后本地下架名单应清空');
 });
 
+test('data packages deliver built-in skills into the user skills directory', async t => {
+  const h = mainHarness(t), dataRoot = path.join(h.root, '实验数据');
+  const zip = path.join(dataRoot, '_package.zip');
+  put(zip, 'mock archive');
+  const shaOf = (s) => require('node:crypto').createHash('sha256').update(s).digest('hex');
+  h.authorize(zip, {
+    '实验脚本/common/core.py': shaOf('x'),
+    'skills/新技能.md': shaOf('# 新技能'),
+  }, null, '2.0.0');
+  const pending = h.handlers.get('apply-data-package')({}, { filePath: zip, notes: 'test' });
+  put(path.join(dataRoot, '_staging/实验脚本/common/core.py'), 'x');
+  put(path.join(dataRoot, '_staging/skills/新技能.md'), '# 新技能');
+  h.children[0].emit('close', 0);
+  const result = await pending;
+  assert.equal(result.ok, true, result.error);
+  assert.equal(read(path.join(h.root, 'skills', '新技能.md')), '# 新技能', '包内技能应落到 userData/skills');
+  assert.ok(!fs.existsSync(path.join(dataRoot, '实验脚本', 'skills')), '技能不得混入实验脚本树');
+});
+
 test('independent vision service never falls back to the chat endpoint', t => {
   // 审查报告 R10：独立识图模式下 visionApiUrl 为空时，旧实现会回退到主聊天地址 apiUrl，
   // 把独立密钥发到另一个服务（随后被"密钥绑定地址"拦下报错）。
@@ -496,6 +702,37 @@ test('SSE line parser extracts streaming deltas for AI polish preview', t => {
   assert.equal(ex('event: ping'), '');
   assert.equal(ex('data: not-json'), '');
   assert.equal(ex(''), '');
+});
+
+test('SSE line parser extracts reasoning deltas for the thinking indicator', t => {
+  const h = mainHarness(t);
+  const ex = h.extractReasoning;
+  assert.equal(ex('data: {"choices":[{"delta":{"reasoning_content":"让我想想"}}]}'), '让我想想');
+  assert.equal(ex('data: {"choices":[{"delta":{"content":"正文"}}]}'), '', '正文不进思考通道');
+  assert.equal(ex('data: {"choices":[{"delta":{"reasoning_content":""}}]}'), '');
+  assert.equal(ex('data: [DONE]'), '');
+  assert.equal(ex('event: ping'), '');
+  assert.equal(ex('data: not-json'), '');
+});
+
+test('AI polish runs two scopes concurrently and keeps results in scope order', async () => {
+  const ui = uiContext();
+  let inflight = 0, maxInflight = 0;
+  Object.assign(ui, {
+    currentSections: { one: 'A first', two: 'A second' }, skillsCache: [],
+    loadSettings: () => ({ hasApiKey: true }), getAiStylePrompt: () => '', renderAiResults: () => {},
+    document: { querySelector: () => null, querySelectorAll: s => s.includes('aiScopeGroup') ? [{value:'sec:one'}, {value:'sec:two'}] : [] },
+    window: { labAPI: { aiChat: async ({ messages }) => {
+      inflight++; maxInflight = Math.max(maxInflight, inflight);
+      await new Promise(r => setTimeout(r, 15));
+      inflight--;
+      return { ok: true, content: /「two」/.test(messages[1].content) ? 'TWO 改写' : 'ONE 改写' };
+    } } },
+  });
+  load(ui, 'async function runAiPolish(', '// 渲染多对象润色结果');
+  await ui.runAiPolish();
+  assert.equal(maxInflight, 2, '两个对象应两路并发');
+  assert.deepEqual(Array.from(ui.lastPolishResults, r => r.polished), ['ONE 改写', 'TWO 改写'], '结果按勾选顺序落位');
 });
 
 test('copy link IPC accepts a share URL and refuses non-HTTPS clipboard payloads', t => {

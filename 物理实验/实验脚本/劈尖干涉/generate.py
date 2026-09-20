@@ -20,7 +20,19 @@ LAMBDA_NM = 589.3              # 钠光灯波长 (nm)
 LAMBDA_MM = 589.3e-6           # 钠光灯波长 (mm)
 DELTA_INSTRUMENT = 0.004       # 15J 测量显微镜仪器误差 (mm)
 SKIP_N = 40                    # 逐差法间隔（条）
-T_FACTOR = 1.2                 # t 因子 (n=4, df=3, P=0.683)
+T_FACTOR = 1.2                 # t 因子 (n=4, df=3, P=0.683)，与 common.t_factor(4) 一致
+
+
+def _sum_str(vals, prec: int) -> str:
+    """把一串数值写成 LaTeX 加法式（「带入数据」那一步用）。"""
+    out = ""
+    for i, v in enumerate(vals):
+        mag = f"{abs(v):.{prec}f}"
+        if i == 0:
+            out = ("-" if v < 0 else "") + mag
+        else:
+            out += (" - " if v < 0 else " + ") + mag
+    return out
 
 # 注：方式三迁移后数据来自 data.json（schema.json 定义），
 # 读取坐标为：x_k ← B5:B12，X1 ← A16，X2 ← B16（见 _create_template 模板布局）。
@@ -70,23 +82,30 @@ def _generate_docx(data: dict, output_path: str):
     # ── 2. 逐差法计算 ──
     # l_k = |x_{k+40} - x_k|，k = 0, 10, 20, 30（共 4 组）
     l_k = [abs(x_k[i + 4] - x_k[i]) for i in range(4)]
-    # 40 条暗纹间距的平均值
-    l_bar_k = mean(l_k)
+    # 3σ 坏值检验：4 组 l_k 是同一被测量（40 条暗纹间距）的等精度重复测量，迭代剔除
+    _ot_lk = outlier_test(l_k)
+    l_k_kept = _ot_lk["kept"]
+    n_lk = _ot_lk["n_kept"]
+    # 40 条暗纹间距的平均值（用 3σ 检验后的保留数据）
+    l_bar_k = mean(l_k_kept)
     # 相邻暗纹间距（教材中的 l̄）
     s = l_bar_k / SKIP_N
     # 劈尖长度
     L = abs(X1 - X2)
+    if s <= 0:
+        print("[错误] 相邻暗纹间距 l̄ 非正：8 个暗纹位置读数相同或全为 0，请检查 x_k 数据。")
+        return None
+    if L <= 0:
+        print(f"[错误] 劈尖长度 L = |X1 − X2| = {L:g} mm 为零：X1 与 X2 不能相同，请检查。")
+        return None
     # 细丝直径（公式 3-24-4）
     d_bar = L / s * (LAMBDA_MM / 2)
 
     # ── 3. 不确定度分析 ──
-    # A 类不确定度
-    s_l = std_dev(l_k)                        # 四个 l_k 的标准差
-    sigma_l = s_l * T_FACTOR                  # P=0.683 置信扩展
-    sigma3 = 3 * sigma_l                       # 3σ 检验阈值
-    abs_dev_max = max(abs(li - l_bar_k) for li in l_k)
-    no_outlier = abs_dev_max < sigma3          # True = 经检验无坏值
-    u_A = sigma_l / math.sqrt(4)              # 平均值的 A 类不确定度
+    # A 类不确定度（保留数据的标准差与 σ = s × t）
+    s_l = _ot_lk["std"]
+    sigma_l = _ot_lk["sigma"]
+    u_A = sigma_l / math.sqrt(n_lk)           # 平均值的 A 类不确定度
 
     # B 类不确定度
     u_B = type_b(DELTA_INSTRUMENT)            # Δ_仪 / √3
@@ -115,6 +134,8 @@ def _generate_docx(data: dict, output_path: str):
         "d_bar": d_bar, "u_d": u_d, "L": L, "l_bar_k": l_bar_k,
         "s": s, "lambda_nm": LAMBDA_NM, "u_l": u_l,
         "d_mm": d_bar, "u_d_mm": u_d, "lambda_mm": LAMBDA_MM,
+        # 3σ 坏值检验结果（4 组 l_k 为等精度重复测量）
+        "ot": _ot_lk,
     }
     variants = compose(SCRIPT_DIR, r)
     if "实验原理" in variants:
@@ -188,18 +209,20 @@ def _generate_docx(data: dict, output_path: str):
         doc.add_inline_math(
             f"l_{{{ki}}} = |x_{{{ki+40}}} - x_{{{ki}}}| "
             f"= |{format_number(x_k[i+4])} - {format_number(x_k[i])}| "
-            f"= {format_number(l_k[i])}\\,\\mathrm{{mm}}"
+            f"\\approx {format_number(l_k[i])}\\,\\mathrm{{mm}}"
         )
 
     doc.add_paragraph("40 条暗纹间距的平均值：")
     doc.add_math(
-        r"\bar{l}_k = \frac{l_0 + l_{10} + l_{20} + l_{30}}{4} = "
+        r"\bar{l}_k = \frac{l_0 + l_{10} + l_{20} + l_{30}}{" + f"{n_lk}" + r"} = \frac{"
+        + _sum_str(l_k_kept, 3) + r"}{" + f"{n_lk}" + r"} \approx "
         + format_number(l_bar_k) + r"\,\mathrm{mm}"
     )
 
     doc.add_paragraph("相邻暗纹间距：")
     doc.add_math(
-        r"\bar{l} = \frac{\bar{l}_k}{40} = "
+        r"\bar{l} = \frac{\bar{l}_k}{" + f"{SKIP_N}" + r"} = \frac{"
+        + format_number(l_bar_k) + r"}{" + f"{SKIP_N}" + r"} \approx "
         + format_number(s) + r"\,\mathrm{mm}"
     )
 
@@ -211,65 +234,66 @@ def _generate_docx(data: dict, output_path: str):
         r"\bar{d} = \frac{L}{\bar{l}} \cdot \frac{\lambda}{2}"
         r" = \frac{" + format_number(L) + r"}{" + format_number(s) + r"}"
         r" \cdot \frac{" + format_scientific(LAMBDA_MM) + r"}{2}"
-        r" = " + format_number(d_bar) + r"\,\mathrm{mm}"
+        r" \approx " + format_number(d_bar) + r"\,\mathrm{mm}"
     )
 
-    # ── A 类不确定度 ──
-    doc.add_heading("2.4 A 类不确定度", level=2)
+    # ── 不确定度评定（三段标签）──
+    doc.add_heading("2.4 不确定度评定", level=2)
 
-    doc.add_paragraph("对 4 组 l_k 值进行统计分析：")
+    doc.add_paragraph("先计算 4 组 l_k 的标准差并进行 3σ 坏值检验：")
     doc.add_math(
-        r"s = \sqrt{\frac{1}{4-1} \sum_{i=0}^{3} (\bar{l}_k - l_{10i})^{2}} = "
-        + format_number(s_l) + r"\,\mathrm{mm}"
+        r"s = \sqrt{\frac{1}{" + f"{n_lk}" + r" - 1} \sum_{i=1}^{" + f"{n_lk}"
+        + r"} (l_i - \bar{l}_k)^{2}} = \sqrt{\frac{"
+        + _sum_str([(x - l_bar_k) ** 2 for x in l_k_kept], 6) + r"}{" + f"{n_lk - 1}"
+        + r"}} \approx " + format_number(s_l) + r"\,\mathrm{mm}"
     )
     doc.add_paragraph("")
-    doc.add_run("小样本（n = 4），取 t 因子 ")
-    doc.add_inline_math(f"t = {T_FACTOR}")
-    doc.add_run("（df = 3，P = 0.683）：")
+    doc.add_run("小样本（n = ")
+    doc.add_inline_math(f"{n_lk}")
+    doc.add_run("），取 t 因子 ")
+    doc.add_inline_math(f"t = {t_factor(n_lk):g}")
+    doc.add_run(f"（df = {n_lk - 1}，P = 0.683）：")
     doc.add_math(
-        r"\sigma = s \cdot t = " + format_number(s_l) + r" \times " + str(T_FACTOR)
-        + r" = " + format_number(sigma_l) + r"\,\mathrm{mm}"
+        r"\sigma = s \cdot t = " + format_number(s_l) + r" \times " + f"{t_factor(n_lk):g}"
+        + r" \approx " + format_number(sigma_l) + r"\,\mathrm{mm}"
     )
     doc.add_paragraph("")
     doc.add_run("3σ 检验：")
-    doc.add_inline_math(f"3\\sigma = {format_number(sigma3)}\\,\\mathrm{{mm}}")
-    doc.add_run(
-        f"，各组偏差绝对值最大为 {format_number(abs_dev_max)} mm"
-        + (" < 3σ" if no_outlier else " ≥ 3σ!!!")
-        + "，经检验无坏值。" if no_outlier else "，存在坏值，请检查数据！"
+    doc.add_inline_math(
+        r"3\sigma = 3 \times " + format_number(sigma_l) + r" \approx "
+        + format_number(3 * sigma_l) + r"\,\mathrm{mm}"
     )
-    doc.add_paragraph("平均值的 A 类不确定度：")
+    doc.add_paragraph(outlier_note(_ot_lk, unit=" mm", digits=5))
+
+    doc.add_paragraph("A类不确定度：")
     doc.add_math(
-        r"\Delta x_A = \frac{\sigma}{\sqrt{4}} = "
-        + format_number(u_A) + r"\,\mathrm{mm}"
+        r"\Delta l_A = \frac{\sigma}{\sqrt{n}} = \frac{" + format_number(sigma_l)
+        + r"}{\sqrt{" + f"{n_lk}" + r"}} \approx " + format_number(u_A) + r"\,\mathrm{mm}"
     )
 
-    # ── B 类不确定度 ──
-    doc.add_heading("2.5 B 类不确定度", level=2)
-
-    doc.add_paragraph("由测量显微镜仪器误差引入，按均匀分布处理：")
+    doc.add_paragraph("B类不确定度：")
     doc.add_math(
-        r"\Delta x_B = \frac{\Delta_{\text{仪}}}{\sqrt{3}}"
+        r"\Delta l_B = \frac{\Delta_{\text{仪}}}{\sqrt{3}}"
         r" = \frac{" + format_number(DELTA_INSTRUMENT) + r"}{\sqrt{3}}"
-        r" = " + format_number(u_B) + r"\,\mathrm{mm}"
+        r" \approx " + format_number(u_B) + r"\,\mathrm{mm}"
     )
 
-    # ── 合成不确定度 ──
-    doc.add_heading("2.6 合成不确定度与测量结果", level=2)
-
-    doc.add_paragraph_rich(r"$\bar{l}_k$ 的合成不确定度：")
+    doc.add_paragraph("合成不确定度：")
     doc.add_math(
-        r"\Delta l = \sqrt{\Delta x_A^{2} + \Delta x_B^{2}}"
+        r"\Delta l = \sqrt{\Delta l_A^{2} + \Delta l_B^{2}}"
         r" = \sqrt{" + format_number(u_A) + r"^{2} + " + format_number(u_B) + r"^{2}}"
-        r" = " + format_number(u_l) + r"\,\mathrm{mm}"
+        r" \approx " + format_number(u_l) + r"\,\mathrm{mm}"
     )
+
+    # ── 细丝直径的不确定度与结果 ──
+    doc.add_heading("2.5 细丝直径的不确定度与测量结果", level=2)
 
     doc.add_paragraph_rich(r"不确定度传递到细丝直径（$d \propto 1/\bar{l}_k$）：")
     doc.add_math(
         r"\Delta d = \frac{\Delta l}{\bar{l}_k} \cdot \bar{d}"
         r" = \frac{" + format_number(u_l) + r"}{" + format_number(l_bar_k) + r"}"
         r" \times " + format_number(d_bar)
-        + r" = " + format_number(u_d) + r"\,\mathrm{mm}"
+        + r" \approx " + format_number(u_d) + r"\,\mathrm{mm}"
     )
 
     doc.add_paragraph("细丝直径测量结果：")
@@ -367,7 +391,10 @@ def main():
         return
 
     _generate_docx(data, DOCX_FILE)
-    print(f"报告已生成: {DOCX_FILE}")
+    if os.path.exists(DOCX_FILE):
+        print(f"报告已生成: {DOCX_FILE}")
+    else:
+        print("[错误] 生成中止，未输出报告，请按上方提示检查数据。")
 
 
 if __name__ == "__main__":

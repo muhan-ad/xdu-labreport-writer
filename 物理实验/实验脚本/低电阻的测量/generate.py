@@ -68,10 +68,18 @@ def _compute(data: dict) -> dict:
     n_d = len(d)
     n_l = len(L)
 
-    # 直径统计
-    d_a = sum(d) / n_d
-    d_ua = smartlab_ua(d)
-    d_u = smartlab_u(d, D_INST_ERR)
+    # 直径统计：6 次直径测量是同一被测量的等精度重复测量，先作 3σ 坏值检验
+    # （迭代剔除），再用保留值重算平均值、标准差与不确定度。
+    _ot = outlier_test(d)
+    d_kept = _ot["kept"]
+    d_t = T_FACTOR[len(d_kept)] if len(d_kept) < len(T_FACTOR) else 1.0
+    d_a = sum(d_kept) / len(d_kept)
+    d_sumsq = sum((x - d_a) ** 2 for x in d_kept)
+    d_std = std_dev(d_kept)
+    d_sigma = d_std * d_t
+    d_ua = smartlab_ua(d_kept)
+    d_ub = type_b(D_INST_ERR, "uniform")
+    d_u = smartlab_u(d_kept, D_INST_ERR)
 
     # 电桥读数平均
     rn_a = [(z + f) / 2 for z, f in zip(rn_zheng, rn_fan)]
@@ -79,7 +87,9 @@ def _compute(data: dict) -> dict:
     # 待测电阻 R_x = R_n_a * R_3 / R_1 * 1000（单位 mΩ）
     R_x = [rna * r3 / r1 * 1000 for rna in rn_a]
     R_x_a = sum(R_x) / n_l
+    R_x_std = std_dev(R_x)
     R_x_ua = smartlab_ua(R_x)
+    R_x_t = T_FACTOR[n_l] if n_l < len(T_FACTOR) else 1.0
 
     # 电阻率 ρ = π*d_a²*R_x*100/(4*L)
     rho = [math.pi * d_a ** 2 * rx * 100 / (4 * li) for rx, li in zip(R_x, L)]
@@ -91,8 +101,11 @@ def _compute(data: dict) -> dict:
     return {
         "r1": r1, "r3": r3,
         "d": d, "d_a": d_a, "d_ua": d_ua, "d_u": d_u,
+        "d_std": d_std, "d_sumsq": d_sumsq, "d_sigma": d_sigma,
+        "d_ub": d_ub, "d_t": d_t, "ot": _ot,
         "L": L, "rn_zheng": rn_zheng, "rn_fan": rn_fan, "rn_a": rn_a,
         "R_x": R_x, "R_x_a": R_x_a, "R_x_ua": R_x_ua,
+        "R_x_std": R_x_std, "R_x_t": R_x_t,
         "rho": rho, "rho_a": rho_a, "rho_u": rho_u,
         # 变体文本只能写固定格式（%.4f 之类），既表达不了课程 2-4 的取位，
         # 也会和正文的 ± 写法打架；预格式化后由变体用 %s 引用
@@ -164,25 +177,65 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_heading("1. 金属丝直径测量", level=2)
     doc.add_paragraph("")
-    doc.add_run("用螺旋测微计在金属丝不同位置测量直径 6 次，仪器误差 Δ_inst = 0.001 mm。")
+    doc.add_run("用螺旋测微计在金属丝不同位置测量直径 6 次，仪器允差 ")
+    doc.add_inline_math(r"\Delta_{\text{仪}} = 0.001\,\text{mm}")
+    doc.add_run("。")
     d_str = "，".join(f"{x:.3f}" for x in r["d"])
     doc.add_paragraph(f"测量值（mm）：{d_str}")
-    doc.add_paragraph("")
-    doc.add_run("直径平均值：")
-    doc.add_inline_math(f"d_a = {r['d_a']:.4f} mm")
-    doc.add_paragraph("")
-    doc.add_run("A 类不确定度（t 因子法，n=6, t=1.11）：")
-    doc.add_inline_math(f"u_A(d) = {r['d_ua']:.6f} mm")
-    doc.add_paragraph("")
-    doc.add_run("合成不确定度：")
+
+    # 平均值（代入全部 6 个读数）
+    doc.add_paragraph("直径平均值：")
     doc.add_math(
-        r"u(d) = \sqrt{u_A(d)^2 + \left(\frac{\Delta_{inst}}{\sqrt{3}}\right)^2} = "
-        + format_uncertainty(r["d_u"])
-        + r" \text{ mm}"
+        r"\bar{d} = \frac{1}{6}\sum_{i=1}^{6} d_i = \frac{"
+        + " + ".join(f"{x:.3f}" for x in r["d"])
+        + r"}{6} \approx " + f"{r['d_a']:.4f}" + r"\,\text{mm}"
+    )
+
+    # 样本标准差 → 3σ 坏值检验（同一被测量的 6 次等精度重复测量）
+    doc.add_paragraph("样本标准差：")
+    doc.add_math(
+        r"s_{d} = \sqrt{\frac{\sum_{i=1}^{6}(d_i - \bar{d})^{2}}{n - 1}}"
+        r" = \sqrt{\frac{" + format_scientific(r["d_sumsq"], 4) + r"}{5}}"
+        r" \approx " + format_number(r["d_std"], sig_figs=3) + r"\,\text{mm}"
+    )
+    doc.add_paragraph("")
+    doc.add_run("取 ")
+    doc.add_inline_math(f"t_{{0.683}} = {r['d_t']:.2f}")
+    doc.add_run("（n = 6），作 3σ 坏值检验：")
+    doc.add_math(
+        r"\sigma_{d} = s_{d} \times t_{0.683} = "
+        + format_number(r["d_std"], sig_figs=3) + r" \times " + f"{r['d_t']:.2f}"
+        + r" \approx " + format_number(r["d_sigma"], sig_figs=3) + r"\,\text{mm}"
+    )
+    doc.add_math(
+        r"3\sigma_{d} \approx " + format_number(3 * r["d_sigma"], sig_figs=3)
+        + r"\,\text{mm}"
+    )
+    doc.add_paragraph(outlier_note(r["ot"], unit=" mm", digits=3))
+
+    # A 类 / B 类 / 合成不确定度
+    doc.add_paragraph("A类不确定度：")
+    doc.add_math(
+        r"\Delta d_{A} = \frac{t \cdot s_{d}}{\sqrt{n}} = \frac{"
+        + f"{r['d_t']:.2f}" + r" \times " + format_number(r["d_std"], sig_figs=3)
+        + r"}{\sqrt{6}} \approx " + format_number(r["d_ua"], sig_figs=3)
+        + r"\,\text{mm}"
+    )
+    doc.add_paragraph("B类不确定度：")
+    doc.add_math(
+        r"\Delta d_{B} = \frac{\Delta_{\text{仪}}}{\sqrt{3}} = \frac{0.001}{\sqrt{3}}"
+        r" \approx " + format_number(r["d_ub"], sig_figs=3) + r"\,\text{mm}"
+    )
+    doc.add_paragraph("合成不确定度：")
+    doc.add_math(
+        r"\Delta d = \sqrt{\Delta d_{A}^{2} + \Delta d_{B}^{2}} = \sqrt{"
+        + format_number(r["d_ua"], sig_figs=3) + r"^{2} + "
+        + format_number(r["d_ub"], sig_figs=3) + r"^{2}}"
+        r" \approx " + format_number(r["d_u"], sig_figs=3) + r"\,\text{mm}"
     )
     doc.add_paragraph("")
     doc.add_run("直径的结果表示（只进不舍取 1 位有效数字，末位对齐）：")
-    doc.add_inline_math(r"d = " + format_measure(r["d_a"], r["d_u"]) + r" \text{ mm}")
+    doc.add_math(r"d = " + format_measure(r["d_a"], r["d_u"]) + r"\,\text{mm}")
 
     doc.add_heading("2. 双臂电桥测电阻", level=2)
     doc.add_paragraph("")
@@ -194,6 +247,12 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("待测电阻：")
     doc.add_math(
         r"R_x = \frac{R_3}{R_1} \cdot R_n \times 1000 \quad (\text{m}\Omega)"
+    )
+    doc.add_paragraph("代入数据（以 L = 100 mm 一行为例）：")
+    doc.add_math(
+        r"R_x = \frac{" + f"{r['r3']:.0f}" + r"}{" + f"{r['r1']:.0f}" + r"} \times "
+        + f"{r['rn_a'][0]:.6f}" + r" \times 1000 \approx "
+        + f"{r['R_x'][0]:.4f}" + r"\,\text{m}\Omega"
     )
 
     rows = []
@@ -210,12 +269,23 @@ def _generate_docx(data: dict, output_path: str):
         rows, col_widths=[1.8, 2.2, 2.2, 2.2, 2.0]
     )
 
+    doc.add_paragraph("8 个长度点的待测电阻平均值：")
+    doc.add_math(
+        r"\bar{R}_{x} = \frac{1}{8}\sum_{i=1}^{8} R_{x,i} = \frac{"
+        + " + ".join(f"{v:.4f}" for v in r["R_x"])
+        + r"}{8} \approx " + f"{r['R_x_a']:.4f}" + r"\,\text{m}\Omega"
+    )
+    doc.add_paragraph("各长度点读数的分散性按 A 类不确定度评定：")
+    doc.add_math(
+        r"\Delta R_{x,A} = \frac{t \cdot s_{R_x}}{\sqrt{n}} = \frac{"
+        + f"{r['R_x_t']:.2f}" + r" \times " + format_number(r["R_x_std"], sig_figs=3)
+        + r"}{\sqrt{8}} \approx " + format_number(r["R_x_ua"], sig_figs=3)
+        + r"\,\text{m}\Omega"
+    )
     doc.add_paragraph("")
-    doc.add_run("8 个长度点的待测电阻平均值：")
-    doc.add_inline_math(r"R_x = " + format_measure(r["R_x_a"], r["R_x_ua"]) + r" \text{ m}\Omega")
-    doc.add_run("（A 类不确定度 u_A(R_x) = ")
-    doc.add_inline_math(format_uncertainty(r["R_x_ua"]) + r" \text{ m}\Omega")
-    doc.add_run("）")
+    doc.add_run("待测电阻平均值：")
+    doc.add_inline_math(r"R_x = " + format_measure(r["R_x_a"], r["R_x_ua"])
+                        + r"\,\text{m}\Omega")
 
     doc.add_heading("3. 电阻率计算", level=2)
     doc.add_paragraph("")
@@ -223,20 +293,33 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_math(
         r"\rho = \frac{\pi d_a^2 R_x \times 100}{4L}"
     )
+    doc.add_paragraph("代入数据（以 L = 100 mm 一行为例）：")
+    doc.add_math(
+        r"\rho = \frac{\pi \times " + f"{r['d_a']:.4f}" + r"^{2} \times "
+        + f"{r['R_x'][0]:.4f}" + r" \times 100}{4 \times 100} \approx "
+        + f"{r['rho'][0]:.3f}"
+    )
 
     rows2 = []
     for i in range(r["n_l"]):
         rows2.append([f"{r['L'][i]:.0f}", f"{r['rho'][i]:.4f}"])
     doc.add_table(["$L$ / mm", "$\\rho$"], rows2, col_widths=[3.0, 4.0])
 
-    doc.add_paragraph("")
-    doc.add_run("电阻率平均值：")
-    doc.add_inline_math(r"\rho = " + format_measure(r["rho_a"], r["rho_u"]) + r" \times 10^{-8}\,\Omega\cdot\mathrm{m}")
-    doc.add_paragraph("")
-    doc.add_run("不确定度传递（相对不确定度合成）：")
+    doc.add_paragraph("电阻率平均值：")
     doc.add_math(
-        r"\frac{u(\rho)}{\rho} = \sqrt{4\left(\frac{u(d)}{d_a}\right)^2 + \left(\frac{u_A(R_x)}{R_{x,a}}\right)^2}"
-        r" \approx " + format_percent(r["rho_u"] / r["rho_a"] * 100) + r"\%"
+        r"\bar{\rho} = \frac{1}{8}\sum_{i=1}^{8} \rho_i = \frac{"
+        + " + ".join(f"{v:.4f}" for v in r["rho"])
+        + r"}{8} \approx " + f"{r['rho_a']:.4f}"
+    )
+    doc.add_paragraph("不确定度传递（相对不确定度合成，只进不舍取 1 位有效数字）：")
+    doc.add_math(
+        r"\frac{u(\rho)}{\rho} = \sqrt{4\left(\frac{u(d)}{d_a}\right)^{2}"
+        r" + \left(\frac{u_A(R_x)}{R_{x,a}}\right)^{2}} = \sqrt{4\left(\frac{"
+        + format_number(r["d_u"], sig_figs=3) + r"}{" + f"{r['d_a']:.4f}"
+        + r"}\right)^{2} + \left(\frac{"
+        + format_number(r["R_x_ua"], sig_figs=3) + r"}{" + f"{r['R_x_a']:.4f}"
+        + r"}\right)^{2}} \approx "
+        + format_percent(r["rho_u"] / r["rho_a"] * 100) + r"\%"
     )
     doc.add_paragraph("")
     doc.add_run("电阻率最终结果：")

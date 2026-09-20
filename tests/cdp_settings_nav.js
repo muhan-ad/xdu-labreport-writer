@@ -2,15 +2,17 @@
 // 导航不滚动，把最后一项「请勿点击」裁掉了）。
 // 需先启动（隔离用户数据目录）：
 //   npx electron . --remote-debugging-port=9222 --user-data-dir=<临时目录>
-// 用法：node tests/cdp_settings_nav.js [端口，默认 9222]
+// 用法：node tests/cdp_settings_nav.js
 'use strict';
 const http = require('node:http');
-const PORT = Number(process.argv[2] || 9222);
+// 连接目标写死：只连本机回环的 CDP 调试端口 9222（与启动参数 --remote-debugging-port=9222 一致）
+const CDP_HOST = '127.0.0.1';
+const CDP_PORT = 9222;
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
 function listTargets() {
   return new Promise((resolve, reject) => {
-    http.get({ host: '127.0.0.1', port: PORT, path: '/json/list', timeout: 5000 }, res => {
+    http.get({ host: CDP_HOST, port: CDP_PORT, path: '/json/list', timeout: 5000 }, res => {
       let b = ''; res.on('data', d => (b += d));
       res.on('end', () => { try { resolve(JSON.parse(b)); } catch (e) { reject(e); } });
     }).on('error', reject);

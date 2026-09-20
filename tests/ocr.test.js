@@ -32,7 +32,7 @@ test('OCR UI and all experiment photo hooks are present', () => {
     .filter(item => item.isDirectory() && item.name !== 'common')
     .map(item => path.join(base, item.name, 'generate.py'))
     .filter(file => fs.existsSync(file));
-  assert.equal(scripts.length, 26);
+  assert.equal(scripts.length, 27);
   for (const file of scripts) assert.match(fs.readFileSync(file, 'utf8'), /doc\.add_data_photo\(/, path.basename(path.dirname(file)));
 });
 
@@ -84,8 +84,8 @@ test('识别弹窗样式：JS 用到的类在 ocr.css 里都有，且不再落�
   const used = new Set();
   for (const m of ocrUi.matchAll(/["'`][^"'`]*\b(recog-[a-z][a-z0-9-]*)/g)) used.add(m[1]);
   for (const m of ocrUi.matchAll(/\b(recog-[a-z][a-z0-9-]*)\b/g)) used.add(m[1]);
-  // 仅作 JS 钩子、无需专门样式的类：recog-pick 是每行勾选框的钩子，
-  // 视觉由 .recog-row input[type="checkbox"] 统一接管
+  // 仅作 JS 钩子、无需专门样式的类：recog-pick 是每字段勾选框的钩子，
+  // 视觉由 .review-pick input[type="checkbox"] 统一接管
   const JS_HOOK_ONLY = ['recog-pick'];
   const missing = [...used].filter(c => !JS_HOOK_ONLY.includes(c) && !new RegExp(`\\.${c}\\b`).test(css));
   assert.deepEqual(missing, [], 'ocr.css 缺少这些类的规则：' + missing.join(', '));
@@ -95,8 +95,10 @@ test('识别弹窗样式：JS 用到的类在 ocr.css 里都有，且不再落�
   assert.match(html, /class="recog-summary"[^>]*id="recogSummary"/, '摘要带 recog-summary');
   // 3) 不允许再引用不存在的 --primary（否则整窗回到蓝色 fallback）
   assert.ok(!/--primary/.test(css), 'ocr.css 不应再出现 --primary');
-  // 4) 关键状态类必须按 JS 实际使用命名
-  for (const cls of ['recog-row.state-warn', 'recog-row.state-fail', 'recog-row.edited', 'recog-badge.ok', 'recog-badge.warn', 'recog-badge.fail', 'recog-row-reason', 'recog-cell', 'recog-array-input']) {
+  // 4) 关键状态类必须按 JS 实际使用命名（核对页 = 识别结果页：数据格 + 三态左边框）
+  for (const cls of ['review-field[data-status="warn"]', 'review-field[data-status="fail"]', 'review-field.edited',
+    'review-field.unpicked', 'review-pick', 'recog-field-reason',
+    'recog-badge.ok', 'recog-badge.warn', 'recog-badge.fail']) {
     assert.ok(css.includes(cls), 'ocr.css 缺少 ' + cls);
   }
 });
@@ -112,7 +114,7 @@ test('OCR recognition is bound to a session and cancellable', () => {
   assert.match(preload, /ocrCancel:/, 'preload 暴露 ocrCancel');
   assert.match(mainSrc, /listen\('ocr-cancel'/, '主进程有 ocr-cancel 监听');
   assert.match(mainSrc, /idleTimeoutMs:\s*90000/, '识图请求使用放宽的空闲超时');
-  const startBody = ocrUi.slice(ocrUi.indexOf('async function startRecognition'), ocrUi.indexOf('function collectRecogValues'));
+  const startBody = ocrUi.slice(ocrUi.indexOf('async function startRecognition'), ocrUi.indexOf('function collectReviewValues'));
   assert.ok(!/saveTableImage/.test(startBody), '识别开始阶段不再提前保存原图');
   assert.match(ocrUi, /await window\.labAPI\.saveTableImage\(currentExp\.path, recogState\.originalDataUrl\)/, '确认后才保存原图');
 });

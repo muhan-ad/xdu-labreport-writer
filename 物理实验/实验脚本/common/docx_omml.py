@@ -244,21 +244,38 @@ def _fix_rad_levels(text: str):
         inner = text[head_end:end]
         inner, inner_fixed = _fix_rad_levels(inner)      # 先修内层根号
         fixed += inner_fixed
-        # 只看本层的直接子节点：跳过 radPr 后应当是 deg（缺失则补）
-        probe = inner
-        if probe.startswith('<m:radPr>'):
-            pe = probe.find('</m:radPr>')
+        # 本层的属性块只可能紧跟在 <m:rad> 之后（转换器对根号不产 radPr，一旦出现在
+        # 开头就必定是本层的）。**不能**用 inner.find('</m:radPr>') 去找——嵌套根号时
+        # 那会命中内层的 radPr，把本层的 deg 插到内层身上，产出 <m:deg/><m:deg/> 这种
+        # 非法结构：Word 能显示，但"导出为 PDF"会报"无法准备用于导出的文档"。
+        rad_pr, rest = '', inner
+        if inner.startswith('<m:radPr>'):
+            pe = inner.find('</m:radPr>')
             if pe >= 0:
-                probe = probe[pe + len('</m:radPr>'):]
-        if not (probe.startswith('<m:deg>') or probe.startswith('<m:deg/>')
-                or probe.startswith('<m:deg ')):
-            pr_end = inner.find('</m:radPr>')
-            if pr_end >= 0:
-                cut = pr_end + len('</m:radPr>')
-                inner = inner[:cut] + '<m:deg/>' + inner[cut:]
-            else:
-                inner = '<m:deg/>' + inner
+                rad_pr = inner[:pe + len('</m:radPr>')]
+                rest = inner[pe + len('</m:radPr>'):]
+        # 本层的 deg 同样只看 rest 开头（内层的 deg 在 rest 深处，不算本层的）
+        has_deg = (rest.startswith('<m:deg>') or rest.startswith('<m:deg/>')
+                   or rest.startswith('<m:deg '))
+        deg_empty = True
+        if has_deg:                                  # 已有 deg：判断它是否为空
+            de = rest.find('<m:deg/>')
+            if de < 0:
+                de = rest.find('<m:deg>')
+                if de >= 0:
+                    dend = rest.find('</m:deg>', de)
+                    deg_empty = (dend == de + len('<m:deg>'))
+        # 空度数槽必须配 degHide，否则 Word 把根号左上角的空槽渲染成一个**空方框**
+        # （看起来像"多出来的上标"）。元素顺序按 CT_RadPr：radPr(degHide? ctrlPr?) →
+        # deg? → e?。注意本层必须恰好一个 deg，多一个就导出失败。
+        if (not has_deg) or deg_empty:
+            if 'degHide' not in rad_pr:
+                body = rad_pr[len('<m:radPr>'):-len('</m:radPr>')] if rad_pr else ''
+                rad_pr = '<m:radPr><m:degHide m:val="1"/>' + body + '</m:radPr>'
+            if not has_deg:
+                rest = '<m:deg/>' + rest
             fixed += 1
+        inner = rad_pr + rest
         out.append(text[pos:head_end])
         out.append(inner)
         out.append('</m:rad>')
@@ -267,12 +284,14 @@ def _fix_rad_levels(text: str):
 
 
 def _ensure_rad_degree(omml: str):
-    r"""给缺少 <m:deg/> 的根号补上空度数占位，返回 (修复后的串, 修复处数)。
+    r"""给缺少 <m:deg/> 的根号补上空度数占位（含 degHide），返回 (修复后的串, 修复处数)。
 
     Word 生成根号时总会写出 <m:deg/>（即使度数被隐藏），mathml2omml 则直接省略。
     省略后，应用内预览所用的 docx-preview 会在取度数子节点时抛
     "Cannot read properties of undefined"，导致**整个预览回退为纯文本**；
     其它渲染器（Word 本体）则不受影响，属于典型的"Word 能开、预览崩"。
+    补 deg 时必须同时写 <m:radPr><m:degHide m:val="1"/></m:radPr>，否则 Word 会把
+    空度数槽渲染成一个空方框（看起来像根号左上角多出的上标）。
     按 OMML 元素顺序（radPr? → deg? → e?）插入，与 Word 输出保持一致。
     """
     return _fix_rad_levels(omml)
@@ -433,12 +452,11 @@ def latex_to_omml(latex: str):
     return out
 
 
-def latex_to_omathpara(latex: str, jc: str = 'left'):
+def latex_to_omathpara(latex: str, jc: str = ''):
     """LaTeX → 独立公式段落 OMML（<m:oMathPara>）；失败返回 None。
 
     jc 为段落级公式的对齐方式：'' 表示不写 m:jc（Word 默认居中），
-    'left' 会写出 <m:jc m:val="left"/>——旧版 Word COM 产物里的独立公式是
-    「首行缩进 + 左对齐」，这里保持一致以免版式回归。
+    与「公式一律居中」的版式规则一致；写 'left' 会强制左对齐。
     """
     one = latex_to_omml(latex)
     if one is None:

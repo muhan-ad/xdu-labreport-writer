@@ -79,10 +79,10 @@
 
   // ── 效果池 ──────────────────────────────────────────────
   const POOL = [
-    // 千分之一彩蛋：不进随机池（权重 0 且 rare 标记），由 runDangerEffect 单独掷骰子触发。
+    // 稀有彩蛋：不进随机池（权重 0 且 rare 标记），由 runDangerEffect 单独掷骰子触发。
     // 纯动画：不联网、不下载、不写任何文件 —— 末尾会自己说明"什么都没下载"。
     {
-      id: 'genshin', name: '原神启动（万分之一）', weight: 0, rare: true, maxMs: 26000,
+      id: 'genshin', name: '原神启动（百分之一）', weight: 0, rare: true, maxMs: 26000,
       async run(h) {
         const el = h.layer({
           pointer: false,
@@ -197,7 +197,7 @@
         // 用户要求：这句放到最后才出现（原来是固定显示在开头）
         const rare = document.createElement('div');
         rare.style.cssText = 'color:#5f6a80;font-size:11.5px;margin-top:6px';
-        rare.textContent = '（万分之一才会出现的彩蛋 · 祝你好运）';
+        rare.textContent = '（百分之一才会出现的彩蛋 · 祝你好运）';
         log.appendChild(rare);
         await h.sleep(3600);
       },
@@ -908,8 +908,8 @@
     return cand[0].id;
   }
 
-  // 千分之一彩蛋：命中就返回 'genshin'，否则 null
-  const RARE_ODDS = 0.0001;   // 万分之一
+  // 稀有彩蛋：命中就返回 'genshin'，否则 null
+  const RARE_ODDS = 0.01;     // 百分之一（用户要求；原为万分之一）
   function rollRare() { return Math.random() < RARE_ODDS ? 'genshin' : null; }
 
   function remember(id) { try { localStorage.setItem('dangerLastEffect', id); } catch (_) {} }
@@ -919,7 +919,7 @@
     names: () => POOL.map(e => e.id + ': ' + e.name),
     run: async id => { remember(id); return run(id); },   // 供 CDP 验收逐个调用
     pick,
-    rollRare,                 // 千分之一：命中原神
+    rollRare,                 // 百分之一：命中原神
     RARE_ODDS,
     remember,
     isRunning: () => !!running,

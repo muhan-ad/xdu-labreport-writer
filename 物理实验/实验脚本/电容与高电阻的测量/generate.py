@@ -87,10 +87,18 @@ def _compute(data: dict) -> dict:
     q_values = [float(v) for v in data["q_values"]]
 
     # 表 1：逐点电容 C_x = (Q_x / Q_N) * C_N，再取平均
+    bad_qn = [i + 1 for i, v in enumerate(q_n) if v <= 0]
+    if bad_qn:
+        print(f"[错误] 表1 电量 Q_N 第 {bad_qn} 组非正，C_x = Q_x/Q_N·C_N 无法计算，请检查 q_n。")
+        return None
     c_x = [qx / qn * c_n for qx, qn in zip(q_x, q_n)]
     c_x_bar = mean(c_x)
 
     # 表 2：lnQ（表中保留 3 位小数，斜率用表中值计算，与范例一致）
+    bad_q = [i + 1 for i, v in enumerate(q_values) if v <= 0]
+    if bad_q:
+        print(f"[错误] 表2 放电电量 Q 第 {bad_q} 组非正，lnQ 无定义，请检查 q_values。")
+        return None
     lnq = [round(math.log(v), 3) for v in q_values]
 
     # 两点法斜率（首末两点，范例做法）
@@ -139,6 +147,8 @@ def _generate_docx(data: dict, output_path: str):
 
     # ---------- 2. 计算 ----------
     r = _compute(data)
+    if r is None:
+        return
     c_n = r["c_n"]
     r_0 = r["r_0"]
     q_n = r["q_n"]
@@ -344,7 +354,10 @@ def main():
         return
 
     _generate_docx(data, DOCX_FILE)
-    print(f"报告已生成: {DOCX_FILE}")
+    if os.path.exists(DOCX_FILE):
+        print(f"报告已生成: {DOCX_FILE}")
+    else:
+        print("[错误] 生成中止，未输出报告，请按上方提示检查数据。")
 
 
 if __name__ == "__main__":

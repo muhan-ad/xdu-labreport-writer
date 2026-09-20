@@ -1,0 +1,19 @@
+{
+  "实验": "薄透镜焦距的测量（凹透镜）",
+  "groups": [
+    {
+      "name": "自准法测凹透镜焦距",
+      "fields": [
+        {"key": "x6", "label": "凹透镜位置 X₆（距凸透镜，8 次）", "type": "array", "length": 8, "unit": "cm", "required": true},
+        {"key": "x7", "label": "像屏位置 X₇（距凸透镜，8 次）", "type": "array", "length": 8, "unit": "cm", "required": true}
+      ]
+    },
+    {
+      "name": "物像法测凹透镜焦距",
+      "fields": [
+        {"key": "u1", "label": "凸透镜物距 u₁（距物屏）", "type": "number", "unit": "cm", "required": true},
+        {"key": "concave", "label": "物像法数据（3 次 × [X₇, X₆, X₈]）", "type": "matrix", "rows": 3, "cols": 3, "rowLabels": ["第1次", "第2次", "第3次"], "colLabels": ["像屏1 X₇/cm", "凹透镜 X₆/cm", "像屏2 X₈/cm"], "unit": "cm", "required": true}
+      ]
+    }
+  ]
+}

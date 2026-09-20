@@ -2,19 +2,22 @@
 //
 // 需先启动（隔离用户目录，避免动到本机数据）：
 //   npx electron . --remote-debugging-port=9222 --user-data-dir=<临时目录>
-// 用法：node tests/cdp_danger_effects.js [端口，默认 9222] [只跑某个 id]
+// 用法：node tests/cdp_danger_effects.js [只跑某个 id]
 //
 // 检查四类事：
 //   1. 确认流程——从「⚠ 请勿点击 ⚠」大按钮开始，必须点满 3 次确认才出效果；
-//   2. 千分之一闸门——原神不进随机池，掷骰命中率 ≈ 0.01%；
+//   2. 稀有闸门——原神不进随机池，掷骰命中率 ≈ 1%；
 //   3. 每个效果——跑得完、收得干净（覆盖层/filter/transform/标题栏都复原）、控制台无报错、
 //      跑完界面仍可用；顺带记录效果期间的帧间隔；
 //   4. 播放过程中的文案——按用户逐条意见删掉的提示不得出现（FORBIDDEN），
 //      要求保留/新增的文案必须出现（REQUIRED），并记录它出现的时间点。
 'use strict';
 const http = require('node:http');
-const PORT = Number(process.argv[2] || 9222);
-const ONLY = process.argv[3] || '';
+// 连接目标写死：只连本机回环的 CDP 调试端口 9222（与启动参数 --remote-debugging-port=9222 一致），
+// 不接受任意主机/端口 —— 避免把外部地址带进网络调用
+const CDP_HOST = '127.0.0.1';
+const CDP_PORT = 9222;
+const ONLY = String(process.argv[2] || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40);
 const wait = ms => new Promise(r => setTimeout(r, ms));
 
 // 用户明确要求删掉的文案：播放过程中一旦出现即失败
@@ -33,12 +36,12 @@ const FORBIDDEN = {
 // 必须出现的文案：[文案, 是否要求出现在后半程]
 const REQUIRED = {
   'self-destruct': [['开玩笑的', false]],
-  genshin: [['万分之一', true]],
+  genshin: [['百分之一', true]],
 };
 
 function listTargets() {
   return new Promise((resolve, reject) => {
-    http.get({ host: '127.0.0.1', port: PORT, path: '/json/list', timeout: 5000 }, res => {
+    http.get({ host: CDP_HOST, port: CDP_PORT, path: '/json/list', timeout: 5000 }, res => {
       let b = ''; res.on('data', d => (b += d));
       res.on('end', () => { try { resolve(JSON.parse(b)); } catch (e) { reject(e); } });
     }).on('error', reject);
@@ -89,7 +92,7 @@ function send(ws, method, params = {}) {
   const list = ONLY ? ids.filter(i => i === ONLY) : ids;
   const bad = [];
 
-  // ── 0. 千分之一彩蛋的闸门 ──
+  // ── 0. 稀有彩蛋的闸门 ──
   const rare = await ev(`(() => {
     const odds = window.dangerEffects.RARE_ODDS;
     let pickedRare = 0;
@@ -99,11 +102,11 @@ function send(ws, method, params = {}) {
     for (let i = 0; i < N; i++) if (window.dangerEffects.rollRare() === 'genshin') hits++;
     return { odds, pickedRare, hits, N, draws: 3000 };
   })()`);
-  const rareOk = rare.odds === 0.0001 && rare.pickedRare === 0 && rare.hits > 0;
-  console.log('千分之一彩蛋：RARE_ODDS=%s；随机池抽 %d 次命中 %d 次（应 0）；掷骰 %d 次命中 %d 次（%s%%）→ %s\n',
+  const rareOk = rare.odds === 0.01 && rare.pickedRare === 0 && rare.hits > 0;
+  console.log('稀有彩蛋：RARE_ODDS=%s；随机池抽 %d 次命中 %d 次（应 0）；掷骰 %d 次命中 %d 次（%s%%）→ %s\n',
     rare.odds, rare.draws, rare.pickedRare, rare.N, rare.hits, (rare.hits / rare.N * 100).toFixed(3),
     rareOk ? 'OK' : 'FAIL');
-  if (!rareOk) bad.push({ id: '(千分之一)', problems: ['闸门或概率不对：' + JSON.stringify(rare)] });
+  if (!rareOk) bad.push({ id: '(稀有闸门)', problems: ['闸门或概率不对：' + JSON.stringify(rare)] });
 
   // ── 1. 确认流程：三次「继续」才出效果 ──
   await idle();
@@ -266,7 +269,7 @@ function send(ws, method, params = {}) {
   console.log('\n跑完全部效果后界面可用：%s', usable ? '是' : '否');
   if (!usable) bad.push({ id: '(界面)', problems: ['跑完效果后设置/彩蛋页不可用'] });
 
-  console.log(bad.length ? '\nFAIL: ' + JSON.stringify(bad, null, 1) : '\nPASS: 确认流程 + 千分之一闸门 + 全部效果（含文案断言）通过');
+  console.log(bad.length ? '\nFAIL: ' + JSON.stringify(bad, null, 1) : '\nPASS: 确认流程 + 稀有闸门 + 全部效果（含文案断言）通过');
   ws.close();
   process.exit(bad.length ? 1 : 0);
 })().catch(e => { console.error('ERROR:', e.message); process.exit(2); });

@@ -29,7 +29,9 @@ except ImportError:
 
 def main():
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    exp = sys.argv[1] if len(sys.argv) > 1 else "薄透镜焦距的测量"
+    # 默认用「薄透镜焦距的测量（凸透镜）」——该实验原名「薄透镜焦距的测量」，
+    # 改名后旧名已不存在，这里跟着更新（旧名会让测试直接 FAIL）。
+    exp = sys.argv[1] if len(sys.argv) > 1 else "薄透镜焦距的测量（凸透镜）"
     start_ts = time.time()
     exp_dir = os.path.join(SCRIPTS, exp)
     if not os.path.isdir(exp_dir):

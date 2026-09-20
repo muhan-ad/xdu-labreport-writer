@@ -105,12 +105,18 @@ def _compute(angles, lambda_green):
     r["phi_B"] = [_half_diff(t[1], t[3]) for t in angles]
     r["phi"] = [(a + b) / 2 for a, b in zip(r["phi_A"], r["phi_B"])]
 
-    # ---- 2. 绿光衍射角统计（3 次） ----
+    # ---- 2. 绿光衍射角统计（同一被测量 3 次等精度重复测量） ----
+    # 先作 3σ 坏值检验（迭代剔除），再用保留值重算平均角、样本标准差与 A/B 类不确定度。
     green_phi = r["phi"][2:5]
-    r["phi_green_mean"] = mean(green_phi)
-    r["dev_min"] = [(p - r["phi_green_mean"]) * 60 for p in green_phi]  # 各次偏差/′
-    r["sigma_min"] = std_dev(green_phi) * 60                            # σφ/′
-    r["delta_A_min"] = T_FACTOR * r["sigma_min"] / math.sqrt(3)         # t 分布修正
+    _ot = outlier_test(green_phi)
+    r["ot"] = _ot
+    green_kept = _ot["kept"]
+    r["n_kept"] = _ot["n_kept"]
+    r["phi_green_mean"] = mean(green_kept)
+    r["dev_min"] = [(p - r["phi_green_mean"]) * 60 for p in green_kept]  # 各次偏差/′
+    r["sigma_min"] = std_dev(green_kept) * 60                            # σφ/′
+    r["delta_A_min"] = (T_FACTOR * r["sigma_min"]
+                        / math.sqrt(r["n_kept"]))                        # t 分布修正
     r["delta_B_min"] = DELTA_INSTR_MIN / math.sqrt(3)
     r["dphi_green_min"] = combine(r["delta_A_min"], r["delta_B_min"])   # 合成 Δφ/′
 
@@ -118,7 +124,9 @@ def _compute(angles, lambda_green):
     phi_g = math.radians(r["phi_green_mean"])
     dphi_g = math.radians(r["dphi_green_min"] / 60)
     r["d_nm"] = K_ORDER * lambda_green / math.sin(phi_g)
-    r["delta_d_nm"] = r["d_nm"] * abs(math.cos(phi_g) / math.sin(phi_g)) * dphi_g
+    r["cot_phi"] = abs(math.cos(phi_g) / math.sin(phi_g))   # |cot φK|，供代入用
+    r["dphi_rad"] = dphi_g                                  # ΔφK 的弧度值，供代入用
+    r["delta_d_nm"] = r["d_nm"] * r["cot_phi"] * dphi_g
     r["rel_d"] = r["delta_d_nm"] / r["d_nm"]
 
     # ---- 4. 各谱线波长及不确定度 ----
@@ -245,20 +253,28 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     doc.add_paragraph("绿光三次测量衍射角的样本标准差为")
     dev_terms = "+".join(f"({v:+.1f}′)^{{2}}" for v in r["dev_min"])
     doc.add_math(f"\\sigma_{{\\varphi}} = \\sqrt{{\\frac{{\\sum(\\delta\\varphi_{{i}})^{{2}}}}"
-                 f"{{n-1}}}} = \\sqrt{{\\frac{{{dev_terms}}}{{2}}}}"
+                 f"{{n-1}}}} = \\sqrt{{\\frac{{{dev_terms}}}"
+                 f"{{{len(r['dev_min']) - 1}}}}}"
                  f" \\approx {r['sigma_min']:.1f}′")
+    # 3σ 坏值检验（绿线为同一被测量的 3 次等精度重复测量）
+    doc.add_paragraph(outlier_note(r["ot"], unit="′", digits=1, scale=60))
     doc.add_paragraph("")
     doc.add_run("由于只有三次测量，采用 t 分布进行修正（")
     doc.add_inline_math(r"t_{0.95,2} \approx 4.30")
-    doc.add_run("），则")
+    doc.add_run("）。")
+    doc.add_paragraph("A类不确定度：")
     doc.add_math(f"\\Delta_{{A}} = \\frac{{t \\cdot \\sigma_{{\\varphi}}}}{{\\sqrt{{n}}}}"
-                 f" = \\frac{{4.30 \\times {r['sigma_min']:.1f}′}}{{\\sqrt{{3}}}}"
+                 f" = \\frac{{4.30 \\times {r['sigma_min']:.1f}′}}"
+                 f"{{\\sqrt{{{r['n_kept']}}}}}"
                  f" \\approx {r['delta_A_min']:.1f}′")
-    doc.add_paragraph("考虑仪器的不确定度")
-    doc.add_math(f"\\Delta_{{B}} = \\frac{{1′}}{{\\sqrt{{3}}}}"
+    doc.add_paragraph("B类不确定度：")
+    doc.add_math(f"\\Delta_{{B}} = \\frac{{\\Delta_{{\\text{{仪}}}}}}{{\\sqrt{{3}}}}"
+                 f" = \\frac{{1′}}{{\\sqrt{{3}}}}"
                  f" \\approx {r['delta_B_min']:.2f}′")
-    doc.add_paragraph("则合成不确定度为")
+    doc.add_paragraph("合成不确定度：")
     doc.add_math(f"\\Delta\\varphi_{{K}} = \\sqrt{{\\Delta_{{A}}^{{2}} + \\Delta_{{B}}^{{2}}}}"
+                 f" = \\sqrt{{({r['delta_A_min']:.1f}′)^{{2}}"
+                 f" + ({r['delta_B_min']:.2f}′)^{{2}}}}"
                  f" \\approx {r['dphi_green_min']:.1f}′")
     doc.add_paragraph("下面计算 d 的不确定度。由光栅方程得")
     doc.add_math(r"d = \frac{K\lambda}{\sin\varphi_{K}}")
@@ -274,11 +290,15 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     doc.add_paragraph("绝对值为")
     doc.add_math(r"\left|\frac{\partial d}{\partial \varphi_{K}}\right|"
                  r" = K\lambda \cdot \frac{\left|\cos\varphi_{K}\right|}{\sin^{2}{\varphi_{K}}}")
-    doc.add_paragraph("所以 d 的不确定度表示为")
+    doc.add_paragraph("所以 d 的不确定度表示为（ΔφK 以弧度计）")
     doc.add_math(f"\\Delta d = d \\cdot \\left|\\cot\\varphi_{{K}}\\right| \\cdot \\Delta\\varphi_{{K}}"
-                 f" \\approx {r['delta_d_nm']:.0f}\\ \\mathrm{{nm}}")
-    doc.add_paragraph("则相对不确定度为")
-    doc.add_math(f"\\frac{{\\Delta d}}{{d}} \\approx {format_percent(r['rel_d'] * 100)}%")
+                 f" = {r['d_nm']:.1f} \\times {r['cot_phi']:.2f} \\times "
+                 f"{format_scientific(r['dphi_rad'], 3)}"
+                 f" \\approx {r['delta_d_nm']:.1f}\\ \\mathrm{{nm}}")
+    doc.add_paragraph("则相对不确定度为（只进不舍取 1 位有效数字）")
+    doc.add_math(f"\\frac{{\\Delta d}}{{d}} = "
+                 f"\\frac{{{r['delta_d_nm']:.1f}}}{{{r['d_nm']:.1f}}}"
+                 f" \\approx {format_percent(r['rel_d'] * 100)}\\%")
     doc.add_paragraph("光栅常数的测量结果为")
     doc.add_math(f"d = ({d_um_str} \\pm {ud_um_str})\\ \\mathrm{{μm}}")
 

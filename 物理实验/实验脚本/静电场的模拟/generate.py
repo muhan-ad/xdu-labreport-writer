@@ -38,6 +38,10 @@ def _compute(data: dict) -> dict:
     r = [float(v) for v in data["r"] if v is not None]
 
     n = len(r)
+    bad_r = [i + 1 for i, v in enumerate(r) if v <= 0]
+    if bad_r:
+        print(f"[错误] 等势线半径 r 第 {bad_r} 组非正，ln(r) 无定义，请检查数据。")
+        return None
     u_a = 10.0  # 外加电压 U_a = 10 V（与计算器一致：U_r_U_a = U_r / 10）
     u_r_ua = [u / u_a for u in u_r]  # U_r / U_a
     ln_r = [math.log(ri) for ri in r]  # ln(r)
@@ -45,13 +49,20 @@ def _compute(data: dict) -> dict:
     # 线性拟合：ln(r) = intercept + slope * (U_r / U_a)
     fit = linear_regression(u_r_ua, ln_r)
 
+    # A 类不确定度的计算过程量：残差标准差 s 与自变量离差平方和 S_xx
+    # （口径与 linear_regression 内部完全一致，故由它们还原的 σ_b、σ_a 即拟合输出值）
+    x_bar = mean(u_r_ua)
+    S_xx = sum((x - x_bar) ** 2 for x in u_r_ua)
+    residuals = [ln_r[i] - (fit.intercept + fit.slope * u_r_ua[i]) for i in range(n)]
+    s_res = math.sqrt(sum(rv ** 2 for rv in residuals) / (n - 2))
+
     return {
         "u_r": u_r, "r": r, "u_a": u_a,
         "u_r_ua": u_r_ua, "ln_r": ln_r,
         "slope": fit.slope, "slope_u": fit.slope_uncertainty,
         "intercept": fit.intercept, "intercept_u": fit.intercept_uncertainty,
         "r_squared": fit.r_squared, "r_corr": fit.r,
-        "n": n,
+        "n": n, "x_bar": x_bar, "S_xx": S_xx, "s_res": s_res,
     }
 
 
@@ -90,6 +101,8 @@ def _generate_docx(data: dict, output_path: str):
         return
 
     r = _compute(data)
+    if r is None:
+        return
     _print_results(r)
 
     doc = DocxReportWriter(output_path)
@@ -154,6 +167,26 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_math(
         r"b = " + format_number(r["slope"], r["slope_u"])
         + r",\quad a = " + format_number(r["intercept"], r["intercept_u"])
+    )
+    doc.add_paragraph("A类不确定度：")
+    doc.add_math(
+        r"\Delta b_A = \sigma_b = \frac{s}{\sqrt{\sum_{i=1}^{n}"
+        r"(x_i - \bar{x})^{2}}} = \frac{"
+        + format_number(r["s_res"], sig_figs=4) + r"}{\sqrt{"
+        + format_number(r["S_xx"]) + r"}}"
+        + r" \approx " + format_number(r["slope_u"], sig_figs=3)
+    )
+    doc.add_math(
+        r"\Delta a_A = \sigma_a = s\sqrt{\frac{1}{n} + "
+        r"\frac{\bar{x}^{2}}{\sum_{i=1}^{n}(x_i - \bar{x})^{2}}} = "
+        + format_number(r["s_res"], sig_figs=4)
+        + r"\sqrt{\frac{1}{" + str(r["n"]) + r"} + \frac{"
+        + f"{r['x_bar']:.3f}" + r"^{2}}{" + format_number(r["S_xx"]) + r"}}"
+        + r" \approx " + format_number(r["intercept_u"], sig_figs=3)
+    )
+    doc.add_paragraph(
+        "其中 x = U_r/U_a，s 为最小二乘拟合的残差标准差，σ_b、σ_a 由拟合残差给出"
+        "（A 类评定）；本实验数据中没有仪器允差来源，故不作 B 类评定。"
     )
     doc.add_paragraph("")
     doc.add_run("相关系数 ")
@@ -331,7 +364,10 @@ def main():
         return
 
     _generate_docx(data, DOCX_FILE)
-    print(f"报告已生成: {DOCX_FILE}")
+    if os.path.exists(DOCX_FILE):
+        print(f"报告已生成: {DOCX_FILE}")
+    else:
+        print("[错误] 生成中止，未输出报告，请按上方提示检查数据。")
 
 
 if __name__ == "__main__":

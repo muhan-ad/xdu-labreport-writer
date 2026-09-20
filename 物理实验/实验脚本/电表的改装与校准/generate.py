@@ -33,7 +33,10 @@ T_FACTOR_RG = 1.32             # t 因子 (n=3, df=2, P=0.683)
 def _compute(data: dict) -> dict:
     """从 data.json 数据计算全部结果（与计算器 mathjs 逻辑一致）。"""
     # 1. 表头内阻（过滤未填）
-    rg = [float(v) for v in data.get("rg", []) if v is not None]
+    rg_raw = [float(v) for v in data.get("rg", []) if v is not None]
+    # 3σ 坏值检验（同一被测量等精度重复测量 n=3）；样本无坏值时 kept 即原始数据
+    ot_rg = outlier_test(rg_raw)
+    rg = ot_rg["kept"]
     rg_mean = mean(rg)
 
     # 2. 电流校正（过滤未填）
@@ -52,12 +55,14 @@ def _compute(data: dict) -> dict:
 
     # 5. 不确定度（统计口径，公式自动算）
     n = len(rg)
-    u_A_rg = T_FACTOR_RG * std_dev(rg) / math.sqrt(n)   # A 类（t 因子修正）
+    s_rg = std_dev(rg)                                  # 实验标准差 s
+    u_A_rg = T_FACTOR_RG * s_rg / math.sqrt(n)          # A 类（t 因子修正）
     u_r_s = r_s_calc * (u_A_rg / rg_mean)               # R_s 相对传递
     u_r_h = u_A_rg                                      # R_h = const - R_g → 不确定度同 R_g
 
     return {
         "rg": rg, "rg_mean": rg_mean, "u_A_rg": u_A_rg,
+        "ot_rg": ot_rg, "s_rg": s_rg, "n_rg": n, "t_rg": T_FACTOR_RG,
         "r_s_calc": r_s_calc, "u_r_s": u_r_s,
         "r_h_calc": r_h_calc, "u_r_h": u_r_h,
         "i_x": i_x, "i_s": i_s, "i_corr": i_corr,
@@ -137,12 +142,24 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("")
     doc.add_paragraph("内阻平均值：")
     doc.add_math(
-        r"\bar{R}_g = \frac{1}{3}\sum R_{gi} = "
-        + format_number(r["rg_mean"]) + r"\,\mathrm{\Omega}"
+        r"\bar{R}_g = \frac{1}{" + str(r["n_rg"]) + r"}\sum R_{gi} = "
+        r"\frac{" + " + ".join(f"{v:.1f}" for v in r["rg"]) + r"}{"
+        + str(r["n_rg"]) + r"}"
+        + r" \approx " + format_number(r["rg_mean"]) + r"\,\mathrm{\Omega}"
     )
     doc.add_paragraph("")
-    doc.add_run("A 类不确定度（t 因子修正，n=3, P=0.683）：")
-    doc.add_inline_math(f"u_A = {format_number(r['u_A_rg'])} Ω")
+    doc.add_paragraph(outlier_note(r["ot_rg"], unit=" Ω", digits=3))
+    doc.add_paragraph("A类不确定度：")
+    doc.add_math(
+        r"\Delta R_{gA} = t \cdot \frac{s}{\sqrt{n}} = "
+        r"\frac{" + f"{r['t_rg']}" + r" \times "
+        + format_number(r["s_rg"], sig_figs=4)
+        + r"}{\sqrt{" + str(r["n_rg"]) + r"}}"
+        + r" \approx " + format_number(r["u_A_rg"]) + r"\,\mathrm{\Omega}"
+    )
+    doc.add_paragraph(
+        f"其中 s 为 {r['n_rg']} 次测量的实验标准差，"
+        f"t = {r['t_rg']} 为 P = 0.683 时的 t 因子。")
 
     # 2. 电流表改装
     doc.add_heading("2. 电流表改装（量程扩大 10 倍）", level=2)
@@ -151,8 +168,17 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_inline_math(r"R_s = \bar{R}_g / (n-1)")
     doc.add_run(" 得（n=10）：")
     doc.add_math(
-        r"R_s = \frac{\bar{R}_g}{9} = "
-        + format_number(r["r_s_calc"]) + r"\,\mathrm{\Omega}"
+        r"R_s = \frac{\bar{R}_g}{9} = \frac{"
+        + format_number(r["rg_mean"]) + r"}{9}"
+        + r" \approx " + format_number(r["r_s_calc"]) + r"\,\mathrm{\Omega}"
+    )
+    doc.add_paragraph("A类不确定度：")
+    doc.add_math(
+        r"\Delta R_s = R_s \cdot \frac{\Delta R_{gA}}{\bar{R}_g} = "
+        + format_number(r["r_s_calc"]) + r" \times \frac{"
+        + format_number(r["u_A_rg"], sig_figs=4) + r"}{"
+        + format_number(r["rg_mean"]) + r"}"
+        + r" \approx " + format_number(r["u_r_s"], sig_figs=3) + r"\,\mathrm{\Omega}"
     )
 
     doc.add_paragraph("电流表校正数据（标准表 I_s 与改装表 I_x 对照）：")
@@ -167,8 +193,15 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("")
     doc.add_run("改装为 10 V 量程，需串联分压电阻使总内阻为 10 kΩ：")
     doc.add_math(
-        r"R_h = 10000 - \bar{R}_g = "
-        + format_number(r["r_h_calc"]) + r"\,\mathrm{\Omega}"
+        r"R_h = 10000 - \bar{R}_g = 10000 - "
+        + format_number(r["rg_mean"])
+        + r" \approx " + format_number(r["r_h_calc"]) + r"\,\mathrm{\Omega}"
+    )
+    doc.add_paragraph("A类不确定度：")
+    doc.add_math(
+        r"\Delta R_h = \left|\frac{\partial R_h}{\partial \bar{R}_g}\right|"
+        r" \Delta R_{gA} = 1 \times " + format_number(r["u_A_rg"])
+        + r" = " + format_number(r["u_r_h"]) + r"\,\mathrm{\Omega}"
     )
 
     doc.add_paragraph("电压表校正数据（标准表 U_s 与改装表 U_x 对照）：")

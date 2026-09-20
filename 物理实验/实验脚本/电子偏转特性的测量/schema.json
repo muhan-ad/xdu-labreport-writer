@@ -106,19 +106,17 @@
      "key": "D_m",
      "label": "屏上偏转量 D（给定）",
      "type": "array",
-     "length": 9,
+     "length": 7,
      "unit": "mm",
      "required": true,
      "default": [
-      -16,
-      -12,
-      -8,
-      -4,
+      -9,
+      -6,
+      -3,
       0,
-      4,
-      8,
-      12,
-      16
+      3,
+      6,
+      9
      ]
     },
     {
@@ -126,7 +124,7 @@
      "label": "磁偏转电流 Im（1000/900/800V）",
      "type": "matrix",
      "rows": 3,
-     "cols": 9,
+     "cols": 7,
      "unit": "mA",
      "required": true,
      "rowLabels": [
@@ -135,15 +133,13 @@
       "U₂=800V"
      ],
      "colLabels": [
-      "D=-16mm",
-      "D=-12mm",
-      "D=-8mm",
-      "D=-4mm",
+      "D=-9mm",
+      "D=-6mm",
+      "D=-3mm",
       "D=0mm",
-      "D=4mm",
-      "D=8mm",
-      "D=12mm",
-      "D=16mm"
+      "D=3mm",
+      "D=6mm",
+      "D=9mm"
      ]
     }
    ]

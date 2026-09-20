@@ -49,23 +49,29 @@ def _compute(data: dict) -> dict:
     l1_vals = [row[0] for row in measurements]
     l2_vals = [row[1] for row in measurements]
     N = float(data["N"])
+    if N <= 0:
+        print(f"[错误] 冒出（缩进）的条纹数 N = {N:g} 必须为正数，请检查输入。")
+        return None
 
-    # d = |l1 - l2|，3σ 坏值检验
+    # d = |l1 - l2|，3σ 坏值检验（迭代剔除；判据 σ = s × t_0.683，剔除后重算）
     d_vals = [abs(a - b) for a, b in zip(l1_vals, l2_vals)]
     n_all = len(d_vals)
+    ot = outlier_test(d_vals)
+    d_kept = ot["kept"]
+    n = ot["n_kept"]
+    bad = ot["bad"]
     d_bar_all = mean(d_vals)
     sigma_all = std_dev(d_vals, ddof=0)
     low = d_bar_all - 3 * sigma_all
     high = d_bar_all + 3 * sigma_all
-    bad = [(i + 1, d) for i, d in enumerate(d_vals) if not (low <= d <= high)]
-    d_kept = [d for i, d in enumerate(d_vals) if (i + 1, d) not in bad]
-    n = len(d_kept)
-    d_bar = mean(d_kept)
+    d_bar = ot["mean"] if n else 0.0
 
-    # d 的不确定度
-    s_val = std_dev(d_kept)
-    t_factor = 1.0 if n > 6 else T_TABLE[n]
-    u_A = t_factor * s_val / math.sqrt(n)
+    # d 的不确定度（一律用剔除坏值后的保留数据评定）
+    s_val = ot["std"] if n > 1 else 0.0
+    sum_sq_d = sum((x - d_bar) ** 2 for x in d_kept)
+    t_a = 1.0 if n > 6 else T_TABLE.get(n, 1.0)      # A 类评定用的 t（n > 6 取 1）
+    t_crit = t_factor(n)                             # 3σ 坏值判据用的 t_0.683
+    u_A = t_a * s_val / math.sqrt(n) if n > 1 else 0.0
     u_B = type_b(DELTA_INST_MM, "uniform")
     u_d = combine(u_A, u_B)
 
@@ -81,8 +87,9 @@ def _compute(data: dict) -> dict:
         "measurements": measurements, "l1_vals": l1_vals, "l2_vals": l2_vals,
         "N": N, "d_vals": d_vals, "n_all": n_all, "d_bar_all": d_bar_all,
         "sigma_all": sigma_all, "low": low, "high": high, "bad": bad,
-        "d_kept": d_kept, "n": n, "d_bar": d_bar, "s_val": s_val,
-        "t_factor": t_factor, "u_A": u_A, "u_B": u_B, "u_d": u_d,
+        "ot": ot, "d_kept": d_kept, "n": n, "d_bar": d_bar, "s_val": s_val,
+        "sum_sq_d": sum_sq_d, "t_factor": t_a, "t_crit": t_crit,
+        "u_A": u_A, "u_B": u_B, "u_d": u_d,
         "lam_bar": lam_bar, "eta": eta, "u_lam": u_lam,
         "lam_str": lam_str, "u_lam_str": u_lam_str,
         "bias_word": bias_word, "in_range": in_range,
@@ -122,10 +129,10 @@ def _generate_docx(data: dict, output_path: str):
 
     # 计算并取出全部结果量（与 variants.json 的 %%DATA:key%% 共用同一字典 r）
     r = _compute(data)
+    if r is None:
+        return
     measurements = r["measurements"]; l1_vals = r["l1_vals"]; l2_vals = r["l2_vals"]
-    N = r["N"]; d_vals = r["d_vals"]; n_all = r["n_all"]
-    d_bar_all = r["d_bar_all"]; sigma_all = r["sigma_all"]
-    low = r["low"]; high = r["high"]; bad = r["bad"]; d_kept = r["d_kept"]
+    N = r["N"]; d_vals = r["d_vals"]; n_all = r["n_all"]; bad = r["bad"]
     n = r["n"]; d_bar = r["d_bar"]; s_val = r["s_val"]; t_factor = r["t_factor"]
     u_A = r["u_A"]; u_B = r["u_B"]; u_d = r["u_d"]
     lam_bar = r["lam_bar"]; eta = r["eta"]; u_lam = r["u_lam"]
@@ -181,38 +188,33 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("下面根据 3σ 原则对测量数据进行检验。")
 
     doc.add_paragraph("计算平均值：")
+    # 8 个测值逐项展开会让公式远超版心（分式不能跨行拆分），故代入**求和值**——
+    # 教材在求和处也是直接代入求和结果。
     doc.add_math(
-        r"\overline{d} = \frac{1}{n} \sum_{i=1}^{n} d_{i} \approx "
-        + f"{d_bar_all:.6f}" + r"\,\mathrm{mm}"
+        r"\overline{d} = \frac{1}{n} \sum_{i=1}^{n} d_{i} = \frac{"
+        + f"{sum(d_vals):.5f}" + r"}{" + str(n_all) + r"}"
+        r" \approx " + f"{d_bar:.6f}" + r"\,\mathrm{mm}"
     )
 
-    doc.add_paragraph("计算标准差：")
+    doc.add_paragraph("计算样本标准差：")
     doc.add_math(
-        r"\sigma = \sqrt{\frac{1}{n} \sum_{i=1}^{n} (d_{i} - \overline{d})^{2}}"
-        r" \approx " + f"{sigma_all:.7f}" + r"\,\mathrm{mm}"
-    )
-
-    if not bad:
-        doc.add_paragraph(
-            f"根据 3σ 原则，可接受的最大数据约为 {high:.5f}mm，"
-            "则可以认为检验无坏值。"
-        )
-    else:
-        bad_desc = "、".join(f"第 {i} 次测量值 {d:.5f}mm" for i, d in bad)
-        doc.add_paragraph(
-            f"根据 3σ 原则，可接受的最大数据约为 {high:.5f}mm，"
-            f"检验发现{bad_desc}为坏值，予以剔除。剔除后重新计算平均值："
-        )
-        doc.add_math(
-            r"\overline{d} = \frac{1}{n} \sum_{i=1}^{n} d_{i} \approx "
-            + f"{d_bar:.6f}" + r"\,\mathrm{mm}"
-        )
-
-    doc.add_paragraph("下面对数据进行进一步的处理，根据数据求得标准偏差：")
-    doc.add_math(
-        r"s = \sqrt{\frac{1}{n-1} \sum_{i=1}^{n} (d_{i} - \overline{d})^{2}}"
+        r"s = \sqrt{\frac{1}{n - 1} \sum_{i=1}^{n} (d_{i} - \overline{d})^{2}} = "
+        r"\sqrt{\frac{" + format_scientific(r["sum_sq_d"], 5) + r"}{" + str(n - 1) + r"}}"
         r" \approx " + f"{s_val:.6f}" + r"\,\mathrm{mm}"
     )
+
+    doc.add_paragraph(
+        f"取 t 分布因子 t = {r['t_crit']:.2f}（n = {n}，按教材 n > 6 时 σ ≈ s），作 3σ 坏值检验："
+    )
+    doc.add_math(
+        r"\sigma = s \times t_{0.683} = "
+        + f"{s_val:.6f}" + r" \times " + f"{r['t_crit']:.2f}"
+        + r" \approx " + f"{r['ot']['sigma']:.7f}" + r"\,\mathrm{mm}"
+    )
+    doc.add_math(
+        r"3\sigma \approx " + f"{r['ot']['sigma3']:.6f}" + r"\,\mathrm{mm}"
+    )
+    doc.add_paragraph(outlier_note(r["ot"], unit=" mm", digits=6))
 
     if n > 6:
         doc.add_paragraph(
@@ -223,9 +225,11 @@ def _generate_docx(data: dict, output_path: str):
             f"采用 t 分布因子求得标准偏差的最佳估计，n = {n}，"
             f"这里取 t = {t_factor}："
         )
+    doc.add_paragraph("A类不确定度：")
     doc.add_math(
-        r"\sigma_{\bar{x}} = \Delta X_{A} = t \cdot \frac{s}{\sqrt{n}}"
-        r" \approx " + f"{u_A:.8f}" + r"\,\mathrm{mm}"
+        r"\Delta X_{A} = t \cdot \frac{s}{\sqrt{n}} = "
+        + f"{t_factor:.2f}" + r" \times \frac{" + f"{s_val:.6f}" + r"}{\sqrt{" + str(n) + r"}}"
+        r" \approx " + f"{u_A:.7f}" + r"\,\mathrm{mm}"
     )
 
     doc.add_paragraph("B类不确定度：")
@@ -237,9 +241,14 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_paragraph("合成不确定度：")
     doc.add_math(
-        r"\Delta X = \sqrt{(\Delta X_{A})^{2} + (\Delta X_{B})^{2}}"
-        r" \approx " + format_number(u_d, u_d) + r"\,\mathrm{mm}"
+        r"\Delta X = \sqrt{\Delta X_{A}^{2} + \Delta X_{B}^{2}} = \sqrt{"
+        + f"{u_A:.7f}" + r"^{2} + " + f"{u_B:.7f}" + r"^{2}}"
+        r" \approx " + f"{u_d:.7f}" + r"\,\mathrm{mm}"
     )
+    doc.add_paragraph("")
+    doc.add_run("不确定度按只进不舍保留 1 位有效数字，即 ")
+    doc.add_inline_math(r"\Delta X \approx " + format_uncertainty(u_d) + r"\,\mathrm{mm}")
+    doc.add_run("。")
 
     doc.add_paragraph("位移 d 的测量结果表示：")
     doc.add_math(r"d = " + format_measure(d_bar, u_d) + r"\,\mathrm{mm}")
@@ -250,7 +259,8 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("根据公式：")
     doc.add_math(
         r"\overline{\lambda} = \frac{2\overline{d}}{N} = "
-        + f"{lam_bar:.8f}" + r"\,\mathrm{mm}"
+        r"\frac{2 \times " + f"{d_bar:.7f}" + r"}{" + f"{N:.0f}" + r"}"
+        r" \approx " + f"{lam_bar:.8f}" + r"\,\mathrm{mm}"
     )
 
     doc.add_paragraph("与标准值 ")
@@ -267,7 +277,8 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("波长 λ 的不确定度：")
     doc.add_math(
         r"\Delta \lambda = \frac{2 \Delta d}{N} = "
-        + f"{u_lam:.8f}" + r"\,\mathrm{mm}"
+        r"\frac{2 \times " + f"{u_d:.7f}" + r"}{" + f"{N:.0f}" + r"}"
+        r" \approx " + f"{u_lam:.8f}" + r"\,\mathrm{mm}"
     )
 
     doc.add_paragraph("那么，最终的结果表示如下")
@@ -347,7 +358,7 @@ def _generate_docx(data: dict, output_path: str):
         _quiz = None
 
     doc.add_paragraph(
-        "1. 在什么条件下产生等倾干涉条纹？在什么条件下产生等厚干涉条纹？"
+        "1. 在什么条件下产生等倾干涉条纹？在什么条件下产生等厚干涉条纹？", bold=True
     )
     _o = _quiz.get("1") if _quiz else None
     if _o:
@@ -360,7 +371,7 @@ def _generate_docx(data: dict, output_path: str):
         )
 
     doc.add_paragraph(
-        "2. 迈克尔逊干涉仪产生的等倾干涉条纹与牛顿环有何不同？"
+        "2. 迈克尔逊干涉仪产生的等倾干涉条纹与牛顿环有何不同？", bold=True
     )
     _o = _quiz.get("2") if _quiz else None
     if _o:
@@ -374,7 +385,7 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_paragraph(
         "3. 调节迈克尔逊干涉仪时，看到的亮点为什么是两排而不是两个？"
-        "两排亮点是怎样形成的？"
+        "两排亮点是怎样形成的？", bold=True
     )
     _o = _quiz.get("3") if _quiz else None
     if _o:

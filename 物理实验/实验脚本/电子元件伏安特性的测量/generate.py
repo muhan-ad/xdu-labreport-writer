@@ -288,6 +288,14 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     r1_fit = 1000.0 / fit1.slope                    # V/mA = kΩ → Ω
     u_r1_fit = r1_fit * fit1.slope_uncertainty / fit1.slope
 
+    # A 类不确定度的计算过程量：残差标准差 s_y 与自变量离差平方和 S_xx
+    # （口径与 linear_regression 内部完全一致，故由它们还原的 σ_k、σ_b 即拟合输出值）
+    n1 = len(t1_u)
+    u1_bar = mean(t1_u)
+    sxx1 = sum((v - u1_bar) ** 2 for v in t1_u)
+    resid1 = [t1_i[i] - (fit1.intercept + fit1.slope * t1_u[i]) for i in range(n1)]
+    sy1 = math.sqrt(sum(rv ** 2 for rv in resid1) / (n1 - 2))
+
     # 钨丝灯泡 U = K·I^n，两点法取首末两点（照范例）
     # n、K 均用文档中显示的舍入值链计算，保证文档内数值自洽
     u1, u2 = round(t2_u[0], 2), round(t2_u[-1], 2)
@@ -339,6 +347,8 @@ def _generate_docx(data: dict, output_path: str) -> bool:
         "k1": fit1.slope, "u_k1": fit1.slope_uncertainty,
         "b1": fit1.intercept, "u_b1": fit1.intercept_uncertainty, "r1_corr": fit1.r,
         "R1_fit": r1_fit, "u_R1_fit": u_r1_fit,
+        # A 类不确定度的计算过程量（残差标准差、自变量离差平方和、自变量平均值）
+        "s_y1": sy1, "S_xx1": sxx1, "U_bar1": u1_bar, "n1": n1,
     }
     variants = compose(SCRIPT_DIR, r)
     if "实验原理" in variants:
@@ -375,12 +385,40 @@ def _generate_docx(data: dict, output_path: str) -> bool:
         + r"\quad b = " + format_measure(r["b1"], r["u_b1"]) + r"\ \mathrm{mA}"
         + r",\quad r = " + format_number(r["r1_corr"], sig_figs=5)
     )
-    doc.add_run("由 ")
+    doc.add_paragraph("A类不确定度：")
+    doc.add_math(
+        r"\Delta k_A = \sigma_k = \frac{s_y}{\sqrt{\sum_{i=1}^{n}"
+        r"(U_i - \bar{U})^{2}}} = \frac{"
+        + format_number(r["s_y1"], sig_figs=4) + r"}{\sqrt{"
+        + format_number(r["S_xx1"]) + r"}}"
+        + r" \approx " + format_number(r["u_k1"], sig_figs=3) + r"\ \mathrm{mA/V}"
+    )
+    doc.add_math(
+        r"\Delta b_A = \sigma_b = s_y\sqrt{\frac{1}{n} + "
+        r"\frac{\bar{U}^{2}}{\sum_{i=1}^{n}(U_i - \bar{U})^{2}}} = "
+        + format_number(r["s_y1"], sig_figs=4)
+        + r"\sqrt{\frac{1}{" + str(r["n1"]) + r"} + \frac{"
+        + f"{r['U_bar1']:.3f}" + r"^{2}}{" + format_number(r["S_xx1"]) + r"}}"
+        + r" \approx " + format_number(r["u_b1"], sig_figs=3) + r"\ \mathrm{mA}"
+    )
+    doc.add_paragraph(
+        "其中 s_y 为最小二乘拟合的残差标准差，σ_k、σ_b 由拟合残差给出（A 类评定）；"
+        "本实验数据中没有仪器允差来源，故不作 B 类评定。"
+    )
+    doc.add_paragraph("由 ")
     doc.add_inline_math(r"R = \frac{1}{k}")
     doc.add_run(" 得线性电阻阻值：")
     doc.add_math(
         r"R = \frac{1}{" + format_number(r["k1"], r["u_k1"]) + r"} = "
         + format_measure(r["R1_fit"], r["u_R1_fit"]) + r"\ \Omega"
+    )
+    doc.add_paragraph("A类不确定度：")
+    doc.add_math(
+        r"\frac{\Delta R}{R} = \frac{\Delta k_A}{k} = \frac{"
+        + format_number(r["u_k1"], sig_figs=3) + r"}{"
+        + format_number(r["k1"], r["u_k1"]) + r"}"
+        + r" \approx " + format_percent(r["u_R1_fit"] / r["R1_fit"] * 100)
+        + r"\%"
     )
     doc.add_run("（相对不确定度 " + format_percent(r["u_R1_fit"] / r["R1_fit"] * 100)
                 + "%，由拟合斜率的标准差给出），与表中各点 ")
@@ -452,7 +490,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     elif not isinstance(_quiz, dict):
         _quiz = None
 
-    doc.add_paragraph("1. 比较 100Ω 电阻与白炽灯的伏安特性曲线，可得出什么结论？")
+    doc.add_paragraph("1. 比较 100Ω 电阻与白炽灯的伏安特性曲线，可得出什么结论？", bold=True)
     _o = _quiz.get("1") if _quiz else None
     if _o:
         doc.add_paragraph_rich(random.choice(_o))
@@ -471,7 +509,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
             "白炽灯电阻随电压、电流增大（灯丝温度升高）而增大，是非线性元件。"
         )
 
-    doc.add_paragraph("2. 试从钨丝灯泡的伏安特性曲线解释，为什么在开灯的时候容易烧坏？")
+    doc.add_paragraph("2. 试从钨丝灯泡的伏安特性曲线解释，为什么在开灯的时候容易烧坏？", bold=True)
     _o = _quiz.get("2") if _quiz else None
     if _o:
         doc.add_paragraph_rich(random.choice(_o))
@@ -490,7 +528,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
             "加之此时钨丝温度低、韧性等物理性能相对较差，所以在开灯的时候容易烧坏。"
         )
 
-    doc.add_paragraph("3. 二极管反向电阻和正向电阻差异如此大，其物理原理是什么？")
+    doc.add_paragraph("3. 二极管反向电阻和正向电阻差异如此大，其物理原理是什么？", bold=True)
     _o = _quiz.get("3") if _quiz else None
     if _o:
         doc.add_paragraph_rich(random.choice(_o))

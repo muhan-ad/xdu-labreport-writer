@@ -26,6 +26,12 @@ GIVEN_SLIT_WIDTH_MM = 0.100        # 给定缝宽 0.100 mm
 # 次极大理论相对光强（来自教材：u=±1.43π, ±2.46π, ±3.47π）
 THEORY_SECONDARY_MAX = [0.047, 0.016, 0.008]
 
+# 不确定度评定的仪器参数（知识库 rag/原理.md 第 5 节）：
+#   光具座底座分度值 1 mm（读 L）、探测器鼓轮分度值 0.01 mm（读 x）；
+#   对连续读数仪器，仪器不确定度取 1/2 分度值，按均匀分布取 C = √3。
+RULER_DIVISION_MM = 1.0      # 光具座分度值 / mm
+DRUM_DIVISION_MM = 0.01      # 探测器鼓轮分度值 / mm
+
 # 42 个 x 位置，分为 6 个块，每块对应 x 范围和 Excel 列数
 BLOCKS = [
     (0, 8, 8),     # 0~7,   8 列
@@ -218,6 +224,9 @@ def _compute(x, I, L_mm, lambda_nm, given_a_mm):
 
     # ---- 1. 归一化 ----
     i0_val = max(I)
+    if i0_val <= 0:
+        print("[错误] 光强数据全为非正值，无法归一化 I/I₀，请检查 I 数据。")
+        return None
     i0_idx = I.index(i0_val)
     x0 = x[i0_idx]
     I_rel = [v / i0_val for v in I]
@@ -243,7 +252,36 @@ def _compute(x, I, L_mm, lambda_nm, given_a_mm):
     a_mean_val = mean(a_values) if len(a_values) >= 3 else sum(a_values) / len(a_values)
     rel_err_a = abs(a_mean_val - given_a_mm) / given_a_mm * 100
 
-    # ---- 4. 次极大分析 ----
+    # ---- 5. 单缝宽度的不确定度评定（口径见知识库 rag/原理.md 第 5 节）----
+    # A 类：由各级暗纹算得的 n 个缝宽结果给出实验标准差 s_a，取 ΔA = s_a/√n
+    n_a = len(a_values)
+    a_devs = [v - a_mean_val for v in a_values]
+    sum_sq_a = sum(d * d for d in a_devs)
+    s_a = std_dev(a_values)
+    delta_a_A = s_a / math.sqrt(n_a) if n_a else 0.0
+
+    # B 类：仪器不确定度取 1/2 分度值（连续读数仪器），按均匀分布除以 √3
+    delta_L = (RULER_DIVISION_MM / 2) / math.sqrt(3)
+    delta_x = (DRUM_DIVISION_MM / 2) / math.sqrt(3)
+    # 暗纹距离 x_k 由暗纹位置与中央主极大位置之差得到 → 两次读数的不确定度合成
+    delta_xk = math.sqrt(delta_x ** 2 + delta_x ** 2)
+
+    # 逐级相对传递：(ΔB(a)/a)² = (ΔL/L)² + (Δx_k/x_k)²
+    a_unc = []
+    for d in a_results:
+        rel_b = math.sqrt((delta_L / L_mm) ** 2 + (delta_xk / d["xk"]) ** 2)
+        a_unc.append({
+            "k": d["k"],
+            "xk": d["xk"],
+            "a_k": d["a_k"],
+            "rel_b": rel_b,
+            "delta_B": d["a_k"] * rel_b,
+        })
+    delta_a_B = (math.sqrt(sum(u["delta_B"] ** 2 for u in a_unc)) / n_a
+                 if n_a else 0.0)
+    delta_a = math.sqrt(delta_a_A ** 2 + delta_a_B ** 2)
+
+    # ---- 6. 次极大分析 ----
     sec_max = _find_secondary_maxima(x, I_rel, dark_fringes, i0_idx)
 
     return {
@@ -254,6 +292,12 @@ def _compute(x, I, L_mm, lambda_nm, given_a_mm):
         "rel_err_a": rel_err_a, "given_a_mm": given_a_mm,
         "L_mm": L_mm, "lambda_nm": lambda_nm, "lambda_mm": lambda_mm,
         "sec_max": sec_max,
+        # 不确定度评定
+        "n_a": n_a, "a_values": a_values, "a_devs": a_devs,
+        "sum_sq_a": sum_sq_a, "s_a": s_a,
+        "delta_a_A": delta_a_A, "delta_a_B": delta_a_B, "delta_a": delta_a,
+        "delta_L": delta_L, "delta_x": delta_x, "delta_xk": delta_xk,
+        "a_unc": a_unc,
     }
 
 
@@ -282,6 +326,8 @@ def _generate_docx(data: dict, output_path: str):
         return False
     x, I, L_mm, lambda_nm, given_a_mm = parsed
     r = _compute(x, I, L_mm, lambda_nm, given_a_mm)
+    if r is None:
+        return False
 
     # ---------- 控制台摘要 ----------
     print(f"\n{'=' * 56}")
@@ -292,6 +338,8 @@ def _generate_docx(data: dict, output_path: str):
               f"xk_avg={d['xk']:.3f} mm, a_{d['k']}={d['a_k']:.4f} mm")
     print(f"  a_avg = {r['a_mean']:.4f} mm,  given = {given_a_mm:.3f} mm, "
           f"rel_err = {r['rel_err_a']:.2f}%")
+    print(f"  s_a = {r['s_a']:.6f} mm,  Delta_A(a) = {r['delta_a_A']:.6f} mm,  "
+          f"Delta_B(a) = {r['delta_a_B']:.6f} mm,  Delta(a) = {r['delta_a']:.6f} mm")
     print(f"  Secondary maxima:")
     for s in r["sec_max"]:
         print(f"    k={s['k']}: I/I0={s['avg_r']:.3f} (theory {s['theory']:.3f}), "
@@ -396,10 +444,13 @@ def _generate_docx(data: dict, output_path: str):
             f"x_{{-{d['k']}}} \\approx {d['xl']:.3f}\\ \\mathrm{{mm}},"
             f"\\quad x_{{+{d['k']}}} \\approx {d['xr']:.3f}\\ \\mathrm{{mm}}")
         doc.add_run("，平均间距")
+        _dl = abs(d["xl"] - r["x0"])
+        _dr = abs(d["xr"] - r["x0"])
         doc.add_math(
             f"\\overline{{x}}_{{{d['k']}}} = "
             f"\\frac{{|{d['xl']:.3f} - {r['x0']:.3f}|"
             f" + |{d['xr']:.3f} - {r['x0']:.3f}|}}{{2}}"
+            f" = \\frac{{{_dl:.3f} + {_dr:.3f}}}{{2}}"
             f" \\approx {d['xk']:.3f}\\ \\mathrm{{mm}}")
         doc.add_paragraph("")
         doc.add_run("则")
@@ -411,9 +462,11 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("")
     doc.add_run("单缝宽度的算术平均值为")
     a_terms = " + ".join([f"a_{{{d['k']}}}" for d in r["a_results"]])
+    a_nums = " + ".join([f"{d['a_k']:.4f}" for d in r["a_results"]])
     a_n = len(r["a_results"])
     doc.add_math(
         f"\\overline{{a}} = \\frac{{{a_terms}}}{{{a_n}}}"
+        f" = \\frac{{{a_nums}}}{{{a_n}}}"
         f" \\approx {r['a_mean']:.4f}\\ \\mathrm{{mm}}")
 
     doc.add_paragraph("")
@@ -424,6 +477,98 @@ def _generate_docx(data: dict, output_path: str):
         f"\\Delta = \\frac{{|{r['a_mean']:.4f} - {given_a_mm:.3f}|}}"
         f"{{{given_a_mm:.3f}}} \\times 100\\%"
         f" \\approx {format_percent(r['rel_err_a'])}\\%")
+
+    # -- 2.5 单缝宽度的不确定度评定（A 类 / B 类 / 合成，口径见知识库第 5 节）--
+    doc.add_heading("5. 单缝宽度的不确定度评定", level=2)
+
+    doc.add_paragraph("A类不确定度：")
+    doc.add_paragraph(
+        f"由 {r['n_a']} 个单缝宽度结果的实验标准差给出：")
+    _dev_terms = " + ".join([f"({d:.5f})^{{2}}" for d in r["a_devs"]])
+    doc.add_math(
+        r"s_a = \sqrt{\frac{1}{n-1}\sum_{i=1}^{n}(a_i - \bar{a})^{2}}"
+        r" = \sqrt{\frac{" + _dev_terms + r"}{" + str(r["n_a"] - 1) + r"}}"
+        r" = \sqrt{\frac{" + format_scientific(r["sum_sq_a"], 4) + r"}{"
+        + str(r["n_a"] - 1) + r"}}"
+        r" \approx " + format_number(r["s_a"], sig_figs=4) + r"\ \mathrm{mm}"
+    )
+    doc.add_math(
+        r"\Delta a_A = \frac{s_a}{\sqrt{n}} = \frac{"
+        + format_number(r["s_a"], sig_figs=4) + r"}{\sqrt{" + str(r["n_a"]) + r"}}"
+        + r" \approx " + format_number(r["delta_a_A"], sig_figs=3)
+        + r"\ \mathrm{mm}"
+    )
+
+    doc.add_paragraph("B类不确定度：")
+    doc.add_paragraph(
+        "光具座底座分度值为 1 mm，探测器鼓轮分度值为 0.01 mm；"
+        "对连续读数仪器，仪器不确定度取 1/2 分度值，按均匀分布除以 ")
+    doc.add_inline_math(r"\sqrt{3}")
+    doc.add_run("：")
+    doc.add_math(
+        r"\Delta L = \frac{0.5}{\sqrt{3}} \approx "
+        + format_number(r["delta_L"], sig_figs=4) + r"\ \mathrm{mm},\quad "
+        r"\Delta x = \frac{0.005}{\sqrt{3}} \approx "
+        + format_number(r["delta_x"], sig_figs=4) + r"\ \mathrm{mm}"
+    )
+    doc.add_paragraph("暗纹距离 ")
+    doc.add_inline_math(r"x_k")
+    doc.add_run(" 由暗纹位置与中央主极大位置之差得到，故")
+    doc.add_math(
+        r"\Delta x_k = \sqrt{(\Delta x)^{2} + (\Delta x)^{2}} = \sqrt{"
+        + format_number(r["delta_x"], sig_figs=4) + r"^{2} + "
+        + format_number(r["delta_x"], sig_figs=4) + r"^{2}}"
+        + r" \approx " + format_number(r["delta_xk"], sig_figs=4)
+        + r"\ \mathrm{mm}"
+    )
+    doc.add_paragraph("由 ")
+    doc.add_inline_math(r"a = \dfrac{Lk\lambda}{x_k}")
+    doc.add_run(" 得")
+    doc.add_math(
+        r"\left(\frac{\Delta_B(a)}{a}\right)^{2} = "
+        r"\left(\frac{\Delta L}{L}\right)^{2} + "
+        r"\left(\frac{\Delta x_k}{x_k}\right)^{2}"
+    )
+    for u in r["a_unc"]:
+        doc.add_math(
+            r"\Delta_B(a_{" + str(u["k"]) + r"}) = a_{" + str(u["k"])
+            + r"}\sqrt{\left(\frac{"
+            + format_number(r["delta_L"], sig_figs=4) + r"}{" + f"{L_mm:.1f}" + r"}\right)^{2}"
+            r" + \left(\frac{" + format_number(r["delta_xk"], sig_figs=4) + r"}{"
+            + f"{u['xk']:.3f}" + r"}\right)^{2}} = "
+            + f"{u['a_k']:.4f}" + r" \times "
+            + format_scientific(u["rel_b"], 3)
+            + r" \approx " + format_scientific(u["delta_B"], 3)
+            + r"\ \mathrm{mm}"
+        )
+    doc.add_paragraph("各次测量的 B 类不确定度按方和根合成后除以 n，得平均结果的 B 类不确定度：")
+    _db_terms = " + ".join(["(" + format_scientific(u["delta_B"], 3) + ")^{2}"
+                            for u in r["a_unc"]])
+    doc.add_math(
+        r"\Delta_B(\bar{a}) = \frac{1}{n}\sqrt{\sum_{i=1}^{n}"
+        r"\Delta_B(a_i)^{2}} = \frac{1}{" + str(r["n_a"]) + r"}\sqrt{"
+        + _db_terms + r"}"
+        + r" \approx " + format_scientific(r["delta_a_B"], 3) + r"\ \mathrm{mm}"
+    )
+
+    doc.add_paragraph("合成不确定度：")
+    doc.add_math(
+        r"\Delta a = \sqrt{\Delta a_A^{2} + \Delta a_B^{2}} = \sqrt{"
+        + format_number(r["delta_a_A"], sig_figs=3) + r"^{2} + ("
+        + format_scientific(r["delta_a_B"], 3) + r")^{2}}"
+        + r" \approx " + format_number(r["delta_a"], sig_figs=3)
+        + r"\ \mathrm{mm}"
+    )
+    doc.add_paragraph("单缝宽度的结果表示为：")
+    doc.add_math(
+        r"a = \bar{a} \pm \Delta a = "
+        + format_measure(r["a_mean"], r["delta_a"]) + r"\ \mathrm{mm}"
+    )
+    doc.add_paragraph(
+        "其中 A 类不确定度由 "
+        + str(r["n_a"]) + " 个缝宽结果的分散性给出，B 类不确定度由光具座与探测器鼓轮的"
+        "仪器允差传递得到；两者相比 A 类占主导，说明缝宽结果的分散主要来自"
+        "暗纹位置的读数与拟合，而不是仪器本身的允差。")
 
     doc.add_paragraph(
         "结果在合理误差范围内，实验测量较为准确。"

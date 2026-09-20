@@ -30,15 +30,21 @@ M_G = 447.5                     # 圆环质量/g
 def _uncertainty_of_direct(data, delta_instrument):
     """直接测量量的完整不确定度评定。
 
-    流程：s → σ = s × t_0.683 → ΔA = σ → ΔB = Δ仪/√3 → Δ = √(ΔA²+ΔB²)
-    返回 (u, u_A, u_B, s, sigma)。
+    流程：3σ 坏值检验（迭代剔除）→ s → σ = s × t_0.683 → ΔA = σ/√n
+          → ΔB = Δ仪/√3 → Δ = √(ΔA²+ΔB²)
+    返回 (u, u_A, u_B, s, sigma, ot)：ot 是坏值检验结果（含 kept/bad/n_kept/sigma3），
+    供报告里动态输出「经 3σ 检验…」那句结论。
+    注：教材明确「A 类评定就用平均值的标准差 σ_x̄ = t·s/√n」，故 ΔA 必须再除以 √n。
     """
-    s_val = std_dev(data)
-    sigma = s_val * T_FACTOR
-    u_A = sigma
+    ot = outlier_test(data)              # 教材口径：先剔除坏值，再用剩余数据评定
+    vals = ot["kept"]
+    n = len(vals)
+    s_val = std_dev(vals) if n > 1 else 0.0
+    sigma = s_val * t_factor(n) if n >= 2 else 0.0
+    u_A = sigma / math.sqrt(n) if n else 0.0
     u_B = type_b(delta_instrument, "uniform")
     u = combine(u_A, u_B)
-    return u, u_A, u_B, s_val, sigma
+    return u, u_A, u_B, s_val, sigma, ot
 
 
 # ── 辅助函数：构建偏差表数据 ──
@@ -114,11 +120,11 @@ def _compute(data: dict) -> dict:
     D_bar = mean(D_vals)
     T_bar = mean(T_vals)
 
-    # 不确定度（r, R, H, T₀）
-    u_r, u_rA, u_rB, s_r, sig_r = _uncertainty_of_direct(r_vals, DELTA_RULER)
-    u_R, u_RA, u_RB, s_R, sig_R = _uncertainty_of_direct(R_vals, DELTA_RULER)
-    u_H, u_HA, u_HB, s_H, sig_H = _uncertainty_of_direct(H_vals, DELTA_RULER)
-    u_T0, u_T0A, u_T0B, s_T0, sig_T0 = _uncertainty_of_direct(T0_vals, DELTA_TIMER)
+    # 不确定度（r, R, H, T₀）—— 内部先做 3σ 坏值检验、用剔除后的数据评定
+    u_r, u_rA, u_rB, s_r, sig_r, ot_r = _uncertainty_of_direct(r_vals, DELTA_RULER)
+    u_R, u_RA, u_RB, s_R, sig_R, ot_R = _uncertainty_of_direct(R_vals, DELTA_RULER)
+    u_H, u_HA, u_HB, s_H, sig_H, ot_H = _uncertainty_of_direct(H_vals, DELTA_RULER)
+    u_T0, u_T0A, u_T0B, s_T0, sig_T0, ot_T0 = _uncertainty_of_direct(T0_vals, DELTA_TIMER)
 
     # SI 单位转换
     r = r_bar / 100
@@ -131,9 +137,17 @@ def _compute(data: dict) -> dict:
     u_m0 = DELTA_BALANCE / 1000   # 质量仅 B 类，直接用 Δ仪（g→kg）
 
     # 核心结果计算
+    if H <= 0:
+        print(f"[错误] 圆环高度 H = {H:g} m 非正，无法计算转动惯量，请检查 H 数据。")
+        return None
     common_factor = (g * r * R) / (4 * math.pi ** 2 * H)
     I0 = common_factor * m0 * T0_bar ** 2                       # 下盘转动惯量
     I_exp = common_factor * ((m_si + m0) * T_bar ** 2 - m0 * T0_bar ** 2)  # 圆环实验值
+    if I_exp <= 0:
+        print(f"[错误] 圆环转动惯量实验值 I = {I_exp:.6g} kg·m² 非正"
+              f"（T = {T_bar:.4f} s，T₀ = {T0_bar:.4f} s）：加圆环后的周期必须大于空盘周期，"
+              "请检查 T / T₀ 两行是否录反或重复。")
+        return None
     I_theory = (1 / 8) * m_si * (d ** 2 + D ** 2)               # 圆环理论值
 
     # I₀ 相对不确定度
@@ -160,6 +174,7 @@ def _compute(data: dict) -> dict:
         "u_R": u_R, "u_RA": u_RA, "u_RB": u_RB, "s_R": s_R, "sig_R": sig_R,
         "u_H": u_H, "u_HA": u_HA, "u_HB": u_HB, "s_H": s_H, "sig_H": sig_H,
         "u_T0": u_T0, "u_T0A": u_T0A, "u_T0B": u_T0B, "s_T0": s_T0, "sig_T0": sig_T0,
+        "ot_r": ot_r, "ot_R": ot_R, "ot_H": ot_H, "ot_T0": ot_T0,
         "r": r, "R": R, "H": H, "d": d, "D": D,
         "m0": m0, "m": m_si, "u_m0": u_m0,
         "common_factor": common_factor,
@@ -202,12 +217,15 @@ def _generate_docx(data: dict, output_path: str):
     # 2. 数据处理：平均值、不确定度、转动惯量与偏差（见 _compute）
     # ═══════════════════════════════════════════════
     res = _compute(data)
+    if res is None:
+        return
     m0_g = res["m0_g"]; m_g = res["m_g"]
     r_vals = res["r_vals"]; R_vals = res["R_vals"]; T0_vals = res["T0_vals"]
     H_vals = res["H_vals"]; d_vals = res["d_vals"]; D_vals = res["D_vals"]; T_vals = res["T_vals"]
     r_bar = res["r_bar"]; R_bar = res["R_bar"]; T0_bar = res["T0_bar"]; H_bar = res["H_bar"]
     d_bar = res["d_bar"]; D_bar = res["D_bar"]; T_bar = res["T_bar"]
     u_r = res["u_r"]; u_rA = res["u_rA"]; u_rB = res["u_rB"]; s_r = res["s_r"]; sig_r = res["sig_r"]
+    ot_r = res["ot_r"]; ot_R = res["ot_R"]; ot_H = res["ot_H"]; ot_T0 = res["ot_T0"]
     u_R = res["u_R"]; u_RA = res["u_RA"]; u_RB = res["u_RB"]; s_R = res["s_R"]; sig_R = res["sig_R"]
     u_H = res["u_H"]; u_HA = res["u_HA"]; u_HB = res["u_HB"]; s_H = res["s_H"]; sig_H = res["sig_H"]
     u_T0 = res["u_T0"]; u_T0A = res["u_T0A"]; u_T0B = res["u_T0B"]; s_T0 = res["s_T0"]; sig_T0 = res["sig_T0"]
@@ -218,13 +236,6 @@ def _generate_docx(data: dict, output_path: str):
     delta_I = res["delta_I"]; rel_error = res["rel_error"]
     # 以下 SI 量在报告中以平均值（cm）表述，SI 值仅供变体引用
     r = res["r"]; R = res["R"]; H = res["H"]; d = res["d"]; D = res["D"]
-
-    # 3σ 坏值检验（仅控制台）
-    for name, vals, s3 in [("r", r_vals, 3 * sig_r), ("R", R_vals, 3 * sig_R),
-                            ("H", H_vals, 3 * sig_H), ("T₀", T0_vals, 3 * sig_T0)]:
-        bad = [i + 1 for i, x in enumerate(vals) if abs(x - mean(vals)) >= s3]
-        if bad:
-            print(f"警告：{name} 第 {bad} 次测量超过 3*sigma(={s3:.4f})，可能为坏值")
 
     # ═══════════════════════════════════════════════
     # 7. 控制台输出
@@ -301,31 +312,31 @@ def _generate_docx(data: dict, output_path: str):
 
     # (1) 已知 Δ仪
     doc.add_paragraph("(1) 已知：")
-    doc.add_run("Δm₀ = 0.5 g，卷尺 Δ")
+    doc.add_run("Δm₀ = 0.5 g，卷尺 ")
     doc.add_inline_math(r"\Delta_{\text{仪}} = 0.5\,\mathrm{mm}")
-    doc.add_run("，秒表 Δ")
-    doc.add_inline_math(r"\Delta_{\text{仪}}' = 0.01\,\mathrm{s}")
+    doc.add_run("，秒表 ")
+    doc.add_inline_math(r"\Delta_{\text{仪}} = 0.01\,\mathrm{s}")
     doc.add_paragraph("")
 
     # (2) Δr
     doc.add_paragraph("(2) 对于 Δr：")
     _write_deviation_section(doc, r_vals, r_bar, u_r, u_rA, u_rB, s_r,
-                              sig_r, DELTA_RULER, "r", "cm")
+                              sig_r, DELTA_RULER, "r", "cm", ot_r)
 
     # (3) ΔR
     doc.add_paragraph("(3) 对于 ΔR：")
     _write_deviation_section(doc, R_vals, R_bar, u_R, u_RA, u_RB, s_R,
-                              sig_R, DELTA_RULER, "R", "cm")
+                              sig_R, DELTA_RULER, "R", "cm", ot_R)
 
     # (4) ΔH
     doc.add_paragraph("(4) 对于 ΔH：")
     _write_deviation_section(doc, H_vals, H_bar, u_H, u_HA, u_HB, s_H,
-                              sig_H, DELTA_RULER, "H", "cm")
+                              sig_H, DELTA_RULER, "H", "cm", ot_H)
 
     # (5) ΔT₀
     doc.add_paragraph("(5) 对于 ΔT₀：")
     _write_deviation_section(doc, T0_vals, T0_bar, u_T0, u_T0A, u_T0B, s_T0,
-                              sig_T0, DELTA_TIMER, "T_{0}", "s")
+                              sig_T0, DELTA_TIMER, "T_{0}", "s", ot_T0)
 
     # 代入相对不确定度
     doc.add_paragraph("代入相对不确定度公式：")
@@ -390,9 +401,13 @@ def _generate_docx(data: dict, output_path: str):
     )
 
     doc.add_paragraph("则圆环转动惯量实验值与理论值的偏差为")
+    # 代入数据必须给足有效位：Ī 与 I理论 只差 1.2e-5，按 3 位有效数字写成
+    # |2.98e-3 − 2.99e-3| 相减得 1e-5，与结果 1.22e-5 对不上（有效数字相消）。
+    # 这里用 5 位有效数字，使代入过程能还原出结果。
     doc.add_math(
-        r"\Delta \bar{I} = |\bar{I} - I_{\text{理论}}| = "
-        + format_scientific(delta_I, 3) + r"\,\mathrm{kg·m²}"
+        r"\Delta \bar{I} = |\bar{I} - I_{\text{理论}}| = \left|"
+        + format_scientific(I_exp, 5) + r" - " + format_scientific(I_theory, 5)
+        + r"\right| \approx " + format_scientific(delta_I, 3) + r"\,\mathrm{kg·m²}"
     )
 
     doc.add_paragraph("圆环转动惯量结果表达：")
@@ -457,7 +472,7 @@ def _generate_docx(data: dict, output_path: str):
         _quiz = None
 
     doc.add_paragraph(
-        "1. 实验中转动惯量公式中的 R 是否为下圆盘半径？其数值如何测量？"
+        "1. 实验中转动惯量公式中的 R 是否为下圆盘半径？其数值如何测量？", bold=True
     )
     _o = _quiz.get("1") if _quiz else None
     if _o:
@@ -473,7 +488,7 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_paragraph(
         "2. 当待测物体的转动惯量比下圆盘的转动惯量小得多时，"
-        "为何不宜采用三线摆测量？"
+        "为何不宜采用三线摆测量？", bold=True
     )
     _o = _quiz.get("2") if _quiz else None
     if _o:
@@ -493,7 +508,7 @@ def _generate_docx(data: dict, output_path: str):
 
 
 def _write_deviation_section(doc, data, avg, u, u_A, u_B, s_val, sigma,
-                              delta_inst, symbol, unit):
+                              delta_inst, symbol, unit, ot=None):
     """输出单个测量量的完整不确定度评定章节（偏差表 → s → σ → 3σ → ΔA,B → Δ）。"""
     n = len(data)
 
@@ -564,27 +579,43 @@ def _write_deviation_section(doc, data, avg, u, u_A, u_B, s_val, sigma,
     )
 
     # 3σ
-    doc.add_math(r"3\sigma = " + format_number(3 * sigma, sig_figs=3) + r"\,\mathrm{" + unit + r"}")
+    doc.add_math(r"3\sigma = 3 \times " + format_number(sigma, sig_figs=3)
+                 + r" \approx " + format_number(3 * sigma, sig_figs=3)
+                 + r"\,\mathrm{" + unit + r"}")
 
-    doc.add_paragraph("经检验，无坏值。")
-    doc.add_paragraph("则")
+    # 结论由 outlier_test 的结果动态给出（此前是写死的「经检验，无坏值。」）
+    if ot is not None:
+        doc.add_paragraph(outlier_note(ot, unit=" " + unit))
+    else:
+        doc.add_paragraph("经 3σ 检验，各偏差均小于 3σ，无坏值。")
 
-    # ΔA, ΔB
+    # A 类不确定度
     u_B_val = type_b(delta_inst, "uniform")
+    doc.add_paragraph("A类不确定度：")
     doc.add_math(
-        r"\Delta " + symbol + r"_{A} = \sigma = " + format_number(u_A, sig_figs=3)
-        + r"\,\mathrm{" + unit + r"}, "
+        r"\Delta " + symbol + r"_{A} = \frac{\sigma}{\sqrt{n}} = "
+        r"\frac{" + format_number(sigma, sig_figs=3) + r"}{\sqrt{" + str(n) + r"}}"
+        r" = " + format_number(u_A, sig_figs=3)
+        + r"\,\mathrm{" + unit + r"}"
+    )
+
+    # B 类不确定度
+    doc.add_paragraph("B类不确定度：")
+    doc.add_math(
         r"\Delta " + symbol + r"_{B} = "
         r"\frac{\Delta_{\text{仪}}}{\sqrt{3}} = "
         r"\frac{" + f"{delta_inst:.2f}" + r"}{\sqrt{3}}"
         r" \approx " + format_number(u_B_val, sig_figs=3) + r"\,\mathrm{" + unit + r"}"
     )
 
-    # Δ
+    # 合成不确定度
+    doc.add_paragraph("合成不确定度：")
     doc.add_math(
         r"\Delta " + symbol + r" = \sqrt{"
         r"\Delta " + symbol + r"_{A}^{2} + "
-        r"\Delta " + symbol + r"_{B}^{2}}"
+        r"\Delta " + symbol + r"_{B}^{2}} = \sqrt{"
+        + format_number(u_A, sig_figs=3) + r"^{2} + "
+        + format_number(u_B_val, sig_figs=3) + r"^{2}}"
         r" \approx " + f"{u:.3f}" + r"\,\mathrm{" + unit + r"}"
     )
 

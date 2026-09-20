@@ -167,16 +167,24 @@ def _compute(angles):
     r["corrB"] = [c for _, c in dB]
     r["alpha_deg"] = [(a + b) / 4 for a, b in zip(r["dA_deg"], r["dB_deg"])]
 
-    # ---- 2. 平均值与偏差 ----
-    r["alpha_mean"] = mean(r["alpha_deg"])
+    # ---- 2. 3δ 坏值检验 + 平均值与偏差 ----
+    # 教材口径：先求 x̄ 和 σ，作 x̄±3σ 区间，区间外的坏值剔除后**重新计算再检验**。
+    # 本实验量是角度，判据符号沿用 δ（δ = s·t，与报告里写法一致）。
+    _ot = outlier_test(r["alpha_deg"])
+    r["ot"] = _ot
+    r["alpha_kept"] = _ot["kept"]
+    r["bad"] = [i for i, _ in _ot["bad"]]
+    r["n_kept"] = _ot["n_kept"]
+    r["rounds"] = _ot["rounds"]
+    r["t_used"] = t_factor(r["n_kept"]) if r["n_kept"] >= 2 else 0.0
+    r["alpha_mean"] = mean(r["alpha_kept"]) if r["alpha_kept"] else 0.0
+    # 偏差表按**全部**测量列列出（教材例题也是把坏值留在表里、只是标注剔除）
     r["dev_min"] = [(a - r["alpha_mean"]) * 60 for a in r["alpha_deg"]]
 
     # ---- 3. 不确定度（单位：分） ----
-    r["s_min"] = std_dev(r["alpha_deg"]) * 60            # 贝塞尔样本标准差
-    r["delta_bad_min"] = T_FACTOR * r["s_min"]           # δ = s·t（3δ 坏值判据）
-    r["bad"] = [i + 1 for i, d in enumerate(r["dev_min"])
-                if abs(d) > 3 * r["delta_bad_min"]]
-    r["delta_A_min"] = T_FACTOR * r["s_min"] / math.sqrt(N_MEAS)
+    r["s_min"] = std_dev(r["alpha_kept"]) * 60 if r["n_kept"] > 1 else 0.0
+    r["delta_bad_min"] = _ot["sigma"] * 60               # δ = s·t（3δ 坏值判据）
+    r["delta_A_min"] = type_a(r["alpha_kept"]) * 60
     r["delta_B_min"] = type_b(DELTA_INSTR_MIN, "uniform")
     r["delta_min"] = combine(r["delta_A_min"], r["delta_B_min"])
     r["rel_percent"] = r["delta_min"] / (r["alpha_mean"] * 60) * 100
@@ -312,29 +320,23 @@ def _generate_docx(data: dict, output_path: str) -> bool:
                  f" \\approx {r['s_min']:.1f}′")
     doc.add_paragraph("")
     doc.add_run("取 ")
-    doc.add_inline_math(f"t_{{0.683}} = {T_FACTOR:.2f}")
-    doc.add_run(f"（n = {N_MEAS}），作 3δ 坏值检验：")
+    doc.add_inline_math(f"t_{{0.683}} = {r['t_used']:.2f}")
+    doc.add_run(f"（n = {r['n_kept']}），作 3δ 坏值检验：")
     doc.add_math(f"\\delta = s_{{\\alpha}} \\times t_{{0.683}}"
-                 f" = {r['s_min']:.1f}′ \\times {T_FACTOR:.2f}"
+                 f" = {r['s_min']:.1f}′ \\times {r['t_used']:.2f}"
                  f" \\approx {r['delta_bad_min']:.1f}′")
     doc.add_math(f"3\\delta \\approx {3 * r['delta_bad_min']:.1f}′")
-    if r["bad"]:
-        bad_str = "、".join(str(b) for b in r["bad"])
-        doc.add_paragraph(
-            f"经检验，第 {bad_str} 组的偏差超过 3δ，为坏值，"
-            "应剔除该组数据并补测后重新处理。")
-    else:
-        doc.add_paragraph("经检验，各组偏差均小于 3δ，无坏值。")
-    doc.add_paragraph("A 类不确定度为")
+    doc.add_paragraph(outlier_note(r["ot"], unit="′", digits=1, symbol="δ", scale=60))
+    doc.add_paragraph("A类不确定度：")
     doc.add_math(f"\\Delta_{{A}} = \\frac{{t \\cdot s_{{\\alpha}}}}{{\\sqrt{{n}}}}"
-                 f" = \\frac{{{T_FACTOR:.2f} \\times {r['s_min']:.1f}′}}"
-                 f"{{\\sqrt{{{N_MEAS}}}}}"
+                 f" = \\frac{{{r['t_used']:.2f} \\times {r['s_min']:.1f}′}}"
+                 f"{{\\sqrt{{{r['n_kept']}}}}}"
                  f" \\approx {r['delta_A_min']:.1f}′")
-    doc.add_paragraph("B 类（仪器）不确定度为")
+    doc.add_paragraph("B类不确定度：")
     doc.add_math(f"\\Delta_{{B}} = \\frac{{\\Delta_{{\\text{{仪}}}}}}{{\\sqrt{{3}}}}"
                  f" = \\frac{{1′}}{{\\sqrt{{3}}}}"
                  f" \\approx {r['delta_B_min']:.2f}′")
-    doc.add_paragraph("合成不确定度为")
+    doc.add_paragraph("合成不确定度：")
     doc.add_math(f"\\Delta\\alpha = \\sqrt{{\\Delta_{{A}}^{{2}} + \\Delta_{{B}}^{{2}}}}"
                  f" = \\sqrt{{({r['delta_A_min']:.1f}′)^{{2}}"
                  f" + ({r['delta_B_min']:.2f}′)^{{2}}}}"

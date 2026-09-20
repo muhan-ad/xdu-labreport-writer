@@ -75,7 +75,8 @@ function cloud() {
 }
 test('contribution protocol supports feedback and uses server-generated object names and signed size', async () => {
   const invoke = cloud();
-  for (const key of ['contributions/feedbacks/date/feedback.json','contributions/variants/exp/date/data.json','contributions/reports/exp/date/report.docx']) {
+  for (const key of ['contributions/feedbacks/date/feedback.json','contributions/variants/exp/date/data.json','contributions/reports/exp/date/report.docx',
+    'contributions/vision/exp/date/photo.jpg','contributions/vision/exp/date/ai.json','contributions/vision/exp/date/proofread.json','contributions/vision/exp/date/manifest.json']) {
     const result = await invoke([{ key, size: 10 }]); assert.equal(result.statusCode, 200);
     const item = JSON.parse(result.body).items[0];
     assert.equal(item.key, key); assert.notEqual(item.objectKey, key);
@@ -87,6 +88,8 @@ test('contribution protocol supports feedback and uses server-generated object n
 test('contribution protocol rejects traversal, oversized files and quota exhaustion', async () => {
   const invoke = cloud();
   assert.equal((await invoke([{ key: 'contributions/reports/../date/a.docx', size: 1 }])).statusCode, 400);
+  assert.equal((await invoke([{ key: 'contributions/vision/../date/photo.jpg', size: 1 }])).statusCode, 400, '识图数据同样拒绝路径穿越');
+  assert.equal((await invoke([{ key: 'contributions/vision/exp/date/photo.gif', size: 1 }])).statusCode, 400, '识图数据不允许 gif');
   const key = 'contributions/reports/exp/date/a.docx';
   assert.equal((await invoke([{ key, size: 21 * 1024 * 1024 }])).statusCode, 413);
   for (let i = 0; i < 20; i++) assert.equal((await invoke([{ key, size: 1 }])).statusCode, 200);

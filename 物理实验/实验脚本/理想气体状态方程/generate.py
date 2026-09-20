@@ -111,11 +111,8 @@ def _validate_data(data: dict):
     if not ok:
         return None
 
-    for name, dps in (("表A", ta_dp), ("表B 升温", tb_dp)):
-        for i, dp in enumerate(dps):
-            if dp <= 0:
-                print(f"[警告] {name} 第 {i + 1} 列：压强差 ({dp}) 非正，"
-                      "本实验读数应为正值，请检查。")
+    # 说明：压强差 Δp 是相对大气压的表压差，物理上可以为负（气体压强低于大气压）。
+    # 上面的硬校验已保证绝对压强 p0 + Δp > 0，这里不再对 Δp 的符号另作限制。
 
     return {"given": given, "ta_v": ta_v, "ta_dp": ta_dp,
             "tb_t": tb_t, "tb_dp": tb_dp, "cooling": cooling}
@@ -354,7 +351,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
 
     doc.add_paragraph("1. 三大气体实验定律的内容是什么？这些定律的适用范围是什么？"
                       "如果某种气体的三个状态参量（p、V、T）都发生了变化，"
-                      "它们之间又遵从什么规律？")
+                      "它们之间又遵从什么规律？", bold=True)
     _o = _quiz.get("1") if _quiz else None
     if _o:
         doc.add_paragraph_rich(random.choice(_o))
@@ -369,7 +366,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
         doc.add_inline_math(r"pV = nRT")
         doc.add_run("。")
 
-    doc.add_paragraph("2. 推导理想气体的状态方程。")
+    doc.add_paragraph("2. 推导理想气体的状态方程。", bold=True)
     _o = _quiz.get("2") if _quiz else None
     if _o:
         doc.add_paragraph_rich(random.choice(_o))
@@ -410,7 +407,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
         doc.add_paragraph("即")
         doc.add_math(r"pV = nRT")
 
-    doc.add_paragraph("3. 升温曲线与降温曲线不同，如何解释？实验时应如何避免？")
+    doc.add_paragraph("3. 升温曲线与降温曲线不同，如何解释？实验时应如何避免？", bold=True)
     _o = _quiz.get("3") if _quiz else None
     if _o:
         doc.add_paragraph_rich(random.choice(_o))

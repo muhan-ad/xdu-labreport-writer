@@ -96,29 +96,50 @@ def _compute(data: dict) -> dict:
         raise ValueError("请填写完整且成对的测量数组")
     n = len(D)
 
-    # 板长 / 板宽：单次测量，仅 B 类
+    # 板长 / 板宽：单次测量，仅 B 类（无 A 类，不做 3σ 检验）
     uL = dl_inst / math.sqrt(3)
     uW = dl_inst / math.sqrt(3)
-
-    # 孔径（游标卡尺，零点修正）
-    D_a = sum(D) / len(D)
-    D_corrected = D_a - d0_card
-    uD = smartlab_u(D, dd_inst)
-
-    # 板厚（千分尺，零点修正）
-    d_a = sum(d_shi) / len(d_shi)
-    d_corrected = d_a - d0
-    ud = smartlab_u(d_shi, dd_shi_inst)
 
     # 缝长 / 缝宽（测量显微镜，逐对求差）
     Lx = [abs(x1 - x0) for x0, x1 in zip(X0, X1)]
     Ly = [abs(y1 - y0) for y0, y1 in zip(Y0, Y1)]
-    Lx_a = sum(Lx) / len(Lx)
-    Ly_a = sum(Ly) / len(Ly)
+
+    # 3σ 坏值检验：D、d、Lx、Ly 都是同一被测量的等精度重复测量（n = 5），迭代剔除
+    ot_D = outlier_test(D)
+    ot_d = outlier_test(d_shi)
+    ot_Lx = outlier_test(Lx)
+    ot_Ly = outlier_test(Ly)
+    D_kept = ot_D["kept"]
+    d_kept = ot_d["kept"]
+    Lx_kept = ot_Lx["kept"]
+    Ly_kept = ot_Ly["kept"]
+
+    # 孔径（游标卡尺，零点修正）
+    D_a = sum(D_kept) / len(D_kept)
+    D_corrected = D_a - d0_card
+    uD = smartlab_u(D_kept, dd_inst)
+
+    # 板厚（千分尺，零点修正）
+    d_a = sum(d_kept) / len(d_kept)
+    d_corrected = d_a - d0
+    ud = smartlab_u(d_kept, dd_shi_inst)
+
+    # 缝长 / 缝宽（测量显微镜，逐对求差）
+    Lx_a = sum(Lx_kept) / len(Lx_kept)
+    Ly_a = sum(Ly_kept) / len(Ly_kept)
     # 每对含两个读数，B 类按两个分度值合成
     uB_x = math.sqrt(2) * dx_inst / math.sqrt(3)
-    uLx = math.sqrt(smartlab_ua(Lx) ** 2 + uB_x ** 2)
-    uLy = math.sqrt(smartlab_ua(Ly) ** 2 + uB_x ** 2)
+    uLx = math.sqrt(smartlab_ua(Lx_kept) ** 2 + uB_x ** 2)
+    uLy = math.sqrt(smartlab_ua(Ly_kept) ** 2 + uB_x ** 2)
+
+    # 各量 A / B 类分量（报告展示用；B 类 = Δ仪/√3，缝值按两个分度值合成）
+    uA_D = smartlab_ua(D_kept); uB_D = dd_inst / SQRT3
+    uA_d = smartlab_ua(d_kept); uB_d = dd_shi_inst / SQRT3
+    uA_Lx = smartlab_ua(Lx_kept); uA_Ly = smartlab_ua(Ly_kept)
+    t_D = T_FACTOR[len(D_kept)] if len(D_kept) < len(T_FACTOR) else 1.0
+    t_d = T_FACTOR[len(d_kept)] if len(d_kept) < len(T_FACTOR) else 1.0
+    t_Lx = T_FACTOR[len(Lx_kept)] if len(Lx_kept) < len(T_FACTOR) else 1.0
+    t_Ly = T_FACTOR[len(Ly_kept)] if len(Ly_kept) < len(T_FACTOR) else 1.0
 
     if min(D_corrected, d_corrected, Lx_a, Ly_a) <= 0:
         raise ValueError("零点修正后孔径、板厚及缝尺寸必须大于零")
@@ -149,8 +170,21 @@ def _compute(data: dict) -> dict:
         "d_shi": d_shi, "d_a": d_a, "d_corrected": d_corrected, "ud": ud,
         "X0": X0, "X1": X1, "Y0": Y0, "Y1": Y1,
         "Lx": Lx, "Ly": Ly, "Lx_a": Lx_a, "Ly_a": Ly_a, "uLx": uLx, "uLy": uLy,
+        # A / B 类分量与 3σ 检验（报告展示用）
+        "sD": std_dev(D_kept), "uA_D": uA_D, "uB_D": uB_D, "t_D": t_D, "n_D": len(D_kept),
+        "sd": std_dev(d_kept), "uA_d": uA_d, "uB_d": uB_d, "t_d": t_d, "n_d": len(d_kept),
+        "sLx": std_dev(Lx_kept), "uA_Lx": uA_Lx, "uB_x": uB_x, "t_Lx": t_Lx,
+        "n_Lx": len(Lx_kept),
+        "sLy": std_dev(Ly_kept), "uA_Ly": uA_Ly, "t_Ly": t_Ly, "n_Ly": len(Ly_kept),
+        "ot_D": ot_D, "ot_d": ot_d, "ot_Lx": ot_Lx, "ot_Ly": ot_Ly,
+        "D_kept": D_kept, "d_kept": d_kept, "Lx_kept": Lx_kept, "Ly_kept": Ly_kept,
         "V_p": V_p, "V_h": V_h, "V_s": V_s, "V": V,
         "uVp": uVp, "uVh": uVh, "uVs": uVs, "uV": uV,
+        # u(V) 传播式的各项传递系数（代入数据用）
+        "area": area,
+        "coef_Wd": W * d_corrected, "coef_Ld": L * d_corrected,
+        "coef_piDd": math.pi * D_corrected * d_corrected / 2,
+        "coef_Lyd": Ly_a * d_corrected, "coef_Lxd": Lx_a * d_corrected,
         "REL": uV / V * 100 if V else 0.0,
         # 变体文本只能写固定格式（%.2f/%.3f 之类），表达不了课程 2-4 的取位规则，
         # 会出现「正文 (4.68 \pm 0.02)\times10^3 而结论 4683.7 \pm 17.6」这种不一致；
@@ -230,19 +264,25 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_run("，游标卡尺零点读数 D₀ = ")
     doc.add_inline_math(f"{r['d0_card']} mm")
     doc.add_paragraph("")
-    doc.add_run("仪器误差：米尺 ΔL = ")
-    doc.add_inline_math(f"{r['dl_inst']} mm")
-    doc.add_run("，游标卡尺分度值 ΔD = ")
-    doc.add_inline_math(f"{r['dd_inst']} mm")
-    doc.add_run("，千分尺示值误差 Δd = ")
-    doc.add_inline_math(f"{r['dd_shi_inst']} mm")
-    doc.add_run("，测量显微镜分度值 Δx = ")
-    doc.add_inline_math(f"{r['dx_inst']} mm")
+    doc.add_run("仪器允差（均匀分布）：米尺 ")
+    doc.add_inline_math(r"\Delta_{\text{仪}} = " + f"{r['dl_inst']}")
+    doc.add_run(" mm，游标卡尺（50 分度）")
+    doc.add_inline_math(r"\Delta_{\text{仪}} = " + f"{r['dd_inst']}")
+    doc.add_run(" mm，螺旋测微计（一级）")
+    doc.add_inline_math(r"\Delta_{\text{仪}} = " + f"{r['dd_shi_inst']}")
+    doc.add_run(" mm，15J 测量显微镜 ")
+    doc.add_inline_math(r"\Delta_{\text{仪}} = " + f"{r['dx_inst']}")
+    doc.add_run(" mm")
 
     doc.add_heading("2. 板长与板宽", level=2)
     doc.add_paragraph("")
     doc.add_run("用米尺测量金属板长、宽各 1 次，属于单次测量，不确定度仅取 B 类（均匀分布）：")
-    doc.add_math(r"u(L) = u(W) = \frac{\Delta L}{\sqrt{3}}")
+    doc.add_paragraph("B类不确定度：")
+    doc.add_math(
+        r"u(L) = u(W) = \frac{\Delta_{\text{仪}}}{\sqrt{3}} = \frac{"
+        + f"{r['dl_inst']}" + r"}{\sqrt{3}} \approx "
+        + format_number(r["uL"], sig_figs=4) + r"\,\text{mm}"
+    )
     doc.add_paragraph("")
     doc.add_run("板长 L = ")
     doc.add_inline_math(format_measure(r["L"], r["uL"]) + r" \text{ mm}")
@@ -266,9 +306,29 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_inline_math(r"D = D_a - D_0 = " + format_measure(r["D_corrected"], r["uD"])
                         + r" \text{ mm}")
     doc.add_paragraph("")
-    doc.add_run("合成不确定度：")
+    doc.add_run("3σ 坏值检验：")
+    doc.add_inline_math(
+        r"3\sigma = 3 \times " + format_number(r["sD"] * r["t_D"], sig_figs=4)
+        + r" \approx " + format_number(3 * r["sD"] * r["t_D"], sig_figs=4) + r"\,\text{mm}"
+    )
+    doc.add_paragraph(outlier_note(r["ot_D"], unit=" mm", digits=4))
+    doc.add_paragraph("A类不确定度：")
     doc.add_math(
-        r"u(D) = \sqrt{u_A(D)^2 + \left(\frac{\Delta D}{\sqrt{3}}\right)^2} = "
+        r"u_A(D) = \frac{t\,s(D)}{\sqrt{n}} = \frac{" + f"{r['t_D']:g}" + r" \times "
+        + format_number(r["sD"], sig_figs=5) + r"}{\sqrt{" + f"{r['n_D']}" + r"}} \approx "
+        + format_number(r["uA_D"], sig_figs=5) + r"\,\text{mm}"
+    )
+    doc.add_paragraph("B类不确定度：")
+    doc.add_math(
+        r"u_B(D) = \frac{\Delta_{\text{仪}}}{\sqrt{3}} = \frac{"
+        + f"{r['dd_inst']}" + r"}{\sqrt{3}} \approx "
+        + format_number(r["uB_D"], sig_figs=5) + r"\,\text{mm}"
+    )
+    doc.add_paragraph("合成不确定度：")
+    doc.add_math(
+        r"u(D) = \sqrt{u_A(D)^2 + u_B(D)^2} = \sqrt{"
+        + format_number(r["uA_D"], sig_figs=5) + r"^2 + "
+        + format_number(r["uB_D"], sig_figs=5) + r"^2} \approx "
         + format_number(r["uD"], sig_figs=5) + r" \text{ mm}"
     )
 
@@ -284,9 +344,29 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_inline_math(r"d = d_a - d_0 = " + format_measure(r["d_corrected"], r["ud"])
                         + r" \text{ mm}")
     doc.add_paragraph("")
-    doc.add_run("合成不确定度（一级千分尺示值误差 Δd = 0.004 mm）：")
+    doc.add_run("3σ 坏值检验：")
+    doc.add_inline_math(
+        r"3\sigma = 3 \times " + format_number(r["sd"] * r["t_d"], sig_figs=4)
+        + r" \approx " + format_number(3 * r["sd"] * r["t_d"], sig_figs=4) + r"\,\text{mm}"
+    )
+    doc.add_paragraph(outlier_note(r["ot_d"], unit=" mm", digits=5))
+    doc.add_paragraph("A类不确定度：")
     doc.add_math(
-        r"u(d) = \sqrt{u_A(d)^2 + \left(\frac{\Delta d}{\sqrt{3}}\right)^2} = "
+        r"u_A(d) = \frac{t\,s(d)}{\sqrt{n}} = \frac{" + f"{r['t_d']:g}" + r" \times "
+        + format_number(r["sd"], sig_figs=5) + r"}{\sqrt{" + f"{r['n_d']}" + r"}} \approx "
+        + format_number(r["uA_d"], sig_figs=5) + r"\,\text{mm}"
+    )
+    doc.add_paragraph("B类不确定度：")
+    doc.add_math(
+        r"u_B(d) = \frac{\Delta_{\text{仪}}}{\sqrt{3}} = \frac{"
+        + f"{r['dd_shi_inst']}" + r"}{\sqrt{3}} \approx "
+        + format_number(r["uB_d"], sig_figs=5) + r"\,\text{mm}"
+    )
+    doc.add_paragraph("合成不确定度：")
+    doc.add_math(
+        r"u(d) = \sqrt{u_A(d)^2 + u_B(d)^2} = \sqrt{"
+        + format_number(r["uA_d"], sig_figs=5) + r"^2 + "
+        + format_number(r["uB_d"], sig_figs=5) + r"^2} \approx "
         + format_number(r["ud"], sig_figs=5) + r" \text{ mm}"
     )
 
@@ -311,13 +391,44 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_run("，缝宽：")
     doc.add_inline_math(r"L_y = " + format_measure(r["Ly_a"], r["uLy"]) + r" \text{ mm}")
     doc.add_paragraph("")
-    doc.add_run("每个缝值由两个读数之差得到，B 类不确定度按两个分度值合成：")
-    doc.add_math(
-        r"u_B = \frac{\sqrt{2}\,\Delta x}{\sqrt{3}}, \quad "
-        r"u(Lx) = \sqrt{u_A(Lx)^2 + u_B^2} = " + format_number(r["uLx"], sig_figs=5) + r" \text{ mm}"
+    doc.add_run("每个缝值由两个读数之差得到（一个缝值含两个分度值），逐对求差后作 3σ 检验：")
+    doc.add_inline_math(
+        r"3\sigma = 3 \times " + format_number(r["sLx"] * r["t_Lx"], sig_figs=4)
+        + r" \approx " + format_number(3 * r["sLx"] * r["t_Lx"], sig_figs=4)
+        + r"\,\text{mm}"
     )
-    doc.add_run("，u(Ly) = ")
-    doc.add_inline_math(format_number(r["uLy"], sig_figs=5) + r" \text{ mm}")
+    doc.add_paragraph("缝长：" + outlier_note(r["ot_Lx"], unit=" mm", digits=5))
+    doc.add_paragraph("缝宽：" + outlier_note(r["ot_Ly"], unit=" mm", digits=5))
+    doc.add_paragraph("A类不确定度：")
+    doc.add_math(
+        r"u_A(L_x) = \frac{t\,s(L_x)}{\sqrt{n}} = \frac{" + f"{r['t_Lx']:g}" + r" \times "
+        + format_number(r["sLx"], sig_figs=5) + r"}{\sqrt{" + f"{r['n_Lx']}" + r"}} \approx "
+        + format_number(r["uA_Lx"], sig_figs=5) + r"\,\text{mm}"
+    )
+    doc.add_math(
+        r"u_A(L_y) = \frac{t\,s(L_y)}{\sqrt{n}} = \frac{" + f"{r['t_Ly']:g}" + r" \times "
+        + format_number(r["sLy"], sig_figs=5) + r"}{\sqrt{" + f"{r['n_Ly']}" + r"}} \approx "
+        + format_number(r["uA_Ly"], sig_figs=5) + r"\,\text{mm}"
+    )
+    doc.add_paragraph("B类不确定度：")
+    doc.add_math(
+        r"u_B = \frac{\sqrt{2}\,\Delta_{\text{仪}}}{\sqrt{3}} = \frac{\sqrt{2} \times "
+        + f"{r['dx_inst']}" + r"}{\sqrt{3}} \approx "
+        + format_number(r["uB_x"], sig_figs=5) + r"\,\text{mm}"
+    )
+    doc.add_paragraph("合成不确定度：")
+    doc.add_math(
+        r"u(L_x) = \sqrt{u_A(L_x)^2 + u_B^2} = \sqrt{"
+        + format_number(r["uA_Lx"], sig_figs=5) + r"^2 + "
+        + format_number(r["uB_x"], sig_figs=5) + r"^2} \approx "
+        + format_number(r["uLx"], sig_figs=5) + r" \text{ mm}"
+    )
+    doc.add_math(
+        r"u(L_y) = \sqrt{u_A(L_y)^2 + u_B^2} = \sqrt{"
+        + format_number(r["uA_Ly"], sig_figs=5) + r"^2 + "
+        + format_number(r["uB_x"], sig_figs=5) + r"^2} \approx "
+        + format_number(r["uLy"], sig_figs=5) + r" \text{ mm}"
+    )
 
     doc.add_heading("6. 体积计算与不确定度", level=2)
     doc.add_paragraph("")
@@ -343,12 +454,21 @@ def _generate_docx(data: dict, output_path: str):
         r"\frac{u(V_s)}{V_s} = \sqrt{\left(\frac{u(L_x)}{L_x}\right)^2 + \left(\frac{u(L_y)}{L_y}\right)^2 + \left(\frac{u(d)}{d}\right)^2}"
     )
     doc.add_paragraph("")
-    doc.add_paragraph("板、孔、缝共用厚度测量，因此从原始独立尺寸传播不确定度。令 A=LW-πD²/4-L_xL_y，厚度贡献为 A²u(d)²。")
-    doc.add_run("金属体体积的绝对不确定度：")
+    doc.add_paragraph("板、孔、缝共用厚度测量，因此从原始独立尺寸传播不确定度。"
+                      "令 a=Wd、b=Ld、c=πDd/2、e=L_yd、f=L_xd，"
+                      "A=LW-πD²/4-L_xL_y（即对厚度的传递系数），则金属体体积的绝对不确定度：")
+    # 展开成 6 项后整条超过版心（根号内不能跨行拆分），故用传递系数符号 a~f、A 书写。
     doc.add_math(
-        r"u(V) = \sqrt{(Wd)^2u(L)^2+(Ld)^2u(W)^2+(\pi Dd/2)^2u(D)^2+(L_yd)^2u(L_x)^2+(L_xd)^2u(L_y)^2+A^2u(d)^2} = "
-        + format_number(r["uV"], r["uV"]) + r" \text{ mm}^3"
+        r"u(V) = \sqrt{a^2u(L)^2 + b^2u(W)^2 + c^2u(D)^2 + e^2u(L_x)^2 + f^2u(L_y)^2 + A^2u(d)^2}"
     )
+    doc.add_paragraph("代入数据（根号内各项平方和 = %s mm⁶）："
+                      % format_number(r["uV"] ** 2, sig_figs=5))
+    doc.add_math(
+        r"u(V) = \sqrt{" + format_number(r["uV"] ** 2, sig_figs=5) + r"} \approx "
+        + format_number(r["uV"], sig_figs=5) + r"\,\text{mm}^3"
+    )
+    doc.add_paragraph("按课程取位规则（不确定度只进不舍取 1 位有效数字），"
+                       + f"u(V) = {format_number(r['uV'], r['uV'])} mm³。")
     doc.add_paragraph("")
     doc.add_run("最终结果：")
     v_power = math.floor(math.log10(r["V"]))

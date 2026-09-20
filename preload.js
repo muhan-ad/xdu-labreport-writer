@@ -10,6 +10,11 @@ contextBridge.exposeInMainWorld('labAPI', {
   pickTableImage: () => ipcRenderer.invoke('pick-table-image'),
   saveTableImage: (expPath, dataUrl) => ipcRenderer.invoke('save-table-image', expPath, dataUrl),
   ocrRecognize: (params) => ipcRenderer.invoke('ocr-recognize', params),
+  // 识图训练样本（三件套：数据图片 + AI 识别 + 人工校对）
+  saveVisionSample: (payload) => ipcRenderer.invoke('save-vision-sample', payload),
+  listVisionSamples: () => ipcRenderer.invoke('list-vision-samples'),
+  readVisionSample: (payload) => ipcRenderer.invoke('read-vision-sample', payload),
+  markVisionSubmitted: (payload) => ipcRenderer.invoke('mark-vision-submitted', payload),
   reportText: (filePath) => ipcRenderer.invoke('report-text', filePath),
   scanExperiments: () => ipcRenderer.invoke('scan-experiments'),
   openFile: (filePath) => ipcRenderer.invoke('open-file', filePath),
@@ -45,7 +50,7 @@ contextBridge.exposeInMainWorld('labAPI', {
   readDocxBuffer: (filePath) => ipcRenderer.invoke('read-docx-buffer', filePath),
   // 内置音频（彩蛋播放）
   readAudioFile: () => ipcRenderer.invoke('read-audio-file'),
-  // 「请勿点击」彩蛋的窗口级效果（主进程侧保证复原；渲染层另有看门狗）
+  // 「请勿点击」彩蛋的窗口级效果（抖动 / 闪退 / 磁盘剩余空间查询）
   dangerShake: () => ipcRenderer.invoke('danger-window-shake'),
   dangerVanish: () => ipcRenderer.invoke('danger-window-vanish'),
   dangerDiskSpace: () => ipcRenderer.invoke('danger-disk-space'),

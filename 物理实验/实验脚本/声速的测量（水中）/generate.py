@@ -54,10 +54,28 @@ def _compute_method(L_values: list[float], f: float, t_celsius: float) -> dict:
         lam = abs(L_values[i + N_HALF] - L_values[i]) / 3.0
         lambda_vals.append(lam)
 
-    lambda_bar = mean(lambda_vals)
+    # 6 个逐差波长是同一被测量（波长）的等精度重复测量，先作 3σ 坏值检验
+    # （迭代剔除），再用保留值重算平均值、标准差与不确定度。
+    _ot = outlier_test(lambda_vals)
+    lam_kept = _ot["kept"]
+    n_kept = _ot["n_kept"]
+    t_used = t_factor(n_kept) if n_kept >= 2 else 0.0
+
+    lambda_bar = mean(lam_kept)
+
+    # λ̄ = 0（所有 L 读数相同或全为 0）时 v 与不确定度都无定义，给出明确报错
+    if lambda_bar <= 0:
+        print("[错误] 平均波长 λ̄ 非正：各极大值位置读数相同或全为 0，请检查 L1 / L2 数据。")
+        return None
+    if f <= 0:
+        print(f"[错误] 谐振频率 f = {f:g} kHz 必须为正数，请检查输入。")
+        return None
 
     # λ 不确定度：A 类（均值标准误）+ B 类（仪器/√3）
-    u_lambda_A = type_a(lambda_vals)
+    lambda_sumsq = sum((x - lambda_bar) ** 2 for x in lam_kept)
+    lambda_std = std_dev(lam_kept)
+    sigma_lambda = lambda_std * t_used
+    u_lambda_A = type_a(lam_kept)
     u_lambda_B = type_b(DELTA_X_INST)
     u_lambda = combine(u_lambda_A, u_lambda_B)
 
@@ -79,6 +97,12 @@ def _compute_method(L_values: list[float], f: float, t_celsius: float) -> dict:
         "L": L_values,
         "lambda_vals": lambda_vals,
         "lambda_bar": lambda_bar,
+        "ot": _ot,
+        "n_kept": n_kept,
+        "t_used": t_used,
+        "lambda_sumsq": lambda_sumsq,
+        "lambda_std": lambda_std,
+        "sigma_lambda": sigma_lambda,
         "u_lambda_A": u_lambda_A,
         "u_lambda_B": u_lambda_B,
         "u_lambda": u_lambda,
@@ -99,7 +123,13 @@ def _compute(data: dict) -> dict:
     L2 = [float(v) for v in data["L2"]]
 
     r1 = _compute_method(L1, f_khz, t_celsius)
+    if r1 is None:
+        print("[错误] 共振干涉法（L1）数据异常，已终止，未生成报告。")
+        return None
     r2 = _compute_method(L2, f_khz, t_celsius)
+    if r2 is None:
+        print("[错误] 位相比较法（L2）数据异常，已终止，未生成报告。")
+        return None
 
     v_avg = mean([r1["v_meas"], r2["v_meas"]])
     r = {
@@ -169,42 +199,79 @@ def _write_method_section(doc, r: dict, table_label: str):
     doc.add_paragraph("该水温下纯水声速理论值（抛物型经验公式）：")
     doc.add_math(
         rf"v = {V_PEAK} - {K_WATER}\left( {T_PEAK} - t \right)^{{2}} = "
-        rf"{r['v_theory']:.3f}\,\mathrm{{m/s}}"
+        rf"{V_PEAK} - {K_WATER} \times \left( {T_PEAK} - {r['t']:g} \right)^{{2}}"
+        rf" \approx {r['v_theory']:.3f}\,\mathrm{{m/s}}"
     )
 
     # ── 平均波长与声速 ──
+    lam_terms = " + ".join(f"{v:.3f}" for v in lam)
     doc.add_paragraph("平均波长：")
     doc.add_math(
         rf"\bar{{\lambda}} = \frac{{1}}{{{N_LAMBDA}}}"
         rf"\sum_{{i=1}}^{{{N_LAMBDA}}} \lambda_i = "
-        rf"{lam_bar:.3f}\,\mathrm{{mm}}"
+        rf"\frac{{{lam_terms}}}{{{N_LAMBDA}}}"
+        rf" \approx {lam_bar:.3f}\,\mathrm{{mm}}"
     )
+
+    # ── 3σ 坏值检验（λ_i 为同一被测量的等精度重复测量） ──
+    doc.add_paragraph("对 6 个逐差波长作 3σ 坏值检验：")
+    doc.add_math(
+        rf"s_{{\lambda}} = \sqrt{{\frac{{\sum_{{i=1}}^{{{N_LAMBDA}}}"
+        rf"(\lambda_i - \bar{{\lambda}})^{{2}}}}{{{N_LAMBDA - 1}}}}} = "
+        rf"\sqrt{{\frac{{{format_scientific(r['lambda_sumsq'], 4)}}}"
+        rf"{{{N_LAMBDA - 1}}}}}"
+        rf" \approx {format_number(r['lambda_std'], sig_figs=4)}\,\mathrm{{mm}}"
+    )
+    doc.add_math(
+        rf"\sigma_{{\lambda}} = s_{{\lambda}} \times t_{{0.683}} = "
+        rf"{format_number(r['lambda_std'], sig_figs=4)} \times {r['t_used']:.2f}"
+        rf" \approx {format_number(r['sigma_lambda'], sig_figs=3)}\,\mathrm{{mm}}"
+    )
+    doc.add_math(
+        rf"3\sigma_{{\lambda}} \approx {format_number(3 * r['sigma_lambda'], sig_figs=3)}\,\mathrm{{mm}}"
+    )
+    doc.add_paragraph(outlier_note(r["ot"], unit=" mm", digits=4))
+
     doc.add_paragraph("计算声速结果：")
     doc.add_math(
         rf"\bar{{v}} = f \cdot \bar{{\lambda}} = "
-        rf"{r['f']:.4f} \times {lam_bar:.3f} = "
-        rf"{r['v_meas']:.3f}\,\mathrm{{m/s}}"
+        rf"{r['f']:.4f} \times {lam_bar:.3f}"
+        rf" \approx {r['v_meas']:.3f}\,\mathrm{{m/s}}"
     )
 
-    # ── 波长不确定度 ──
-    doc.add_paragraph("波长不确定度：")
+    # ── 波长不确定度：A 类 / B 类 / 合成（三段标签） ──
+    doc.add_paragraph("A类不确定度：")
     doc.add_math(
-        rf"\Delta\lambda = \sqrt{{(\Delta\lambda_A)^2 + "
-        rf"(\Delta\lambda_B)^2}} = "
-        rf"\sqrt{{\frac{{\sum_{{i=1}}^{{{N_LAMBDA}}}"
-        rf"(\lambda_i - \bar{{\lambda}})^2}}{{{N_LAMBDA} \times "
-        rf"({N_LAMBDA} - 1)}} + "
-        rf"\left(\frac{{\Delta x_{{\text{{仪}}}}}}{{\sqrt{{3}}}}\right)^2}} = "
-        rf"{r['u_lambda']:.3f}\,\mathrm{{mm}}"
+        rf"\Delta\lambda_{{A}} = \frac{{t \cdot s_{{\lambda}}}}{{\sqrt{{n}}}} = "
+        rf"\frac{{{r['t_used']:.2f} \times {format_number(r['lambda_std'], sig_figs=4)}}}"
+        rf"{{\sqrt{{{r['n_kept']}}}}}"
+        rf" \approx {format_number(r['u_lambda_A'], sig_figs=4)}\,\mathrm{{mm}}"
+    )
+    doc.add_paragraph("B类不确定度：")
+    doc.add_math(
+        rf"\Delta\lambda_{{B}} = \frac{{\Delta_{{\text{{仪}}}}}}{{\sqrt{{3}}}} = "
+        rf"\frac{{{DELTA_X_INST}}}{{\sqrt{{3}}}}"
+        rf" \approx {format_number(r['u_lambda_B'], sig_figs=4)}\,\mathrm{{mm}}"
+    )
+    doc.add_paragraph("合成不确定度：")
+    doc.add_math(
+        rf"\Delta\lambda = \sqrt{{\Delta\lambda_{{A}}^{{2}} + "
+        rf"\Delta\lambda_{{B}}^{{2}}}} = "
+        rf"\sqrt{{({format_number(r['u_lambda_A'], sig_figs=4)})^{{2}} + "
+        rf"({format_number(r['u_lambda_B'], sig_figs=4)})^{{2}}}}"
+        rf" \approx {format_number(r['u_lambda'], sig_figs=3)}\,\mathrm{{mm}}"
     )
 
     # ── 声速误差 ──
     doc.add_paragraph("声速误差：")
     doc.add_math(
         rf"\Delta v = \sqrt{{"
-        rf"\left(\frac{{\Delta\lambda}}{{\bar{{\lambda}}}}\right)^2 + "
-        rf"\left(\frac{{\Delta f}}{{f}}\right)^2}} \cdot \bar{{v}} = "
-        rf"{r['u_v']:.3f}\,\mathrm{{m/s}}"
+        rf"\left(\frac{{\Delta\lambda}}{{\bar{{\lambda}}}}\right)^{{2}} + "
+        rf"\left(\frac{{\Delta f}}{{f}}\right)^{{2}}}} \cdot \bar{{v}} = "
+        rf"\sqrt{{\left(\frac{{{format_number(r['u_lambda'], sig_figs=3)}}}{{{lam_bar:.3f}}}\right)^{{2}} + "
+        rf"\left(\frac{{{DELTA_F}}}{{{r['f']:.4f}}}\right)^{{2}}}}"
+        rf" \times {r['v_meas']:.3f}"
+        rf" \approx {r['u_v']:.3f}\,\mathrm{{m/s}}"
     )
 
     # ── 实验结果 ──
@@ -215,10 +282,12 @@ def _write_method_section(doc, r: dict, table_label: str):
     )
 
     # ── 相对误差 ──
-    doc.add_paragraph("相对误差：")
+    doc.add_paragraph("相对误差（只进不舍取 1 位有效数字）：")
     doc.add_math(
-        rf"E = \left|\frac{{v_{{\text{{理论}}}} - \bar{{v}}}}{{v_{{\text{{理论}}}}}}\right| \cdot "
-        rf"100\% = {format_percent(r['E'])}\%"
+        rf"E = \left|\frac{{v_{{\text{{理论}}}} - \bar{{v}}}}"
+        rf"{{v_{{\text{{理论}}}}}}\right| \cdot 100\% = \left|\frac{{"
+        rf"{r['v_theory']:.3f} - {r['v_meas']:.3f}}}{{{r['v_theory']:.3f}}}"
+        rf"\right| \cdot 100\% \approx {format_percent(r['E'])}\%"
     )
 
 
@@ -245,6 +314,8 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 2. 计算 ──
     r = _compute(data)
+    if r is None:
+        return
     r1, r2 = r["m1"], r["m2"]
 
     # 控制台输出

@@ -1,7 +1,9 @@
-"""薄透镜焦距的测量 — 数据处理脚本。
+"""薄透镜焦距的测量（凸透镜） — 数据处理脚本。
 
 仅覆盖凸透镜三种方法：自准法、物距像距法、共轭法。
 数据处理（不确定度分析）仅针对自准法和物距像距法，共轭法只做原始数据展示。
+
+凹透镜版本（自准法 / 物像法）见同级目录 实验脚本/薄透镜焦距的测量（凹透镜）/。
 """
 
 import math
@@ -19,6 +21,30 @@ from common.variants import compose
 DELTA_INSTRUMENT = 0.05  # cm, Δ_仪 = 0.5 × 0.1cm（光具座最小分度 0.1cm）
 
 MIN_CONJ_ROWS = 3  # 共轭法至少测几次（少于这个数视为填得不够，不出报告）
+
+
+# 逐项展开的上限：超过这个项数就改代入「求和值」。
+# 根号/分式在 Word 里不能跨行拆分，8 项展开会让公式远超版心而顶出页面；
+# 教材在求和处也是直接代入求和结果（如 √(Σ(x−x̄)²/(n−1)) = √(0.02879/7)）。
+MAX_TERMS_INLINE = 5
+
+
+def _sum_str(vals, prec: int) -> str:
+    """把一串数值写成 LaTeX 加法式（「带入数据」那一步用）。
+
+    项数超过 MAX_TERMS_INLINE 时给出求和值，避免公式过长越界。
+    """
+    vals = list(vals)
+    if len(vals) > MAX_TERMS_INLINE:
+        return f"{sum(vals):.{prec}f}"
+    out = ""
+    for i, v in enumerate(vals):
+        mag = f"{abs(v):.{prec}f}"
+        if i == 0:
+            out = ("-" if v < 0 else "") + mag
+        else:
+            out += (" - " if v < 0 else " + ") + mag
+    return out
 
 
 # （方式三：_create_template 已移除，数据真相为 data.json）
@@ -75,21 +101,14 @@ def _compute(data: dict) -> dict:
     x2_vals = [r[3] for r in _conj]
 
     # ── 自准法 ──
-    f_auto_bar = mean(f_auto)
-    s_auto = std_dev(f_auto)
-    sigma_auto = s_auto * 1.0  # t=1 (n=8>6)
-
-    # 坏值检查
-    auto_bad = []
-    for i, fi in enumerate(f_auto):
-        if abs(fi - f_auto_bar) > 3 * sigma_auto:
-            auto_bad.append(i)
-    auto_clean = [x for i, x in enumerate(f_auto) if i not in auto_bad]
-    n_auto_clean = len(auto_clean)
-    if n_auto_clean < len(f_auto):
-        f_auto_bar = mean(auto_clean)
-        s_auto = std_dev(auto_clean)
-        sigma_auto = s_auto * 1.0
+    # 3σ 坏值检验（8 次等精度重复测量，迭代剔除）；之后一律用保留数据重算
+    ot_auto = outlier_test(f_auto)
+    auto_clean = ot_auto["kept"]
+    n_auto_clean = ot_auto["n_kept"]
+    auto_bad = [i - 1 for i, _ in ot_auto["bad"]]      # 兼容旧字段：被剔除值的下标（0 起）
+    f_auto_bar = mean(auto_clean)
+    s_auto = ot_auto["std"]                            # 保留数据的标准差
+    sigma_auto = ot_auto["sigma"]                      # σ = s × t_{0.683}(n)
 
     uA_auto = type_a(auto_clean)
     uB_auto = type_b(DELTA_INSTRUMENT)
@@ -97,24 +116,21 @@ def _compute(data: dict) -> dict:
     e_auto = u_auto / f_auto_bar * 100
 
     # ── 物距像距法 ──
-    v_bar = mean(v_vals)
-    s_v = std_dev(v_vals)
-    sigma_v = s_v * 1.0  # t=1 (n=8>6)
-
-    # 坏值检查
-    v_bad = []
-    for i, vi in enumerate(v_vals):
-        if abs(vi - v_bar) > 3 * sigma_v:
-            v_bad.append(i)
-    v_clean = [x for i, x in enumerate(v_vals) if i not in v_bad]
-    n_v_clean = len(v_clean)
-    if n_v_clean < len(v_vals):
-        v_bar = mean(v_clean)
-        s_v = std_dev(v_clean)
-        sigma_v = s_v * 1.0
+    # 3σ 坏值检验（8 次等精度重复测量，迭代剔除）
+    ot_v = outlier_test(v_vals)
+    v_clean = ot_v["kept"]
+    n_v_clean = ot_v["n_kept"]
+    v_bad = [i - 1 for i, _ in ot_v["bad"]]
+    v_bar = mean(v_clean)
+    s_v = ot_v["std"]
+    sigma_v = ot_v["sigma"]
 
     # 每个 v 对应的 f
-    f_uv_vals = [u * vi / (u + vi) for vi in v_vals]
+    if u + v_bar == 0:
+        print(f"[错误] 物距与像距平均值之和为零（u = {u:g} cm，v̄ = {v_bar:g} cm），"
+              "无法计算物距像距法焦距，请检查 u / v 数据。")
+        return None
+    f_uv_vals = [u * vi / (u + vi) for vi in v_clean]
     f_uv_bar = mean(f_uv_vals)
 
     # Δv 不确定度
@@ -149,9 +165,11 @@ def _compute(data: dict) -> dict:
         "f_auto_bar": f_auto_bar, "s_auto": s_auto, "sigma_auto": sigma_auto,
         "auto_bad": auto_bad, "n_auto_clean": n_auto_clean,
         "uA_auto": uA_auto, "uB_auto": uB_auto, "u_auto": u_auto, "e_auto": e_auto,
+        "ot_auto": ot_auto, "f_auto_clean": auto_clean,
         # 物距像距法
         "v_bar": v_bar, "s_v": s_v, "sigma_v": sigma_v, "v_bad": v_bad,
         "n_v_clean": n_v_clean, "f_uv_vals": f_uv_vals, "f_uv_bar": f_uv_bar,
+        "ot_v": ot_v, "v_clean": v_clean,
         "uA_v": uA_v, "uB_v": uB_v, "u_v": u_v, "u_f_uv": u_f_uv, "e_uv": e_uv,
         # 共轭法
         "d_vals": d_vals, "dd_vals": dd_vals, "f_conj_vals": f_conj_vals,
@@ -198,6 +216,8 @@ def _generate_docx(data: dict, output_path: str):
     # ═══════════════════════════════════════════
 
     r = _compute(data)
+    if r is None:
+        return
     _UNPACK_KEYS = (
         "f_auto u v_vals x0 x3_vals x1_vals x2_vals "
         "f_auto_bar s_auto sigma_auto auto_bad n_auto_clean "
@@ -212,6 +232,8 @@ def _generate_docx(data: dict, output_path: str):
      v_bar, s_v, sigma_v, v_bad, n_v_clean, f_uv_vals, f_uv_bar,
      uA_v, uB_v, u_v, u_f_uv, e_uv,
      d_vals, dd_vals, f_conj_vals) = (r[k] for k in _UNPACK_KEYS)
+    ot_auto = r["ot_auto"]; ot_v = r["ot_v"]
+    f_auto_clean = r["f_auto_clean"]; v_clean = r["v_clean"]
 
     variants = compose(SCRIPT_DIR, r)
 
@@ -222,7 +244,7 @@ def _generate_docx(data: dict, output_path: str):
     doc = DocxReportWriter(output_path)
 
     # ── 标题 ──
-    doc.add_title("薄透镜焦距的测量")
+    doc.add_title("薄透镜焦距的测量（凸透镜）")
     doc.add_student_info()
 
     # ── 变体章节：实验原理 / 实验方法（置于数据记录前） ──
@@ -291,53 +313,67 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("计算焦距平均值：")
     doc.add_math(
         rf"\bar{{f}} = \frac{{1}}{{{n_auto_clean}}}\sum_{{i=1}}^{{{n_auto_clean}}} f_i"
-        rf" = {f_auto_bar:.5f} \approx {f_auto_bar:.2f} \mathrm{{cm}}"
+        rf" = \frac{{{_sum_str(f_auto_clean, 2)}}}{{{n_auto_clean}}}"
+        rf" \approx {f_auto_bar:.2f} \mathrm{{cm}}"
     )
     doc.add_paragraph("计算标准差：")
     doc.add_math(
         rf"s = \sqrt{{\frac{{\sum_{{i=1}}^{{{n_auto_clean}}}(f_i - \bar{{f}})^2}}"
-        rf"{{{n_auto_clean} - 1}}}} = {s_auto:.6f} \approx {s_auto:.2f} \mathrm{{cm}}"
+        rf"{{{n_auto_clean} - 1}}}}"
+        rf" = \sqrt{{\frac{{{_sum_str([(x - f_auto_bar) ** 2 for x in f_auto_clean], 6)}}}"
+        rf"{{{n_auto_clean - 1}}}}} \approx {s_auto:.2f} \mathrm{{cm}}"
     )
     doc.add_paragraph("")
     doc.add_run("n = ")
     doc.add_inline_math(f"{n_auto_clean}")
-    doc.add_run(" > 6，则 t 分布因子取 1，")
-    doc.add_inline_math(rf"\sigma = s \times t = {sigma_auto:.2f} \mathrm{{cm}}")
-
-    if auto_bad:
-        doc.add_paragraph(f"经检查，第{[i + 1 for i in auto_bad]}次测量超出 3σ 范围，已剔除。")
-        doc.add_paragraph(f"剔除后重新计算：n = {n_auto_clean}，σ = {sigma_auto:.2f} cm。")
-    else:
-        doc.add_paragraph("经检查，所有数据均满足 3σ 原则，无需剔除坏值。")
+    doc.add_run("，按教材 n > 6 时 σ ≈ s 取 t = ")
+    doc.add_inline_math(f"{t_factor(n_auto_clean):g}")
+    doc.add_run("，")
+    doc.add_math(
+        rf"\sigma = s \times t = {s_auto:.6f} \times {t_factor(n_auto_clean):g}"
+        rf" \approx {sigma_auto:.2f} \mathrm{{cm}}"
+    )
+    doc.add_paragraph("")
+    doc.add_run("3σ 检验：")
+    doc.add_inline_math(
+        rf"3\sigma = 3 \times {sigma_auto:.6f} \approx {3 * sigma_auto:.3f} \mathrm{{cm}}"
+    )
+    doc.add_paragraph(outlier_note(ot_auto, unit=" cm", digits=3))
 
     doc.add_paragraph("(2) 不确定度的计算")
-    doc.add_paragraph("A 类不确定度：")
+    doc.add_paragraph("A类不确定度：")
     doc.add_math(
         rf"\Delta f_A = \frac{{\sigma}}{{\sqrt{{{n_auto_clean}}}}}"
-        rf" = {uA_auto:.6f} \approx {uA_auto:.2f} \mathrm{{cm}}"
+        rf" = \frac{{{sigma_auto:.6f}}}{{\sqrt{{{n_auto_clean}}}}}"
+        rf" \approx {uA_auto:.2f} \mathrm{{cm}}"
     )
-    doc.add_paragraph("B 类不确定度：")
+    doc.add_paragraph("B类不确定度：")
     doc.add_math(
-        r"\Delta_{\text{仪器}} = 0.5 \times 0.1 = 0.05 \mathrm{cm}"
+        r"\Delta_{\text{仪}} = 0.5 \times 0.1 = 0.05 \mathrm{cm}"
     )
     doc.add_math(
-        rf"\Delta f_B = \frac{{\Delta_{{\text{{仪器}}}}}}{{\sqrt{{3}}}}"
-        rf" = {uB_auto:.6f} \approx {uB_auto:.2f} \mathrm{{cm}}"
+        rf"\Delta f_B = \frac{{\Delta_{{\text{{仪}}}}}}{{\sqrt{{3}}}}"
+        rf" = \frac{{0.05}}{{\sqrt{{3}}}} \approx {uB_auto:.2f} \mathrm{{cm}}"
     )
     doc.add_paragraph("合成不确定度：")
     doc.add_math(
         rf"\Delta f = \sqrt{{(\Delta f_A)^2 + (\Delta f_B)^2}}"
-        rf" = {u_auto:.6f} \approx {u_auto:.2f} \mathrm{{cm}}"
+        rf" = \sqrt{{{uA_auto:.6f}^2 + {uB_auto:.6f}^2}}"
+        rf" \approx {u_auto:.2f} \mathrm{{cm}}"
     )
 
     doc.add_paragraph("(3) 结果表示")
-    # 使用 format_number 对齐不确定度末位
+    # format_number(值, 不确定度) 只把**数值**按不确定度末位对齐，不含 ± 项，
+    # 所以这里要把不确定度本身也格式化出来（此前漏了，结果写成 (15.00) 而没有 ±）。
     f_auto_fmt = format_number(f_auto_bar, u_auto)
+    u_auto_fmt = format_number(u_auto, u_auto)
     doc.add_math(
-        rf"f = \bar{{f}} \pm \Delta f = ({f_auto_fmt}) \mathrm{{cm}}"
+        rf"f = \bar{{f}} \pm \Delta f = ({f_auto_fmt} \pm {u_auto_fmt}) \mathrm{{cm}}"
     )
     doc.add_math(
-        rf"E = \frac{{\Delta f}}{{\bar{{f}}}} \times 100\% = {e_auto:.2f}\%"
+        rf"E = \frac{{\Delta f}}{{\bar{{f}}}} \times 100\%"
+        rf" = \frac{{{u_auto:.6f}}}{{{f_auto_bar:.5f}}} \times 100\%"
+        rf" \approx {e_auto:.2f}\%"
     )
 
     # ── 2.2 物距像距法 ──
@@ -359,62 +395,76 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("计算像距平均值：")
     doc.add_math(
         rf"\bar{{v}} = \frac{{1}}{{{n_v_clean}}}\sum_{{i=1}}^{{{n_v_clean}}} v_i"
-        rf" = {v_bar:.5f} \approx {v_bar:.2f} \mathrm{{cm}}"
+        rf" = \frac{{{_sum_str(v_clean, 2)}}}{{{n_v_clean}}} \approx {v_bar:.2f} \mathrm{{cm}}"
     )
     doc.add_paragraph("计算标准差：")
     doc.add_math(
         rf"s = \sqrt{{\frac{{\sum_{{i=1}}^{{{n_v_clean}}}(v_i - \bar{{v}})^2}}"
-        rf"{{{n_v_clean} - 1}}}} = {s_v:.6f} \approx {s_v:.2f} \mathrm{{cm}}"
+        rf"{{{n_v_clean} - 1}}}}"
+        rf" = \sqrt{{\frac{{{_sum_str([(x - v_bar) ** 2 for x in v_clean], 6)}}}"
+        rf"{{{n_v_clean - 1}}}}} \approx {s_v:.2f} \mathrm{{cm}}"
     )
     doc.add_paragraph("")
     doc.add_run("n = ")
     doc.add_inline_math(f"{n_v_clean}")
-    doc.add_run(" > 6，则 t 分布因子取 1，")
-    doc.add_inline_math(rf"\sigma = s \times t = {sigma_v:.2f} \mathrm{{cm}}")
+    doc.add_run("，按教材 n > 6 时 σ ≈ s 取 t = ")
+    doc.add_inline_math(f"{t_factor(n_v_clean):g}")
+    doc.add_run("，")
+    doc.add_math(
+        rf"\sigma = s \times t = {s_v:.6f} \times {t_factor(n_v_clean):g}"
+        rf" \approx {sigma_v:.2f} \mathrm{{cm}}"
+    )
+    doc.add_paragraph("")
+    doc.add_run("3σ 检验：")
+    doc.add_inline_math(
+        rf"3\sigma = 3 \times {sigma_v:.6f} \approx {3 * sigma_v:.3f} \mathrm{{cm}}"
+    )
+    doc.add_paragraph(outlier_note(ot_v, unit=" cm", digits=3))
 
-    if v_bad:
-        doc.add_paragraph(f"经检查，第{[i + 1 for i in v_bad]}次测量超出 3σ 范围，已剔除。")
-    else:
-        doc.add_paragraph("经检查，所有数据均满足 3σ 原则，无需剔除坏值。")
-
-    doc.add_paragraph("A 类不确定度：")
+    doc.add_paragraph("A类不确定度：")
     doc.add_math(
         rf"\Delta v_A = \frac{{\sigma}}{{\sqrt{{{n_v_clean}}}}}"
-        rf" = {uA_v:.6f} \approx {uA_v:.2f} \mathrm{{cm}}"
+        rf" = \frac{{{sigma_v:.6f}}}{{\sqrt{{{n_v_clean}}}}}"
+        rf" \approx {uA_v:.2f} \mathrm{{cm}}"
     )
-    doc.add_paragraph("B 类不确定度：")
+    doc.add_paragraph("B类不确定度：")
     doc.add_math(
-        r"\Delta_{\text{仪器}} = 0.5 \times 0.1 = 0.05 \mathrm{cm}"
+        r"\Delta_{\text{仪}} = 0.5 \times 0.1 = 0.05 \mathrm{cm}"
     )
     doc.add_math(
-        rf"\Delta v_B = \frac{{\Delta_{{\text{{仪器}}}}}}{{\sqrt{{3}}}}"
-        rf" = {uB_v:.6f} \approx {uB_v:.2f} \mathrm{{cm}}"
+        rf"\Delta v_B = \frac{{\Delta_{{\text{{仪}}}}}}{{\sqrt{{3}}}}"
+        rf" = \frac{{0.05}}{{\sqrt{{3}}}} \approx {uB_v:.2f} \mathrm{{cm}}"
     )
-    doc.add_paragraph("合成 Δv：")
+    doc.add_paragraph("合成不确定度：")
     doc.add_math(
         rf"\Delta v = \sqrt{{(\Delta v_A)^2 + (\Delta v_B)^2}}"
-        rf" = {u_v:.6f} \approx {u_v:.2f} \mathrm{{cm}}"
+        rf" = \sqrt{{{uA_v:.6f}^2 + {uB_v:.6f}^2}}"
+        rf" \approx {u_v:.2f} \mathrm{{cm}}"
     )
 
     doc.add_paragraph("(2) 求 Δf")
     doc.add_math(
         rf"\Delta f = \frac{{u^2 \Delta v}}{{(u + \bar{{v}})^2}}"
         rf" = \frac{{{u:.2f}^2 \times {u_v:.6f}}}{{({u:.2f} + {v_bar:.2f})^2}}"
-        rf" = {u_f_uv:.6f} \approx {u_f_uv:.2f} \mathrm{{cm}}"
+        rf" \approx {u_f_uv:.2f} \mathrm{{cm}}"
     )
     doc.add_paragraph("焦距平均值：")
     doc.add_math(
         rf"\bar{{f}} = \frac{{1}}{{{len(f_uv_vals)}}}\sum_{{i=1}}^{{{len(f_uv_vals)}}} f_i"
-        rf" = {f_uv_bar:.5f} \approx {f_uv_bar:.2f} \mathrm{{cm}}"
+        rf" = \frac{{{_sum_str(f_uv_vals, 5)}}}{{{len(f_uv_vals)}}}"
+        rf" \approx {f_uv_bar:.2f} \mathrm{{cm}}"
     )
 
     doc.add_paragraph("(3) 结果表示")
     f_uv_fmt = format_number(f_uv_bar, u_f_uv)
+    u_f_uv_fmt = format_number(u_f_uv, u_f_uv)
     doc.add_math(
-        rf"f = \bar{{f}} \pm \Delta f = ({f_uv_fmt}) \mathrm{{cm}}"
+        rf"f = \bar{{f}} \pm \Delta f = ({f_uv_fmt} \pm {u_f_uv_fmt}) \mathrm{{cm}}"
     )
     doc.add_math(
-        rf"E = \frac{{\Delta f}}{{\bar{{f}}}} \times 100\% = {e_uv:.2f}\%"
+        rf"E = \frac{{\Delta f}}{{\bar{{f}}}} \times 100\%"
+        rf" = \frac{{{u_f_uv:.6f}}}{{{f_uv_bar:.5f}}} \times 100\%"
+        rf" \approx {e_uv:.2f}\%"
     )
 
     # ── 变体章节：误差分析（置于结果分析/思考题前） ──
@@ -537,7 +587,10 @@ def main():
         print("未找到 data.json 或数据为空，请先在应用中填写数据。")
         return
     _generate_docx(data, DOCX_FILE)
-    print(f"报告已生成: {DOCX_FILE}")
+    if os.path.exists(DOCX_FILE):
+        print(f"报告已生成: {DOCX_FILE}")
+    else:
+        print("[错误] 生成中止，未输出报告，请按上方提示检查数据。")
 
 
 if __name__ == "__main__":

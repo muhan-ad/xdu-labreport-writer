@@ -111,8 +111,8 @@ function openRecognizeModal() {
   }
   cancelRecognition();          // 上一次残留的识别请求先作废
   recogState = null;
-  const pane = $('recogImagePane');
-  if (pane) pane.classList.remove('zoomed');
+  const zoomBox = $('recogZoom');
+  if (zoomBox) zoomBox.style.display = 'none';   // 关掉可能残留的放大灯箱
   $('recogPick').style.display = '';
   $('recogLoading').style.display = 'none';
   $('recogResult').style.display = 'none';
@@ -125,8 +125,7 @@ function openRecognizeModal() {
   // 学生信息识别默认关闭，且记忆上次选择
   const s = loadSettings();
   $('recogStudent').checked = !!s.recogStudent;
-  // 「只填空」默认关闭：表单里通常已预填了示例数据，默认开启会把整张表锁死
-  $('recogOnlyEmpty').checked = s.recogOnlyEmpty === true;
+  // 「只填空」选项已移到人工核对界面（#recogOnlyEmptyReview），此处不再重置
   openModal('recognizeModal');
 }
 
@@ -224,7 +223,7 @@ function toScanEffect(dataUrl) {
   });
 }
 
-// ── 构造识别提示词（字段清单完全由 schema 生成，26 个实验通用）──
+// ── 构造识别提示词（字段清单完全由 schema 生成，所有实验通用）──
 function buildRecogPrompt(schema, includeStudent) {
   const lines = [];
   let n = 0;
@@ -493,40 +492,21 @@ function isFieldEmpty(v) {
   return false;
 }
 
-// ── 渲染核对界面 ──
-const RECOG_BADGE = {
-  ok: '<span class="recog-badge ok">✓ 已识别</span>',
-  warn: '<span class="recog-badge warn">⚠ 建议核对</span>',
-  fail: '<span class="recog-badge fail">✗ 未识别</span>',
-};
-
-function fmtRecogValue(f) {
-  if (f.value === null || f.value === undefined) return '';
-  if (f.type === 'array') return f.value.map(x => x === null ? '' : x).join(', ');
-  if (f.type === 'text') return String(f.value);
-  return String(f.value);
+// ── 渲染核对页（识别结果页即核对页：数据格用主表单同款结构）──
+// 「只填空字段」偏好（控件在结果页底部 #recogOnlyEmptyReview，设置里持久化）
+function recogOnlyEmptyPref() {
+  return loadSettings().recogOnlyEmpty === true;
 }
 
 function renderRecogResult() {
   if (!recogState || !recogState.fields) return;
-  const onlyEmpty = $('recogOnlyEmpty').checked;
+  const onlyEmpty = recogOnlyEmptyPref();
+  const onlyEmptyEl = $('recogOnlyEmptyReview');
+  if (onlyEmptyEl) onlyEmptyEl.checked = onlyEmpty;   // 沿用上次选择（默认关闭）
   const live = currentSchema ? readFormData() : {};
-  const groups = [];
-  const byGroup = new Map();
-  for (const g of (currentSchema.groups || [])) {
-    byGroup.set(g.name || '', []);
-  }
-  for (const f of recogState.fields) {
-    let placed = false;
-    for (const g of (currentSchema.groups || [])) {
-      if ((g.fields || []).some(x => x.key === f.key)) {
-        byGroup.get(g.name || '').push(f);
-        placed = true;
-        break;
-      }
-    }
-    if (!placed) byGroup.get('') && byGroup.get('').push(f);
-  }
+  // 识别值摊平为 {key: value}，交给主表单同款数据格渲染（renderField 的 dataOverride）
+  const data = {};
+  for (const f of recogState.fields) data[f.key] = f.value;
 
   let okN = 0, warnN = 0, failN = 0;
   for (const f of recogState.fields) {
@@ -535,64 +515,26 @@ function renderRecogResult() {
     else failN++;
   }
 
-  for (const [gname, fields] of byGroup) {
+  let html = '';
+  for (const g of (currentSchema.groups || [])) {
+    const fields = g.fields || [];
     if (!fields.length) continue;
     let body = '';
-    for (const f of fields) {
-      const empty = isFieldEmpty(live[f.key]);
-      // 「只填空」开启时，表单里已有值的字段默认不勾选、且禁止勾选
-      const lock = onlyEmpty && !empty;
-      const checked = !lock && f.value !== null && f.value !== undefined;
-      const unit = f.unit ? `<span class="recog-row-unit">/ ${escapeHtml(f.unit)}</span>` : '';
-      let input;
-      if (f.type === 'matrix') {
-        const m = Array.isArray(f.value) ? f.value : [];
-        let tbl = '<table><thead><tr><th></th>';
-        for (let c = 0; c < (f.cols || 0); c++) {
-          const cl = (currentSchemaField(f.key)?.colLabels || [])[c];
-          tbl += `<th>${escapeHtml(cl != null ? String(cl) : String(c + 1))}</th>`;
-        }
-        tbl += '</tr></thead><tbody>';
-        for (let r = 0; r < (f.rows || 0); r++) {
-          const rl = (currentSchemaField(f.key)?.rowLabels || [])[r];
-          tbl += `<tr><th>${escapeHtml(rl != null ? String(rl) : String(r + 1))}</th>`;
-          for (let c = 0; c < (f.cols || 0); c++) {
-            const cell = (m[r] && m[r][c] !== undefined) ? m[r][c] : null;
-            // 超出模型实际给出的行数 = 容器里没用到的格子，不算识别失败，不标红
-            const cls = (cell === null && r < m.length) ? 'cell-fail' : '';
-            tbl += `<td class="${cls}"><input type="number" step="any" class="recog-cell" `
-              + `data-rrow="${r}" data-rcol="${c}" data-rkey="${escapeHtml(f.key)}" `
-              + `value="${cell === null ? '' : escapeHtml(cell)}"></td>`;
-          }
-          tbl += '</tr>';
-        }
-        tbl += '</tbody></table>';
-        input = `<div class="recog-row-wide"><div class="recog-row-matrix">${tbl}</div></div>`;
-      } else if (f.type === 'array') {
-        // 数组单独占一行：一行内的宽度放不下 10~42 项，用 textarea 自动折行，整列一眼看全
-        input = `<div class="recog-row-wide"><textarea rows="2" class="recog-row-input recog-array-input" `
-          + `data-rkey="${escapeHtml(f.key)}" title="多项用逗号或空格分隔，可直接修改">`
-          + `${escapeHtml(fmtRecogValue(f))}</textarea>`
-          + `<div class="recog-array-hint">${(f.value || []).filter(x => x !== null).length} 项，逗号或空格分隔</div></div>`;
-      } else {
-        input = `<input class="recog-row-input" data-rkey="${escapeHtml(f.key)}" `
-          + `title="可直接修改" value="${escapeHtml(fmtRecogValue(f))}">`;
-      }
-      const reason = (f.status !== 'ok' && f.reason)
-        ? `<div class="recog-row-reason">${escapeHtml(f.reason)}</div>` : '';
-      // 数组/矩阵的值要占满一整行，徽标必须排在它前面，否则会被挤到下一行
-      const wide = (f.type === 'array' || f.type === 'matrix');
-      const badge = RECOG_BADGE[f.status];
-      body += `<div class="recog-row state-${f.status}${wide ? ' has-wide' : ''}${checked ? ' checked' : ''}" data-key="${escapeHtml(f.key)}">`
-        + `<input type="checkbox" class="recog-pick" ${checked ? 'checked' : ''} ${lock ? 'disabled' : ''}>`
-        + `<div class="recog-row-label">${escapeHtml(f.label)} ${unit}</div>`
-        + (wide ? badge + input : input + badge)
+    for (const fld of fields) {
+      const f = recogState.fields.find(x => x.key === fld.key);
+      const status = f ? f.status : 'fail';
+      const reason = (f && status !== 'ok' && f.reason)
+        ? `<div class="recog-field-reason">${escapeHtml(f.reason)}</div>` : '';
+      // 默认全部勾选（无需逐项选择）；取消勾选即不导入该字段
+      body += `<div class="review-field" data-status="${status}" data-key="${escapeHtml(fld.key)}">`
+        + `<label class="review-pick" title="勾选后导入该字段"><input type="checkbox" class="recog-pick" data-key="${escapeHtml(fld.key)}" checked></label>`
+        + renderField(fld, data)
         + reason
         + `</div>`;
     }
-    groups.push(`<div class="recog-group"><div class="recog-group-title">${escapeHtml(gname || '数据')}</div>${body}</div>`);
+    html += `<div class="recog-group"><div class="recog-group-title">${escapeHtml(g.name || '数据')}</div>${body}</div>`;
   }
-  $('recogFields').innerHTML = groups.join('');
+  $('recogFields').innerHTML = html;
 
   const parts = [`已识别 <b>${okN}</b> 项`];
   if (warnN) parts.push(`<span class="recog-warn-count">${warnN} 项建议核对</span>`);
@@ -600,45 +542,40 @@ function renderRecogResult() {
   $('recogSummary').innerHTML = parts.join(' · ');
 
   const noteEl = $('recogNote');
-  const allLocked = onlyEmpty && $('recogFields').querySelectorAll('.recog-pick:not(:disabled)').length === 0;
-  if (allLocked) {
+  const nonEmpty = recogState.fields.filter(f => !isFieldEmpty(data[f.key])).length;
+  if (failN) {
     noteEl.className = 'recog-note warn';
-    noteEl.textContent = '这张表的字段在表单里都已有值，且「只填空字段」开着，所以没有可填的项。若要覆盖，请关掉左下角的「只填空字段」。';
-  } else if (failN) {
-    noteEl.className = 'recog-note warn';
-    noteEl.textContent = `有 ${failN} 项没能从照片里读出来，已在下方标红。请对照左侧原图手动补齐，或换一张更清晰的照片重试。`;
+    noteEl.textContent = `有 ${failN} 项没能从照片里读出来，已标红。请对照左侧原图手动补齐，或换一张更清晰的照片重试。`;
   } else if (warnN) {
     noteEl.className = 'recog-note warn';
     noteEl.textContent = `有 ${warnN} 项建议核对（标黄）。这些是模型自己没把握、或与教材参考值/表格规律对不上的项，请重点看一遍。`;
+  } else if (onlyEmpty && nonEmpty === 0) {
+    noteEl.className = 'recog-note warn';
+    noteEl.textContent = '识别结果里没有有效数值，且「只填空字段」开着。可关掉底部「只填空字段」或换一张更清晰的照片重试。';
   } else {
     noteEl.className = 'recog-note';
     noteEl.textContent = '所有字段都已读出，格式与规律检查没发现问题。';
   }
 
-  // 勾选框联动：勾选态高亮 + 底部按钮可用性
-  $('recogFields').querySelectorAll('.recog-row').forEach(row => {
+  // 勾选联动：取消勾选 → 整块变暗；底部按钮显示已选数
+  $('recogFields').querySelectorAll('.review-field').forEach(row => {
     const cb = row.querySelector('.recog-pick');
     if (!cb) return;
     cb.addEventListener('change', () => {
-      row.classList.toggle('checked', cb.checked);
+      row.classList.toggle('unpicked', !cb.checked);
       updateApplyBtn();
     });
   });
   updateApplyBtn();
 }
 
-function currentSchemaField(key) {
-  for (const g of (currentSchema?.groups || [])) {
-    for (const f of (g.fields || [])) if (f.key === key) return f;
-  }
-  return null;
-}
-
 function updateApplyBtn() {
-  const n = $('recogFields').querySelectorAll('.recog-pick:checked').length;
+  // 结果页即核对页：默认全选，点「导入数据」直接写入表单并存训练样本
   const btn = $('btnApplyRecognize');
-  btn.disabled = n === 0;
-  btn.textContent = n ? `填入所选（${n}）` : '填入所选';
+  const total = (recogState && Array.isArray(recogState.fields)) ? recogState.fields.length : 0;
+  const picked = $('recogFields') ? $('recogFields').querySelectorAll('.recog-pick:checked').length : 0;
+  btn.disabled = total === 0 || picked === 0;
+  btn.textContent = (picked > 0 && picked < total) ? `导入数据（已选 ${picked}/${total}）` : '导入数据';
 }
 
 // 识别会话：绑定「实验 ID + 请求 ID」。关闭弹窗/换图/换实验后，晚到的结果一律丢弃，
@@ -682,7 +619,8 @@ async function startRecognition(dataUrl, name) {
 
   const includeStudent = $('recogStudent').checked;
   const compressed = await compressImage(dataUrl);
-  $('recogImg').src = compressed;
+  // 核对用原图（打码只在数据共享时做）：手写数字看得更清；失败时回退压缩图
+  $('recogImg').src = originalDataUrl || compressed;
   // 勾了「扫描增强」就做白平衡归一化 + 对比度拉伸（p85→255），把纸面拉到纯白
   const aiImg = $('recogScan').checked ? await toScanEffect(compressed) : compressed;
   $('recogLoadingText').textContent = '正在识别数据表…（大图可能需要 10~30 秒）';
@@ -746,6 +684,7 @@ async function startRecognition(dataUrl, name) {
   }
 
   recogState = {
+    aiRaw: parsed,                // 模型原始输出（含 confidence/note）：识图训练样本的「AI 识别数据」
     dataUrl: compressed,          // 喂给模型的那张（核对界面显示用）
     originalDataUrl,              // 原图：确认后再落盘成「原始数据照片」
     expId,
@@ -765,69 +704,82 @@ async function startRecognition(dataUrl, name) {
   }
 }
 
-// ── 从核对界面读回（用户可能已手工改过识别结果）──
-function collectRecogValues() {
+// ── 核对页取值与导入 ──
+// 核对页就是识别结果页（#recogFields）；这里 scoped 读回全部值，不碰主表单 DOM。
+// 未勾选的字段视为「不导入」（值返回 null）。
+function collectReviewValues() {
+  const root = $('recogFields');
   const out = {};
-  if (!recogState) return out;
-  for (const f of recogState.fields) {
-    const row = $('recogFields').querySelector(`.recog-row[data-key="${f.key}"]`);
-    if (!row) continue;
-    const cb = row.querySelector('.recog-pick');
-    if (!cb || !cb.checked) continue;
-    if (f.type === 'matrix') {
-      const m = [];
-      for (let r = 0; r < (f.rows || 0); r++) {
-        const rowArr = [];
-        for (let c = 0; c < (f.cols || 0); c++) {
-          const inp = row.querySelector(`input[data-rrow="${r}"][data-rcol="${c}"]`);
-          const n = inp && inp.value.trim() !== '' ? coerceNum(inp.value) : null;
-          rowArr.push(n);
+  if (!root) return out;
+  const num = (el) => (el && el.value.trim() !== '' ? coerceNum(el.value) : null);
+  for (const g of (currentSchema.groups || [])) {
+    for (const fld of (g.fields || [])) {
+      const wrap = [...root.querySelectorAll('.review-field')].find(el => el.dataset.key === fld.key);
+      const cb = wrap ? wrap.querySelector('.recog-pick') : null;
+      if (!wrap || (cb && !cb.checked)) { out[fld.key] = null; continue; }
+      const els = [...wrap.querySelectorAll('[data-key]')].filter(el => el.dataset.key === fld.key);
+      if (!els.length) { out[fld.key] = null; continue; }
+      if (fld.type === 'science') {
+        const m = num(els.find(el => el.classList.contains('science-mantissa')));
+        const e = els.find(el => el.classList.contains('science-exp'));
+        const ev = e && e.value.trim() !== '' ? Number(e.value) : null;
+        out[fld.key] = (m === null || ev === null) ? null : m * Math.pow(10, ev);
+      } else if (fld.type === 'array') {
+        const arr = els.filter(el => el.classList.contains('array-input'))
+          .sort((a, b) => Number(a.dataset.idx) - Number(b.dataset.idx))
+          .map(el => num(el));
+        out[fld.key] = arr.some(v => v !== null) ? arr : null;
+      } else if (fld.type === 'matrix') {
+        const m = [];
+        let any = false;
+        for (let r = 0; r < (fld.rows || 0); r++) {
+          const rowArr = [];
+          for (let c = 0; c < (fld.cols || 0); c++) {
+            const el = els.find(x => x.classList.contains('matrix-cell')
+              && Number(x.dataset.row) === r && Number(x.dataset.col) === c);
+            const v = num(el);
+            if (v !== null) any = true;
+            rowArr.push(v);
+          }
+          m.push(rowArr);
         }
-        m.push(rowArr);
+        out[fld.key] = any ? m : null;
+      } else if (fld.type === 'text') {
+        const el = els[0];
+        out[fld.key] = el && el.value.trim() !== '' ? el.value.trim() : null;
+      } else {
+        out[fld.key] = num(els[0]);
       }
-      out[f.key] = m;
-    } else if (f.type === 'array') {
-      const inp = row.querySelector('.recog-row-input');
-      const arr = (inp ? inp.value : '').split(/[,，\s]+/).map(s => s.trim()).filter(s => s !== '')
-        .map(s => { const n = coerceNum(s); return n === null ? null : n; });
-      out[f.key] = arr.length ? arr : null;
-    } else if (f.type === 'text') {
-      const inp = row.querySelector('.recog-row-input');
-      out[f.key] = inp && inp.value.trim() !== '' ? inp.value.trim() : null;
-    } else {
-      const inp = row.querySelector('.recog-row-input');
-      const n = inp && inp.value.trim() !== '' ? coerceNum(inp.value) : null;
-      out[f.key] = n;
     }
   }
   return out;
 }
 
-// ── 填入表单 ──
-async function applyRecognition() {
-  if (!recogState || !currentSchema) return;
-  const onlyEmpty = $('recogOnlyEmpty').checked;
-  const picked = collectRecogValues();
+// 核对完成 → 导入表单 + 保存识图训练样本三件套（原图 / AI 识别 / 人工校对）
+async function applyReview() {
+  if (!recogState || !currentSchema || !currentExp) return;
+  const reviewData = collectReviewValues();
+  const onlyEmpty = $('recogOnlyEmptyReview').checked;
   const live = readFormData();          // 先读回表单，保证用户之前的手工编辑不丢
-  let filled = 0, skipped = 0, blank = 0;
+  let filled = 0, skipped = 0;
 
-  for (const [key, value] of Object.entries(picked)) {
-    if (value === null || value === undefined) { blank++; continue; }
-    if (Array.isArray(value) && value.every(x => x === null)) { blank++; continue; }
+  for (const [key, value] of Object.entries(reviewData)) {
+    const empty = value === null || value === undefined
+      || (Array.isArray(value) && value.every(x => x === null));
+    if (empty) continue;
     if (onlyEmpty && !isFieldEmpty(live[key])) { skipped++; continue; }
     live[key] = value;
     filled++;
   }
 
-  // 学生信息
-  let stuFilled = 0, stuSkipped = 0;
+  // 学生信息（勾选识别时才会有）
+  let stuFilled = 0;
   if (recogState.includeStudent && recogState.student) {
     const info = loadStudentInfo();
     for (const sf of RECOG_STUDENT_FIELDS) {
       const val = recogState.student[sf.key];
       const el = $(sf.el);
       if (!el || !val || !String(val).trim()) continue;
-      if (onlyEmpty && el.value.trim()) { stuSkipped++; continue; }
       el.value = String(val).trim();
       info[sf.key] = String(val).trim();
       stuFilled++;
@@ -840,7 +792,7 @@ async function applyRecognition() {
   }
 
   if (!filled && !stuFilled) {
-    showToast('warning', '没有可填入的内容', blank ? '勾选的项里没有识别出有效数值' : '请至少勾选一项', 5000);
+    showToast('warning', '没有可导入的内容', '核对页里没有有效数值（或都被取消了勾选）', 5000);
     return;
   }
 
@@ -850,26 +802,51 @@ async function applyRecognition() {
   notifyDataModified();
   $('btnSaveData').disabled = false;
   refreshFormCheck();
-  closeModal('recognizeModal');
 
-  // 确认后才保存原图（历史缺陷 R13）：失败必须可见，否则用户以为报告里会有照片
+  // 原图落盘为「原始数据照片」（与既有语义一致）
   if (photoEmbedEnabled() && recogState.originalDataUrl && recogState.expId
       && currentExp && currentExp.id === recogState.expId && currentExp.path) {
     try {
       const saved = await window.labAPI.saveTableImage(currentExp.path, recogState.originalDataUrl);
       if (saved && saved.ok === false) throw Error(saved.error || '保存失败');
     } catch (e) {
-      showToast('warning', '照片未保存', '识别结果已填入，但原始数据照片保存失败（' + ((e && e.message) || e) + '），如需嵌入报告请重新选图', 9000);
+      showToast('warning', '照片未保存', '识别结果已填入，但原始数据照片保存失败（' + ((e && e.message) || e) + '）', 9000);
     }
   }
   recogSession = null;
 
-  const bits = [`已填入 ${filled} 个字段`];
+  // 训练样本三件套：原图 / AI 识别（模型原始输出）/ 人工校对（核对界面的最终值）
+  const proofread = { fields: {} };
+  for (const [key, value] of Object.entries(reviewData)) {
+    if (value === null || value === undefined
+      || (Array.isArray(value) && value.every(x => x === null))) continue;
+    proofread.fields[key] = { value };
+  }
+  if (recogState.includeStudent && recogState.student) proofread.student = recogState.student;
+  let sampleSaved = false, sampleErr = '';
+  try {
+    const sr = await window.labAPI.saveVisionSample({
+      expId: recogState.expId,
+      ts: cvTs(),
+      photoDataUrl: recogState.originalDataUrl || recogState.dataUrl || '',
+      aiData: recogState.aiRaw || { fields: {} },
+      proofreadData: proofread,
+    });
+    sampleSaved = !!(sr && sr.ok);
+    if (!sampleSaved) sampleErr = (sr && sr.error) || '未知错误';
+  } catch (e) { sampleErr = (e && e.message) || String(e); }
+
+  const bits = [`已导入 ${filled} 个字段`];
   if (skipped) bits.push(`跳过 ${skipped} 个已有值`);
-  if (blank) bits.push(`${blank} 个无有效值`);
   if (stuFilled) bits.push(`学生信息 ${stuFilled} 项`);
-  if (stuSkipped) bits.push(`学生信息跳过 ${stuSkipped} 项`);
-  showToast('success', '已填入表单', bits.join(' · ') + '，核对后点「保存修改」', 6000);
+  closeModal('recognizeModal');
+  if (sampleSaved) {
+    showToast('success', bits.join(' · '), '识图样本已保存（原图 + AI 识别 + 人工校对），可在「数据贡献 → 识图数据」中贡献', 10000);
+  } else {
+    showToast('warning', bits.join(' · '), '识图样本保存失败（' + sampleErr + '），不影响本次导入', 9000);
+  }
+  recogState = null;
+  recogSession = null;
 }
 
 // ── 事件绑定 ──
@@ -882,18 +859,28 @@ function bindRecognizeEvents() {
   const closeAndCancel = () => { cancelRecognition(); closeModal('recognizeModal'); };
   $('btnCloseRecognize').onclick = closeAndCancel;
   $('btnCancelRecognize').onclick = closeAndCancel;
-  $('btnApplyRecognize').onclick = applyRecognition;
+  $('btnApplyRecognize').onclick = applyReview;   // 结果页即核对页：直接导入
 
-  // 原图点击放大/还原（核对时手写数字要看得清）
+  // 原图点击放大（核对时手写数字要看得清）：独立顶层灯箱（#recogZoom，body 层），
+  // 图片按视口最大化并居中；点击任意处或按 Esc 关闭
   const pane = $('recogImagePane');
-  const toggleZoom = () => pane.classList.toggle('zoomed');
-  pane.onclick = toggleZoom;
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && pane.classList.contains('zoomed')) {
-      pane.classList.remove('zoomed');
-      e.stopPropagation();
-    }
-  });
+  const zoomBox = $('recogZoom');
+  const zoomImg = $('recogZoomImg');
+  const setZoom = (on) => {
+    if (!zoomBox || !zoomImg) return;
+    if (on) zoomImg.src = $('recogImg').src || '';
+    zoomBox.style.display = on ? '' : 'none';
+  };
+  pane.onclick = () => setZoom(true);
+  if (zoomBox) {
+    zoomBox.onclick = () => setZoom(false);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && zoomBox.style.display !== 'none') {
+        setZoom(false);
+        e.stopPropagation();
+      }
+    });
+  }
 
   const drop = $('recogDrop');
   const choose = async () => {
@@ -941,14 +928,14 @@ function bindRecognizeEvents() {
   $('recogStudent').onchange = () => {
     const s = loadSettings(); s.recogStudent = $('recogStudent').checked; saveSettings(s);
   };
-  $('recogOnlyEmpty').onchange = () => {
-    const s = loadSettings(); s.recogOnlyEmpty = $('recogOnlyEmpty').checked; saveSettings(s);
-    if (recogState && recogState.fields) renderRecogResult();
+  const reviewEmpty = $('recogOnlyEmptyReview');
+  if (reviewEmpty) reviewEmpty.onchange = () => {
+    const s = loadSettings(); s.recogOnlyEmpty = reviewEmpty.checked; saveSettings(s);
   };
 
-  // 核对界面里直接改识别值后，去掉该项的告警横幅提示（值已由用户确认）
+  // 核对页里直接改过值的字段加高亮（表示已被人工确认/修改）
   $('recogFields').addEventListener('input', (e) => {
-    const row = e.target.closest && e.target.closest('.recog-row');
+    const row = e.target.closest && e.target.closest('.review-field');
     if (row) row.classList.add('edited');
   });
 

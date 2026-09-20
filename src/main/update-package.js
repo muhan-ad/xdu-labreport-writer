@@ -40,8 +40,12 @@ function verify(m, key, appVersion, currentVersion, host) {
   if (!entries.length || entries.length > 4096) throw Error('更新包文件数量无效');
   const seen = new Set();
   for (const [file, hash] of entries) {
+    // .txt：公式管线依赖 common/_vendor/latex2mathml/unimathsymbols.txt（导入时即读取，
+    // 缺失会让报告生成失败），必须随数据包下发。**要求客户端先更新到含本条白名单的版本**
+    // （数据包 minAppVersion 已相应抬高，老客户端会收到「请先更新应用」而不是清单错误）。
+    // 另有 .md 同内容副本 + symbols_parser.py 回退作第二道保险（见 vendor-math-deps.py）。
     if (!file || file.length > 240 || /[\\:\x00-\x1f]/.test(file) || file.split('/').some(p => !p || p.startsWith('.') || /[. ]$/.test(p)) ||
-        !/\.(py|json|md|png|jpg|jpeg)$/i.test(file) || !/^[a-f0-9]{64}$/.test(hash) || seen.has(file.toLowerCase())) throw Error('更新包文件清单无效');
+        !/\.(py|json|md|png|jpg|jpeg|txt)$/i.test(file) || !/^[a-f0-9]{64}$/.test(hash) || seen.has(file.toLowerCase())) throw Error('更新包文件清单无效');
     seen.add(file.toLowerCase());
   }
   if (!crypto.verify(null, Buffer.from(canonical(m)), key, Buffer.from(m.signature, 'base64'))) throw Error('更新包发布签名验证失败');

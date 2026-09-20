@@ -119,7 +119,14 @@ def _generate_docx(data: dict, output_path: str):
         dm_bar_mm_list.append(dm_mm)
         rkb_list.append(rkb)
 
-    RKb_mean = mean(rkb_list)
+    # 3σ 坏值检验：三组 RKb 是同一冲击常数的等精度重复测量（n = 3），迭代剔除坏值
+    _ot_rkb = outlier_test(rkb_list)
+    rkb_kept = _ot_rkb["kept"]
+    _rkb_bad_ids = {i for i, _ in _ot_rkb["bad"]}      # 被剔除组的原始序号（1 起）
+    n_rkb = len(rkb_kept)
+    s_RKb = _ot_rkb["std"]                             # 保留数据的标准差
+    sigma_RKb = _ot_rkb["sigma"]                       # σ = s × t_{0.683}(n)
+    RKb_mean = mean(rkb_kept)                          # 无坏值时与 mean(rkb_list) 一致
 
     print(f"M = {M_mH} mH = {M_H:.3e} H")
     print(f"N = {N:.0f}, l = {l_m} m, r0 = {r0_m} m")
@@ -164,8 +171,8 @@ def _generate_docx(data: dict, output_path: str):
     # ═══════════════════════════════════
     # 4. 不确定度评定
     # ═══════════════════════════════════
-    # 4a. RKb A 类
-    u_A_RKb = type_a(rkb_list)
+    # 4a. RKb A 类（用 3σ 检验后的保留数据重算）
+    u_A_RKb = type_a(rkb_kept)
 
     # 4b. RKb B 类 — 对每组用 propagate_numeric
     # dm 单次读数 B 类（标尺 Δ仪=0.5mm, 均匀分布）
@@ -197,8 +204,10 @@ def _generate_docx(data: dict, output_path: str):
         })
         u_RKb_b_list.append(u_i)
 
-    # B 类平均（3组 RMS ÷ √3）
-    u_B_RKb = combine(*u_RKb_b_list) / math.sqrt(3.0)
+    # B 类平均（各组 RMS ÷ √n；被 3σ 检验剔除的组不参与）
+    u_RKb_b_kept = [u for i, u in enumerate(u_RKb_b_list, start=1)
+                    if i not in _rkb_bad_ids]
+    u_B_RKb = combine(*u_RKb_b_kept) / math.sqrt(len(u_RKb_b_kept))
 
     # 合成 RKb 不确定度
     u_RKb = combine(u_A_RKb, u_B_RKb)
@@ -215,6 +224,11 @@ def _generate_docx(data: dict, output_path: str):
         "RKb_val": (RKb_mean, u_RKb),
         "dm_cm_val": (dm_cm_center, u_dm_center_cm),
     })
+
+    # 中心点 B 的 A / B 类分量（同一传递关系，分开列出便于报告展示）
+    u_B_center_A = B_center * u_A_RKb / RKb_mean
+    u_B_center_B = B_center * math.sqrt((u_B_RKb / RKb_mean) ** 2
+                                        + (u_dm_center_cm / dm_cm_center) ** 2)
 
     print(f"  B(x=0) = ({format_number(B_center, u_B_center)} ± "
           f"{format_number(u_B_center, u_B_center)}) T")
@@ -245,6 +259,8 @@ def _generate_docx(data: dict, output_path: str):
         "B_pm": format_measure(B_center, u_B_center),
         "RKb_pm": format_measure(RKb_mean, u_RKb),
         "B0_sci": format_scientific(B0_theory, 4),
+        # 3σ 坏值检验结果（三组 RKb 为等精度重复测量）
+        "ot": _ot_rkb,
     }
     variants = compose(SCRIPT_DIR, r)
     if "实验原理" in variants:
@@ -308,24 +324,73 @@ def _generate_docx(data: dict, output_path: str):
         rf" = {dm_bar_cm_list[0]:.2f} \,\mathrm{{cm}}"
     )
     doc.add_math(
-        rf"RK_b = \frac{{{format_scientific(M_H, 3)} \times {i0_ma_list[0]/1000:.3f}}}"
+        rf"RK_b = \frac{{M I_0}}{{\bar{{d}}_m}} = "
+        rf"\frac{{{format_scientific(M_H, 3)} \times {i0_ma_list[0]/1000:.3f}}}"
         rf"{{{dm_bar_mm_list[0]:.1f}}}"
-        rf" = {format_scientific(rkb_list[0], 3)} \,\mathrm{{C\cdot\Omega/mm}}"
+        rf" \approx {format_scientific(rkb_list[0], 3)} \,\mathrm{{C\cdot\Omega/mm}}"
     )
 
-    doc.add_paragraph("三组 RKb 的平均值（不确定度评定见下）：")
+    # 平均值（代入数据）与 3σ 坏值检验
+    rk_sum = " + ".join(format_scientific(x, 3) for x in rkb_kept)
+    rk_sq_sum = " + ".join(format_scientific((x - RKb_mean) ** 2, 3) for x in rkb_kept)
+    ub_sq_sum = " + ".join("(" + format_scientific(u, 6) + ")^{2}"
+                           for u in u_RKb_b_kept)
+    doc.add_paragraph("三组 RKb 的平均值：")
     doc.add_math(
-        rf"\overline{{RK_b}} = {format_measure(RKb_mean, u_RKb)} \,\mathrm{{C\cdot\Omega/mm}}"
+        r"\overline{RK_b} = \frac{1}{" + f"{n_rkb}" + r"}\sum_{i=1}^{" + f"{n_rkb}"
+        + r"} RK_{b,i} = \frac{" + rk_sum + r"}{" + f"{n_rkb}" + r"} \approx "
+        + format_scientific(RKb_mean, 3) + r"\,\mathrm{C\cdot\Omega/mm}"
+    )
+    doc.add_math(
+        r"\overline{RK_b} = " + format_measure(RKb_mean, u_RKb) + r"\,\mathrm{C\cdot\Omega/mm}"
     )
 
-    # RKb 不确定度
-    doc.add_paragraph("RKb 的不确定度评定：")
-    doc.add_paragraph("A 类不确定度（3 次测量）：")
-    doc.add_math(rf"u_{{\mathrm{{A}}}}(RK_b) = {format_scientific(u_A_RKb, 3)} \,\mathrm{{C\cdot\Omega/mm}}")
-    doc.add_paragraph("B 类不确定度（标尺 Δ仪 = 0.5 mm + 电流表 Δ仪 = 1.0 mA）：")
-    doc.add_math(rf"u_{{\mathrm{{B}}}}(RK_b) = {format_scientific(u_B_RKb, 3)} \,\mathrm{{C\cdot\Omega/mm}}")
+    # RKb 不确定度评定：三段标签 + 代入数据
+    doc.add_paragraph("RKb 的不确定度评定（3 组等精度重复测量）：")
+    doc.add_paragraph("先计算标准差并进行 3σ 坏值检验：")
+    doc.add_math(
+        r"s(RK_b) = \sqrt{\frac{\sum_{i=1}^{" + f"{n_rkb}" + r"}(RK_{b,i} - \overline{RK_b})^{2}}{"
+        + f"{n_rkb - 1}" + r"}} = \sqrt{\frac{" + rk_sq_sum + r"}{" + f"{n_rkb - 1}"
+        + r"}} \approx " + format_scientific(s_RKb, 6) + r"\,\mathrm{C\cdot\Omega/mm}"
+    )
+    doc.add_math(
+        r"\sigma = s \times t_{0.683} = " + format_scientific(s_RKb, 6) + r" \times "
+        + f"{t_factor(n_rkb):g}" + r" \approx " + format_scientific(sigma_RKb, 6)
+        + r"\,\mathrm{C\cdot\Omega/mm}"
+    )
+    doc.add_math(
+        r"3\sigma = 3 \times " + format_scientific(sigma_RKb, 6) + r" \approx "
+        + format_scientific(3 * sigma_RKb, 6) + r"\,\mathrm{C\cdot\Omega/mm}"
+    )
+    doc.add_paragraph(outlier_note(_ot_rkb, unit=" C·Ω/mm", digits=4))
+    doc.add_paragraph("A类不确定度：")
+    doc.add_math(
+        r"\Delta_{\mathrm{A}}(RK_b) = \frac{\sigma}{\sqrt{n}} = \frac{"
+        + format_scientific(sigma_RKb, 6) + r"}{\sqrt{" + f"{n_rkb}" + r"}} \approx "
+        + format_scientific(u_A_RKb, 3) + r"\,\mathrm{C\cdot\Omega/mm}"
+    )
+    doc.add_paragraph("B类不确定度：")
+    doc.add_math(
+        r"u_{\mathrm{B}}(I_0) = \frac{\Delta_{\text{仪}}}{\sqrt{3}} = "
+        r"\frac{1.0 \times 10^{-3}}{\sqrt{3}} \approx " + format_scientific(u_I0_single_A, 3)
+        + r"\,\mathrm{A}"
+    )
+    doc.add_math(
+        r"u_{\mathrm{B}}(\bar{d}_m) = \frac{\Delta_{\text{仪}}}{\sqrt{3}\sqrt{2}} = "
+        r"\frac{0.5}{\sqrt{3}\sqrt{2}} \approx " + f"{u_dm_cm * 10:.3f}"
+        + r"\,\mathrm{mm}"
+    )
+    doc.add_math(
+        r"u_{\mathrm{B}}(RK_b) = \sqrt{\frac{u_1^2 + u_2^2 + u_3^2}{" + f"{len(u_RKb_b_kept)}"
+        + r"}} = \sqrt{\frac{" + ub_sq_sum + r"}{" + f"{len(u_RKb_b_kept)}"
+        + r"}} \approx " + format_scientific(u_B_RKb, 3) + r"\,\mathrm{C\cdot\Omega/mm}"
+    )
     doc.add_paragraph("合成不确定度：")
-    doc.add_math(rf"u(RK_b) = \sqrt{{u_{{\mathrm{{A}}}}^2 + u_{{\mathrm{{B}}}}^2}} = {format_scientific(u_RKb, 3)} \,\mathrm{{C\cdot\Omega/mm}}")
+    doc.add_math(
+        r"u(RK_b) = \sqrt{\Delta_{\mathrm{A}}(RK_b)^{2} + u_{\mathrm{B}}(RK_b)^{2}} = \sqrt{("
+        + format_scientific(u_A_RKb, 6) + r")^{2} + (" + format_scientific(u_B_RKb, 6)
+        + r")^{2}} \approx " + format_scientific(u_RKb, 3) + r"\,\mathrm{C\cdot\Omega/mm}"
+    )
 
     # 2.3 磁场分布测量
     doc.add_heading("3. 磁场分布测量", level=2)
@@ -373,15 +438,15 @@ def _generate_docx(data: dict, output_path: str):
         rf"B_0 = \frac{{\mu_0 N I}}{{\sqrt{{l^2 + 4r_0^2}}}}"
         rf" = \frac{{4\pi \times 10^{{-7}} \times {N:.0f} \times {I_A:.2f}}}"
         rf"{{\sqrt{{{l_m}^2 + 4 \times {r0_m}^2}}}}"
-        rf" = {format_scientific(B0_theory, 3)} \,\mathrm{{T}}"
+        rf" \approx {format_scientific(B0_theory, 3)} \,\mathrm{{T}}"
     )
 
     doc.add_paragraph("中心点实验值：")
     doc.add_math(
-        rf"B = \frac{{\overline{{RK_b}}}}{{nS}} d_m"
+        rf"B = \frac{{\overline{{RK_b}}}}{{nS}} \bar{{d}}_m"
         rf" = \frac{{{format_scientific(RKb_mean, 3)}}}{{{n_coil:.0f} \times {format_scientific(S_m2, 3)}}}"
         rf" \times {dm_mm_center:.1f}"
-        rf" = {format_scientific(B_exp_center, 3)} \,\mathrm{{T}}"
+        rf" \approx {format_scientific(B_exp_center, 3)} \,\mathrm{{T}}"
     )
 
     doc.add_paragraph("相对误差：")
@@ -389,19 +454,43 @@ def _generate_docx(data: dict, output_path: str):
         rf"E = \left|\frac{{B_0 - B}}{{B_0}}\right| \times 100\%"
         rf" = \left|\frac{{{format_scientific(B0_theory, 3)} - {format_scientific(B_exp_center, 3)}}}"
         rf"{{{format_scientific(B0_theory, 3)}}}\right| \times 100\%"
-        rf" = {format_percent(E_rel)}\%"
+        rf" \approx {format_percent(E_rel)}\%"
     )
 
     # 2.6 不确定度分析
     doc.add_heading("6. 不确定度分析", level=2)
 
-    doc.add_paragraph("中心点磁感应强度 B 的不确定度由 RKb 的不确定度和 dm 的不确定度传递：")
-    doc.add_paragraph("B 类不确定度来源 — 标尺：Δ仪 = 0.5 mm（均匀分布），"
-                       "电流表：Δ仪 = 1.0 mA（均匀分布）。")
-    doc.add_paragraph("经传递计算，中心点 B 的合成不确定度为：")
+    doc.add_paragraph("中心点磁感应强度 B 由 RKb 与 dm 传递得到，各不确定度分量：")
+    doc.add_paragraph("")
+    doc.add_run("其中标尺 ")
+    doc.add_inline_math(r"\Delta_{\text{仪}} = 0.5\,\mathrm{mm}")
+    doc.add_run("（均匀分布），电流表 ")
+    doc.add_inline_math(r"\Delta_{\text{仪}} = 1.0\,\mathrm{mA}")
+    doc.add_run("（均匀分布）。")
 
+    doc.add_paragraph("A类不确定度：")
     doc.add_math(
-        rf"u(B) = {format_scientific(u_B_center, 3)} \,\mathrm{{T}}"
+        r"\Delta_{\mathrm{A}}(B) = B \cdot \frac{\Delta_{\mathrm{A}}(RK_b)}{\overline{RK_b}} = "
+        + format_scientific(B_center, 6) + r" \times \frac{"
+        + format_scientific(u_A_RKb, 6) + r"}{" + format_scientific(RKb_mean, 6)
+        + r"} \approx " + format_scientific(u_B_center_A, 3) + r"\,\mathrm{T}"
+    )
+    doc.add_paragraph("B类不确定度：")
+    doc.add_math(
+        r"\Delta_{\mathrm{B}}(B) = B \cdot \sqrt{\left(\frac{u_{\mathrm{B}}(RK_b)}{\overline{RK_b}}\right)^{2}"
+        r" + \left(\frac{u(\bar{d}_m)}{\bar{d}_m}\right)^{2}} = "
+        + format_scientific(B_center, 6) + r" \times \sqrt{\left(\frac{"
+        + format_scientific(u_B_RKb, 6) + r"}{" + format_scientific(RKb_mean, 6)
+        + r"}\right)^{2} + \left(\frac{" + f"{u_dm_center_cm:.6f}" + r"}{"
+        + f"{dm_cm_center:.2f}" + r"}\right)^{2}} \approx "
+        + format_scientific(u_B_center_B, 3) + r"\,\mathrm{T}"
+    )
+    doc.add_paragraph("合成不确定度：")
+    doc.add_math(
+        r"u(B) = \sqrt{\Delta_{\mathrm{A}}(B)^{2} + \Delta_{\mathrm{B}}(B)^{2}} = \sqrt{("
+        + format_scientific(u_B_center_A, 6) + r")^{2} + ("
+        + format_scientific(u_B_center_B, 6) + r")^{2}} \approx "
+        + format_scientific(u_B_center, 3) + r"\,\mathrm{T}"
     )
 
     # 最终结果
