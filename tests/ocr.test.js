@@ -132,7 +132,7 @@ test('review page reading skips the pick checkbox and closing clears the review 
   assert.match(ocrUi, /function closeRecognizeModal\(\)\s*\{\s*cancelRecognition\(\);\s*\$\('recogFields'\)\.innerHTML = '';\s*closeModal\('recognizeModal'\);/,
     '统一关闭出口：取消识别 + 清空核对页');
   assert.match(ocrUi, /const closeAndCancel = \(\) => closeRecognizeModal\(\)/, '× / 取消按钮走统一出口');
-  assert.match(ocrUi, /closeRecognizeModal\(\);\n\s*if \(sampleSaved\)/, '导入完成后也走统一出口');
+  assert.match(ocrUi, /closeRecognizeModal\(\);\s*if \(sampleSaved\)/, '导入完成后也走统一出口');
   assert.match(rendererUi, /overlay\.id === 'recognizeModal' && typeof closeRecognizeModal === 'function'/,
     '点遮罩关闭也走统一出口');
 });
