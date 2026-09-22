@@ -1945,8 +1945,9 @@ body {
 /* 滚动容器的底部留白计入滚动区域：滚到底时最后一行按钮不贴弹窗底边 */
 .settings-panes { flex: 1 1 auto; min-width: 0; min-height: 0; overflow-y: auto; padding-bottom: 18px; }
 
-/* 报告管理：操作按钮悬浮固定在可视区底部，列表滚动任意位置都可删除 */
-#paneReports .skill-actions {
+/* 报告管理：操作按钮行作为 pane 的直接子级吸附在可视区底部（覆盖整段滚动区间），
+   在窗口中的相对位置固定不动。用 > 收窄选择器，避免同时命中区块内部的其它按钮行。 */
+#paneReports > .skill-actions {
   position: sticky;
   bottom: 0;
   margin-top: 12px;
@@ -1954,6 +1955,7 @@ body {
   background: linear-gradient(180deg, rgba(251, 250, 249, 0) 0%, var(--card, #fafaf9) 26%);
   z-index: 3;
 }
+#paneReports > .skill-actions #btnDeleteAllReports { margin-left: auto; }
 .settings-pane { display: none; }
 .settings-pane.active { display: block; }
 
@@ -2483,7 +2485,19 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 .cv-variant-text { flex: 1; font-size: 12px; color: #57534e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ── 设置 · 报告管理 ── */
-.reports-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; max-height: 380px; overflow-y: auto; }
+/* 自定义思考题弹窗：行内「问题N + 题目 + 删除」，列表不单独滚动（只留弹窗 body 一个滚动条） */
+.custom-quiz-list { display: flex; flex-direction: column; gap: 8px; }
+.custom-quiz-row { display: flex; align-items: flex-start; gap: 8px; }
+.custom-quiz-row .quiz-no { flex: 0 0 auto; font-size: 13px; color: #555; padding-top: 8px; }
+.custom-quiz-row textarea { flex: 1 1 auto; }
+/* 自定义画图弹窗：需求输入 + 首次使用的知情同意 */
+#customPlotReq { width: 100%; resize: vertical; }
+.plot-consent-row { margin-top: 10px; padding: 8px 10px; border: 1px solid var(--border, #e7e5e4); border-radius: 8px; background: #faf9f7; }
+.plot-consent-row .ai-check { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 1.5; color: #555; }
+/* 技能作用域徽章：scope:'plot' 的技能只在自定义画图时注入 */
+.skill-scope-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 8px; background: #eef2f7; color: #4a6b8a; font-size: 11px; font-weight: normal; vertical-align: 1px; }
+/* 列表自身不再滚动：整页只留 .settings-panes 一个滚动条（历史缺陷：两层滚动条 + 按钮行浮起盖标题） */
+.reports-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
 .report-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border: 1px solid var(--border, #e7e5e4); border-radius: 8px; background: #fff; }
 .report-info { min-width: 0; flex: 1; }
 .report-name { font-size: 13px; font-weight: 600; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

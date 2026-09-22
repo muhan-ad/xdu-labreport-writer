@@ -18,8 +18,12 @@ contextBridge.exposeInMainWorld('labAPI', {
   reportText: (filePath) => ipcRenderer.invoke('report-text', filePath),
   scanExperiments: () => ipcRenderer.invoke('scan-experiments'),
   openFile: (filePath) => ipcRenderer.invoke('open-file', filePath),
-  runGenerate: (expPath, studentInfo, variants, polish, embedDataPhoto) => ipcRenderer.invoke('run-generate', expPath, studentInfo, variants, polish, embedDataPhoto),
+  runGenerate: (expPath, studentInfo, variants, polish, embedDataPhoto, reportCopyDir, customQuiz, customPlot) => ipcRenderer.invoke('run-generate', expPath, studentInfo, variants, polish, embedDataPhoto, reportCopyDir, customQuiz, customPlot),
   cancelGenerate: () => ipcRenderer.invoke('cancel-generate'),
+  // 自定义画图：AI 生成的 matplotlib 代码在隔离目录里运行，返回图片与图注
+  customPlotInfo: (expPath) => ipcRenderer.invoke('custom-plot-info', expPath),
+  runPlot: (expPath, code, runId) => ipcRenderer.invoke('run-plot', expPath, code, runId),
+  cancelPlot: (runId) => ipcRenderer.send('cancel-plot', runId),
   onGenerateLog: (callback) => {
     ipcRenderer.on('generate-log', (_, data) => callback(data));
   },
@@ -40,6 +44,7 @@ contextBridge.exposeInMainWorld('labAPI', {
   listReports: () => ipcRenderer.invoke('list-reports'),
   deleteReport: (filePath) => ipcRenderer.invoke('delete-report', filePath),
   showInFolder: (filePath) => ipcRenderer.invoke('show-in-folder', filePath),
+  pickDirectory: (current) => ipcRenderer.invoke('pick-directory', current),
   // AI 润色技能文件（userData/skills）
   listSkills: () => ipcRenderer.invoke('list-skills'),
   importSkill: () => ipcRenderer.invoke('import-skill'),
@@ -58,6 +63,7 @@ contextBridge.exposeInMainWorld('labAPI', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   checkForUpdate: (cfg) => ipcRenderer.invoke('check-for-update', cfg),
   copyLink: (url) => ipcRenderer.invoke('copy-link', url),
+  copyText: (text) => ipcRenderer.invoke('copy-text', text),
   openDataFile: (expPath) => ipcRenderer.invoke('open-data-file', expPath),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   // 贡献数据上传（COS 直传）

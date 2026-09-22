@@ -4,6 +4,8 @@ openpyxl>=3.0
 matplotlib>=3.5
 numpy>=1.23
 python-docx>=1.0
+# Pillow：matplotlib 的依赖（绘图测试里用来造 PNG 夹具），显式声明以便依赖审计对齐
+pillow>=10.0
 # 公式管线：LaTeX → MathML → OMML（纯 Python，不需要 Microsoft Word / pywin32）
 latex2mathml>=3.70
 mathml2omml>=0.0.2

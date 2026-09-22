@@ -153,7 +153,9 @@ function syncBuiltin(builtin, target, fingerprint, appVersion) {
       }
     };
     purgeCache(candidate);
-    writeState(candidate, { builtinFingerprint: fingerprint, appVersion, variantBases, manifest: null });
+    // 内置资源同步不等同于数据包更新；保留已验证的数据包版本和下架名单，
+    // 否则应用升级会把热更新状态重置，导致下架实验重新出现在列表中。
+    writeState(candidate, { ...state, builtinFingerprint: fingerprint, appVersion, variantBases });
   });
   return true;
 }

@@ -552,6 +552,9 @@ async function runBatchGenerate() {
   if (queueState === 'running' || queueState === 'paused') { openQueuePanel(); return; }
   const sel = experiments.filter(e => selectedIds.has(e.id));
   if (sel.length === 0) { showToast('warning', '未选择实验', '请先在列表勾选要生成的实验'); return; }
+  // 当前表单可能尚未写入 data.json；批量任务读取的是各实验目录中的已保存数据。
+  // 先保存，避免把学生刚填写的当前实验按旧数据生成。
+  if (isDataModified && !(await saveFormData())) return;
   genQueue = sel.map(e => ({ id: e.id, name: e.name, exp: e, status: 'queued', elapsed: 0, error: '' }));
   if ($('batchLog')) $('batchLog').textContent = '';
   openQueuePanel();
@@ -577,7 +580,27 @@ async function pumpQueue() {
     renderQueue(); renderQueueControls(); updateQueueProgress();
     $('batchLog').textContent += `\n▶ ${getDisplayName(q.exp)}\n`;
     try {
-      const r = await window.labAPI.runGenerate(q.exp.path, studentInfo, null, expOverrides(q.exp.id), loadSettings().embedDataPhoto !== false);
+      // 自定义思考题：生成前用 AI 生成答案（每次重新请求，不缓存）；用户选择停止则中止整个队列
+      const cq = await ensureCustomQuizAnswers(q.exp);
+      if (cq.stop) {
+        q.status = 'failed'; q.error = '已停止（自定义思考题答案未生成）';
+        $('batchLog').textContent += '  ⏹ 已停止队列\n';
+        queueState = 'cancelled';
+        renderQueue(); updateQueueProgress();
+        break;
+      }
+      const customQuiz = cq.none ? null : { questions: cq.questions, answers: cq.answers };
+      // 自定义画图：生成前让 AI 写绘图代码并本机绘制；用户选择停止则中止整个队列
+      const cp = await ensureCustomPlotFigures(q.exp);
+      if (cp.stop) {
+        q.status = 'failed'; q.error = '已停止（自定义画图未完成）';
+        $('batchLog').textContent += '  ⏹ 已停止队列\n';
+        queueState = 'cancelled';
+        renderQueue(); updateQueueProgress();
+        break;
+      }
+      const customPlot = cp.none ? null : { images: cp.images };
+      const r = await window.labAPI.runGenerate(q.exp.path, studentInfo, null, expOverrides(q.exp.id), loadSettings().embedDataPhoto !== false, loadSettings().customReportDir || '', customQuiz, customPlot);
       q.elapsed = (Date.now() - q.startedAt) / 1000;
       q.status = r.ok ? 'done' : (r.cancelled ? 'cancelled' : 'failed');
       if (!r.ok) q.error = r.error || ('exit ' + r.exitCode);
@@ -950,6 +973,8 @@ function onFormInput() {
     $('btnSaveData').disabled = false;
     notifyDataModified();
   }
+  // 提示条应与正在编辑的表单同步，而不是只在载入或保存后才刷新。
+  refreshFormCheck();
 }
 
 // 只读主表单（#dataTableWrap）内的输入框：核对页 #recogFields 由同一个 renderField 渲染，
@@ -1035,22 +1060,11 @@ async function saveFormData() {
 function refreshFormCheck() {
   if (!currentSchema) return;
   const data = readFormData();
-  const missing = dataValidation.validate(currentSchema, data);
-  for (const group of (currentSchema.groups || [])) {
-    for (const fld of (group.fields || [])) {
-      if (!fld.required) continue;
-      const v = data[fld.key];
-      if (v === null || v === undefined) { missing.push(fld.label || fld.key); continue; }
-      if (Array.isArray(v)) {
-        const flat = (v.length && Array.isArray(v[0])) ? v.flat() : v;
-        if (flat.some(x => x === null || x === undefined)) missing.push(fld.label || fld.key);
-      }
-    }
-  }
+  const errors = dataValidation.validate(currentSchema, data);
   const bar = $('dataIssueBar');
-  if (missing.length > 0) {
+  if (errors.length > 0) {
     bar.style.display = 'block';
-    bar.innerHTML = `<span class="issue-text">请检查 ${missing.length} 项数据：${escapeHtml(missing.join('、'))}</span>`;
+    bar.innerHTML = `<span class="issue-text">请检查 ${errors.length} 项数据：${escapeHtml(errors.join('、'))}</span>`;
   } else {
     bar.style.display = 'none';
   }
@@ -1130,6 +1144,362 @@ function clearPolishOverrides(expId) {
   saveAllOverrides(all);
 }
 
+// ── 提示词输入：按实验保存（与 polishOverrides 同一套模式）──
+function loadAllUserPrompts() { try { return JSON.parse(localStorage.getItem('userPrompts') || '{}'); } catch { return {}; } }
+function saveAllUserPrompts(all) { localStorage.setItem('userPrompts', JSON.stringify(all)); }
+function expUserPrompt(expId) { return loadAllUserPrompts()[expId] || ''; }
+function setUserPrompt(expId, text) {
+  const all = loadAllUserPrompts();
+  if (text && text.trim()) all[expId] = text.trim(); else delete all[expId];
+  saveAllUserPrompts(all);
+}
+function fillUserPromptPanel() {
+  const el = $('aiUserPrompt');
+  if (el) el.value = currentExp ? expUserPrompt(currentExp.id) : '';
+}
+
+// ── 自定义思考题：按实验保存题目列表（题目硬编码进报告，答案在生成时由 AI 生成）──
+function loadAllCustomQuiz() { try { return JSON.parse(localStorage.getItem('customQuiz') || '{}'); } catch { return {}; } }
+function saveAllCustomQuiz(all) { localStorage.setItem('customQuiz', JSON.stringify(all)); }
+function expCustomQuiz(expId) { return loadAllCustomQuiz()[expId] || []; }
+function setCustomQuiz(expId, questions) {
+  const all = loadAllCustomQuiz();
+  const list = (questions || []).map(q => String(q || '').trim()).filter(Boolean);
+  if (list.length) all[expId] = list; else delete all[expId];
+  saveAllCustomQuiz(all);
+  updateCustomQuizBtn();
+}
+function updateCustomQuizBtn() {
+  const btn = $('btnCustomQuiz');
+  if (!btn) return;
+  const n = currentExp ? expCustomQuiz(currentExp.id).length : 0;
+  btn.textContent = n ? `自定义思考题（${n}）` : '自定义思考题';
+}
+function renderCustomQuizRows(list) {
+  const box = $('customQuizList');
+  if (!box) return;
+  box.innerHTML = '';
+  const rows = (list && list.length) ? list : [''];
+  rows.forEach((text, i) => {
+    const row = document.createElement('div');
+    row.className = 'custom-quiz-row';
+    const no = document.createElement('span');
+    no.className = 'quiz-no';
+    no.textContent = `问题${i + 1}`;
+    const ta = document.createElement('textarea');
+    ta.rows = 2;
+    ta.value = text || '';
+    ta.placeholder = '输入题目，例如：为什么……？';
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'btn btn-sm btn-ghost';
+    del.textContent = '删除';
+    del.onclick = () => {
+      const cur = collectCustomQuizRows(true);
+      cur.splice(i, 1);
+      renderCustomQuizRows(cur);
+    };
+    row.appendChild(no); row.appendChild(ta); row.appendChild(del);
+    box.appendChild(row);
+  });
+}
+function collectCustomQuizRows(keepEmpty) {
+  const box = $('customQuizList');
+  if (!box) return [];
+  const vals = [...box.querySelectorAll('textarea')].map(t => t.value.trim());
+  return keepEmpty ? vals : vals.filter(Boolean);
+}
+function openCustomQuizModal() {
+  renderCustomQuizRows(currentExp ? expCustomQuiz(currentExp.id) : []);
+  openModal('customQuizModal');
+}
+
+// ── 自定义思考题的答案：生成报告前用 AI 生成（每次生成都重新请求，不缓存）──
+// 约束与润色同源：知识库（kbOnly）+ 技能 + 本实验提示词 + 写作风格；题目由用户给定、必须逐字保留。
+// 返回 {none:true}（未启用）/ {stop:true}（用户选择停止）/ {questions, answers}
+let customQuizRequestIds = new Set();
+
+async function ensureCustomQuizAnswers(exp) {
+  const questions = exp ? expCustomQuiz(exp.id) : [];
+  if (!questions.length) return { none: true };
+  const settings = loadSettings();
+  const logLine = (s) => { const el = $('logContent'); if (el) el.textContent += s + '\n'; };
+  if (!settings.hasApiKey) {
+    await appConfirm('已启用「自定义思考题」，但还没有配置 API Key，无法生成答案。\n\n请到「设置 → AI 服务」配置密钥后重试。本次生成已停止。',
+      { title: '无法生成思考题答案', okText: '知道了', danger: true });
+    return { stop: true };
+  }
+  logLine('正在用 AI 生成自定义思考题的回答…');
+  // 知识库（与润色同一套：读不到就降级为软约束）
+  let ragText = '';
+  const kbOnly = settings.kbOnly !== false;
+  if (kbOnly) {
+    try {
+      const rr = await window.labAPI.readRag(exp.path);
+      if (rr && rr.ok && rr.text) ragText = rr.text;
+    } catch (e) { /* 降级为软约束 */ }
+  }
+  const kbBlock = kbOnly
+    ? `\n\n【知识库硬性约束——本实验教材原理是唯一权威依据】\n${ragText ? ragText.slice(0, 8000) : '（本实验未提供知识库文本）'}\n只能使用知识库与题目中有依据的表述：不得新增两者中不存在的公式、数据、常数或结论，不得凭常识臆造。${ragText ? '' : '当前无知识库：只做语言层面的表述，禁止编造物理内容。'}`
+    : '';
+  const skillStates = (settings.skillStates && typeof settings.skillStates === 'object') ? settings.skillStates : {};
+  const skillBlock = (skillsCache || [])
+    .filter(sk => sk.scope !== 'plot' && skillStates[sk.id] !== false)
+    .map(sk => `\n【技能·${sk.name}（优先遵循）】${(sk.content || '').slice(0, 2000)}`)
+    .join('');
+  const userPrompt = (expUserPrompt(exp.id) || '').slice(0, 2000);
+  const style = document.querySelector('input[name="aiStyle"]:checked')?.value || 'rigorous';
+  const messages = [
+    {
+      role: 'system',
+      content: `你是一个大学物理实验报告写作助手。${getAiStylePrompt(style)}${skillBlock}${userPrompt ? `\n\n【用户自定义要求（优先遵循，但不得违反下方格式与知识库硬性约束）】\n${userPrompt}` : ''}请为下面给出的思考题写出回答，内容要科学准确、有依据，符合大学物理实验报告的规范。${kbBlock}\n\n【输出格式硬性要求】每题先原样抄一遍题目（题号与文字必须与给定题目逐字一致，不得增删改题目），下一行以「答：」开头写回答；数学表达一律用 $...$ 包裹，独立公式用单行 $$...$$；不要输出任何解释或额外内容。`,
+    },
+    {
+      role: 'user',
+      content: `请为下列思考题写回答：\n\n${questions.map((q, i) => `${i + 1}. ${q}`).join('\n')}`,
+    },
+  ];
+  const rid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `cq-${Date.now()}`;
+  customQuizRequestIds.add(rid);
+  let res = null;
+  try {
+    res = await window.labAPI.aiChat({
+      provider: settings.provider || 'deepseek', apiUrl: settings.apiUrl, model: settings.model,
+      messages, temperature: 0.8, requestId: rid, label: '自定义思考题',
+    });
+  } catch (e) {
+    res = { ok: false, error: (e && e.message) || String(e) };
+  } finally {
+    customQuizRequestIds.delete(rid);
+  }
+  if (!res || !res.ok) {
+    const reason = (res && res.error) || '未知错误';
+    logLine(`⚠ 思考题回答生成失败：${reason}`);
+    logEvent(`自定义思考题答案失败 | ${exp.id} | ${String(reason).slice(0, 120)}`);
+    const go = await appConfirm(
+      `自定义思考题的答案生成失败：\n\n${reason}\n\n「继续生成」＝用你自定义的题目生成报告，答案留空（日志里会标明哪几题没生成）；\n「停止」＝中止本次生成。`,
+      { title: '答案生成失败', okText: '继续生成', cancelText: '停止', danger: true });
+    return go ? { questions, answers: {} } : { stop: true };
+  }
+  // 解析：按「题号. 题目」切分，取题目行之后的正文作为回答（去掉「答：」前缀）
+  const answers = {};
+  for (const part of String(res.content || '').split(/\n(?=\d+\.\s)/)) {
+    const m = part.match(/^(\d+)\.\s*/);
+    if (!m) continue;
+    const body = part.split('\n').slice(1).join('\n').trim().replace(/^答\s*[:：]\s*/, '');
+    if (body) answers[m[1]] = [body];
+  }
+  const got = Object.keys(answers).length;
+  logLine(got ? `✔ 已生成 ${got} 道思考题的回答` : '⚠ 模型没有按要求返回回答（报告里答案将留空）');
+  return { questions, answers };
+}
+
+// ── 自定义画图：按实验保存画图需求；生成报告前让 AI 写 matplotlib 代码并在本机绘制 ──
+// 启用后报告里不再插入内置图，AI 生成的图按顺序填入原有插图位置（图注也由 AI 给出）。
+function loadAllCustomPlots() { try { return JSON.parse(localStorage.getItem('customPlots') || '{}'); } catch { return {}; } }
+function saveAllCustomPlots(all) { localStorage.setItem('customPlots', JSON.stringify(all)); }
+function expCustomPlot(expId) { return loadAllCustomPlots()[expId] || ''; }
+function setCustomPlot(expId, text) {
+  const all = loadAllCustomPlots();
+  const t = String(text || '').trim();
+  if (t) all[expId] = t; else delete all[expId];
+  saveAllCustomPlots(all);
+  updateCustomPlotBtn();
+}
+function updateCustomPlotBtn() {
+  const btn = $('btnCustomPlot');
+  if (!btn) return;
+  btn.textContent = (currentExp && expCustomPlot(currentExp.id)) ? '自定义画图 ✓' : '自定义画图';
+}
+function openCustomPlotModal() {
+  const ta = $('customPlotReq');
+  if (ta) ta.value = currentExp ? expCustomPlot(currentExp.id) : '';
+  const agreed = !!loadSettings().plotConsent;
+  const row = $('plotConsentRow');
+  if (row) row.style.display = agreed ? 'none' : '';
+  const chk = $('chkPlotConsent');
+  if (chk) chk.checked = agreed;
+  openModal('customPlotModal');
+}
+function saveCustomPlotModal() {
+  if (!currentExp) return;
+  const ta = $('customPlotReq');
+  const text = ta ? ta.value.trim() : '';
+  const settings = loadSettings();
+  if (text && !settings.plotConsent) {
+    const chk = $('chkPlotConsent');
+    if (!chk || !chk.checked) {
+      showToast('warning', '需要先确认', '请勾选「我已知晓并同意在本机运行 AI 生成的绘图代码」', 5000);
+      return;
+    }
+    saveSettings({ ...settings, plotConsent: true });
+  }
+  setCustomPlot(currentExp.id, text);
+  closeModal('customPlotModal');
+  showToast('success', text ? '已保存画图需求' : '已关闭自定义画图',
+    text ? '生成报告时由 AI 按需求画图，内置插图不再使用' : '恢复使用内置插图');
+}
+
+// 绘图契约：AI 必须按这套约定产出代码（与内置 skill「科研绘图规范」一致）
+const PLOT_CONTRACT = [
+  '【绘图代码硬性约定】',
+  '1. 只允许使用 matplotlib、numpy、scipy、pandas、PIL 与 Python 标准库；禁止联网、禁止系统命令与进程接口。',
+  '2. 开头写 import matplotlib 并 matplotlib.use("Agg")（本机无显示环境），禁止调用 plt.show()。',
+  '3. 测量数据从全局变量 DATA（dict，本实验数据）或 DATA_FILE（同一份数据的 JSON 文件路径）读取，不要臆造数据。',
+  '4. 每张图保存到全局变量 OUT_DIR 指向的目录：save(fig, "fig1.png")、save(fig, "fig2.png")…（顺序即报告插图顺序，最多 4 张）。',
+  '5. 每张图配一行图注：caption("fig1.png", "图1 ……")；图注里可用 $...$ 写公式。',
+  '6. 只往 OUT_DIR 里写文件；figsize 不超过 (10, 7)，dpi 用默认 150 即可。',
+  '7. 中文标签要能正常显示（中文字体已内置）；物理量与单位用 $...$ 数学写法，如 $U$ / V。',
+  '8. 只输出一个 ```python 代码块，不要输出解释文字。',
+].join('\n');
+
+// 明显越界的模块与调用直接拦下，把原因回给 AI 让它改用绘图库实现
+// 两种形态：import/from 引入越界模块；或直接调用（含 os.system / __import__ / eval 等）
+const PLOT_BANNED = /(?:^|[^\w.$])(?:subprocess|socket|urllib|requests|httpx|ctypes|winreg|shutil|multiprocessing|os\.system|os\.popen|os\.remove|__import__|eval|exec|compile|input)\s*[.(]|^\s*(?:import|from)\s+(?:subprocess|socket|urllib|requests|httpx|ctypes|winreg|shutil|multiprocessing)\b/m;
+const PLOT_MAX_ATTEMPTS = 3;
+
+let customPlotRequestIds = new Set();
+let activePlotRunId = '';
+
+function extractPlotCode(text) {
+  const s = String(text || '');
+  const m = s.match(/```(?:python|py)?\s*\n([\s\S]*?)```/);
+  return (m ? m[1] : s).trim();
+}
+
+// 生成前用 AI 写绘图代码并本机跑出来；返回 {none:true}（未启用/失败后改用内置图）/
+// {stop:true}（用户选择停止）/ {images:[{path,caption}]}
+async function ensureCustomPlotFigures(exp) {
+  const requirement = exp ? expCustomPlot(exp.id) : '';
+  if (!requirement) return { none: true };
+  const logLine = (s) => { const el = $('logContent'); if (el) el.textContent += s + '\n'; };
+  const settings = loadSettings();
+  if (!settings.hasApiKey) {
+    await appConfirm('已启用「自定义画图」，但还没有配置 API Key，无法生成绘图代码。\n\n请到「设置 → AI 服务」配置密钥后重试。本次生成已停止。',
+      { title: '无法生成绘图代码', okText: '知道了', danger: true });
+    return { stop: true };
+  }
+  if (!settings.plotConsent) {
+    const agree = await appConfirm('「自定义画图」会让 AI 生成 Python 绘图代码并在你的电脑上运行'
+      + '（隔离目录、120 秒超时、禁止联网与系统调用）。\n\n是否同意继续？',
+      { title: '需要你的确认', okText: '同意并继续', cancelText: '停止生成', danger: true });
+    if (!agree) return { stop: true };
+    saveSettings({ ...settings, plotConsent: true });
+  }
+  let slots = 0;
+  try {
+    const info = await window.labAPI.customPlotInfo(exp.path);
+    if (info && info.ok) slots = info.slots || 0;
+  } catch (e) { /* 取不到按无图位处理 */ }
+  if (!slots) {
+    logLine('⚠ 本实验报告没有插图位置，已跳过自定义画图');
+    return { none: true };
+  }
+  let dataText = '';
+  try {
+    const dr = await window.labAPI.readData(exp.path);
+    if (dr && dr.ok && dr.data) dataText = JSON.stringify(dr.data);
+  } catch (e) { /* 无数据时也能按需求与知识库作示意图 */ }
+
+  // 约束与润色同源：知识库（kbOnly）+ 绘图技能 + 本实验提示词 + 写作风格
+  let ragText = '';
+  const kbOnly = settings.kbOnly !== false;
+  if (kbOnly) {
+    try {
+      const rr = await window.labAPI.readRag(exp.path);
+      if (rr && rr.ok && rr.text) ragText = rr.text;
+    } catch (e) { /* 降级为软约束 */ }
+  }
+  const kbBlock = kbOnly
+    ? `\n\n【知识库硬性约束——本实验教材原理是唯一权威依据】\n${ragText ? ragText.slice(0, 8000) : '（本实验未提供知识库文本）'}\n图上出现的物理量、符号、单位必须与知识库一致；不得新增知识库与数据中都不存在的结论。`
+    : '';
+  const skillStates = (settings.skillStates && typeof settings.skillStates === 'object') ? settings.skillStates : {};
+  const skillBlock = (skillsCache || [])
+    .filter(sk => sk.scope === 'plot' && skillStates[sk.id] !== false)
+    .map(sk => `\n【技能·${sk.name}（优先遵循）】${(sk.content || '').slice(0, 3000)}`)
+    .join('');
+  const userPrompt = (expUserPrompt(exp.id) || '').slice(0, 2000);
+  const style = document.querySelector('input[name="aiStyle"]:checked')?.value || 'rigorous';
+
+  const messages = [
+    {
+      role: 'system',
+      content: `你是一个用 Python 为大学物理实验报告绘图的助手。${getAiStylePrompt(style)}${skillBlock}${userPrompt ? `\n\n【用户自定义要求（优先遵循，但不得违反下方绘图硬性约定）】\n${userPrompt}` : ''}请按用户给出的画图需求写一段完整的 matplotlib 绘图代码。${kbBlock}\n\n${PLOT_CONTRACT}`,
+    },
+    {
+      role: 'user',
+      content: `实验名称：${exp.name || ''}\n报告里共有 ${slots} 处插图位置，你最多生成 ${Math.min(slots, 4)} 张图（第 i 张放在第 i 个位置）。\n\n画图需求：\n${requirement}\n\n本实验测量数据（JSON）：\n${dataText.slice(0, 6000)}`,
+    },
+  ];
+
+  logLine('正在让 AI 生成绘图代码…');
+  let images = null;
+  let lastError = '';
+  let attempt = 0;
+  for (attempt = 1; attempt <= PLOT_MAX_ATTEMPTS; attempt++) {
+    const rid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `cp-${Date.now()}-${attempt}`;
+    customPlotRequestIds.add(rid);
+    let res = null;
+    try {
+      res = await window.labAPI.aiChat({
+        provider: settings.provider || 'deepseek', apiUrl: settings.apiUrl, model: settings.model,
+        messages, temperature: 0.4, requestId: rid, label: '自定义画图',
+      });
+    } catch (e) {
+      res = { ok: false, error: (e && e.message) || String(e) };
+    } finally {
+      customPlotRequestIds.delete(rid);
+    }
+    if (!res || !res.ok) { lastError = (res && res.error) || '未知错误'; break; }
+    const code = extractPlotCode(res.content);
+    messages.push({ role: 'assistant', content: String(res.content || '').slice(0, 20000) });
+    if (!code) {
+      lastError = '模型没有返回代码';
+      messages.push({ role: 'user', content: '你没有返回 Python 代码。请只输出一个 ```python 代码块。' });
+      continue;
+    }
+    const banned = code.match(PLOT_BANNED);
+    if (banned) {
+      lastError = `代码里使用了被禁止的 ${banned[0].trim().replace(/[.(]$/, '')}`;
+      logLine(`⚠ 绘图代码命中禁用项（${lastError.slice(-20)}），让 AI 重写…`);
+      messages.push({ role: 'user', content: `你的代码里使用了被禁止的写法（${banned[0].trim()}），请改用 matplotlib/numpy 实现，并遵守全部硬性约定后重新输出完整代码。` });
+      continue;
+    }
+    logLine(`已生成绘图代码（${code.length} 字），正在本机绘制…`);
+    const runId = `plot-${Date.now().toString(36)}-${attempt}`;
+    activePlotRunId = runId;
+    let run = null;
+    try {
+      run = await window.labAPI.runPlot(exp.path, code, runId);
+    } catch (e) {
+      run = { ok: false, error: (e && e.message) || String(e) };
+    } finally {
+      activePlotRunId = '';
+    }
+    if (run && run.cancelled) return { stop: true };
+    if (run && run.ok && Array.isArray(run.images) && run.images.length) {
+      images = run.images;
+      break;
+    }
+    lastError = (run && run.ok) ? '代码运行成功但没有产出图片（可能没有调用 save 或保存路径不对）'
+      : ((run && run.error) || '绘图失败');
+    const detail = (run && run.traceback) ? String(run.traceback).slice(-1200) : lastError;
+    logLine(`⚠ 第 ${attempt} 次绘制失败：${lastError}`);
+    messages.push({ role: 'user', content: `你的代码运行失败了，报错如下：\n\n${detail}\n\n请修正后重新输出完整代码（只输出一个 python 代码块）。` });
+  }
+
+  if (!images) {
+    logEvent(`自定义画图失败 | ${exp.id} | 尝试 ${attempt} 次 | ${String(lastError).slice(0, 120)}`);
+    const go = await appConfirm(`自定义画图没有成功：\n\n${lastError}\n\n「继续生成」＝本次改用报告内置插图；\n「停止」＝中止本次生成。`,
+      { title: '绘图失败', okText: '继续生成（用内置图）', cancelText: '停止', danger: true });
+    return go ? { none: true } : { stop: true };
+  }
+  const picked = images.slice(0, slots);
+  logLine(`✔ 已绘制 ${picked.length} 张图（报告里将不再使用内置插图）`);
+  logEvent(`自定义画图 | ${exp.id} | 图 ${picked.length} 张 | 尝试 ${attempt} 次`);
+  return { images: picked };
+}
+
 function updateOverrideBar() {
   const bar = $('aiOverrideBar');
   if (!bar) return;
@@ -1141,6 +1511,9 @@ function updateOverrideBar() {
 
 async function refreshAiScopeOptions(keepValue) {
   const sourceExp = currentExp;
+  fillUserPromptPanel();      // 提示词输入按实验回填（与润色范围一起刷新）
+  updateCustomQuizBtn();      // 自定义思考题按钮的计数随实验刷新
+  updateCustomPlotBtn();      // 自定义画图按钮的标记随实验刷新
   currentSections = null;
   try {
     if (sourceExp) {
@@ -1153,13 +1526,14 @@ async function refreshAiScopeOptions(keepValue) {
   if (!box) return;
   const prev = keepValue ? new Set([...box.querySelectorAll('input:checked')].map(i => i.value)) : new Set();
   box.innerHTML = '';
-  const add = (v, t) => {
+  const add = (v, t, disabled) => {
     const label = document.createElement('label');
     label.className = 'ai-check';
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.value = v;
     if (prev.has(v)) cb.checked = true;
+    if (disabled) { cb.disabled = true; cb.checked = false; label.style.opacity = '.6'; }
     label.appendChild(cb);
     label.appendChild(document.createTextNode(t));
     box.appendChild(label);
@@ -1169,7 +1543,11 @@ async function refreshAiScopeOptions(keepValue) {
   }
   // 硬编码文本章节：源文取自已生成报告，能否导入由该实验的 generate.py 消费点决定（渲染结果时判定）
   add('analysis', '结果分析（取自报告）');
-  add('quiz', '思考题（取自报告）');
+  // 启用自定义思考题时，思考题的答案在生成报告时自动生成，这里置灰（避免与手动润色打架）
+  const customQuizN = currentExp ? expCustomQuiz(currentExp.id).length : 0;
+  add('quiz', customQuizN
+    ? `思考题（已启用自定义题目 ${customQuizN} 道：答案在生成报告时自动生成）`
+    : '思考题（取自报告）', !!customQuizN);
   if (!prev.size) {
     const first = box.querySelector('input');
     if (first) first.checked = true;
@@ -1245,6 +1623,13 @@ function renderSkillRows() {
     const nameEl = document.createElement('div');
     nameEl.className = 'skill-name-text';
     nameEl.textContent = sk.name;
+    if (sk.scope === 'plot') {
+      const badge = document.createElement('span');
+      badge.className = 'skill-scope-badge';
+      badge.textContent = '仅画图';
+      badge.title = '该技能只在「自定义画图」时注入，不参与 AI 润色';
+      nameEl.appendChild(badge);
+    }
     info.appendChild(nameEl);
     if (sk.description) {
       const d = document.createElement('div');
@@ -1536,8 +1921,9 @@ async function runAiPolish(onlyScopeVal) {
   isAiPolishing = true;
   try {
   // 启用技能由「设置 → AI 润色技能」的开关决定（skillStates）；面板只读展示，不再逐次勾选
+  // scope:'plot' 的绘图技能只在「自定义画图」请求里注入，避免撑爆润色提示词
   const skillStates = (loadSettings().skillStates && typeof loadSettings().skillStates === 'object') ? loadSettings().skillStates : {};
-  const skillIds = (skillsCache || []).filter(sk => skillStates[sk.id] !== false).map(sk => sk.id);
+  const skillIds = (skillsCache || []).filter(sk => sk.scope !== 'plot' && skillStates[sk.id] !== false).map(sk => sk.id);
   const kbOnly = $('chkKbOnly').checked;
 
   // 知识库与技能指令：本轮所有润色对象共用
@@ -1557,6 +1943,12 @@ async function runAiPolish(onlyScopeVal) {
     .map(s => `\n【技能·${s.name}（优先遵循）】${(s.content || '').slice(0, 2000)}`)
     .join('');
   const formatBlock = '\n\n【输出格式硬性要求】只输出改写后的正文（Markdown）：任何数学表达（含 \\pi、\\Delta 等符号和上下标）一律用 $...$ 包裹，独立公式用单行 $$...$$（定界符与公式同一行）；不得输出裸的 \\frac、^、_ 等未包裹的 LaTeX；不得改变任何数值、单位与变量符号；【公式不可修改·最高优先级】原文中的每一个 $...$ 或 $$...$$ 公式必须逐字原样保留（含变量名、上下标、运算符与整体结构），公式只能出现在不可修改区，只能改写公式之外的文字；【公式数量与定界形式必须与原文一致】不得新增 $...$ 包裹（包括给数字、单位、百分比等原文未包裹的内容加 $），不得拆分或合并公式，不得将公式改写为纯文本；不要输出章节编号标题（如"一、"），不要输出任何解释。';
+  // 用户提示词（按实验保存）：与技能同属「优先遵循」层，但排在格式/知识库硬约束之前，不得越过它们。
+  // 读取走 $('aiUserPrompt').value —— runAiPolish 会被单测切片执行，不能依赖新全局或直接碰 localStorage。
+  const userPromptText = ($('aiUserPrompt') && $('aiUserPrompt').value) ? String($('aiUserPrompt').value).trim() : '';
+  const userPromptBlock = userPromptText
+    ? `\n\n【用户自定义要求（优先遵循，但不得违反下方格式与知识库硬性约束）】\n${userPromptText.slice(0, 2000)}`
+    : '';
 
   // 显示加载状态：整轮润色隐藏结果卡；重新润色保留结果卡——已成功的润色文本继续可见，
   // 仅把被重新润色的块变暗并标「润色中…」，加载卡只展示这些对象的进度/思考
@@ -1630,7 +2022,7 @@ async function runAiPolish(onlyScopeVal) {
         const messages = [
           {
             role: 'system',
-            content: `你是一个大学物理实验报告润色助手。${getAiStylePrompt(style)}${skillBlock}请对用户提供的实验报告内容进行个性化改写，保持科学准确性和数据真实性，避免与原文措辞重复，使报告更具个人特色，降低重复检测风险。只输出改写后的内容，不要输出解释或说明。${formatBlock}${kbBlock}${scopeVal === 'quiz' ? '\n\n【思考题润色规则·最高优先级】题目（含题号，如"1. …"）是固定内容：必须逐字保留在输出中，严禁修改、删除或新增任何题目；只改写"答："之后的回答内容。输出格式：每问一行题目（与原文逐字一致）+ 下一行改写后的回答，按题号顺序排列。' : ''}`,
+            content: `你是一个大学物理实验报告润色助手。${getAiStylePrompt(style)}${skillBlock}${userPromptBlock}请对用户提供的实验报告内容进行个性化改写，保持科学准确性和数据真实性，避免与原文措辞重复，使报告更具个人特色，降低重复检测风险。只输出改写后的内容，不要输出解释或说明。${formatBlock}${kbBlock}${scopeVal === 'quiz' ? '\n\n【思考题润色规则·最高优先级】题目（含题号，如"1. …"）是固定内容：必须逐字保留在输出中，严禁修改、删除或新增任何题目；只改写"答："之后的回答内容。输出格式：每问一行题目（与原文逐字一致）+ 下一行改写后的回答，按题号顺序排列。' : ''}`,
           },
           {
             role: 'user',
@@ -1653,6 +2045,7 @@ async function runAiPolish(onlyScopeVal) {
           messages,
           temperature: 0.8,
           requestId: rid,
+          label: displayScope,      // 供主进程日志标注这次请求是哪个章节（排查用）
         });
         if (aiPolishCancelled) return null;   // 取消后丢弃当前项结果
         if (result.ok) {
@@ -1720,6 +2113,13 @@ async function runAiPolish(onlyScopeVal) {
     }
     lastPolishResults = finalResults;
     renderAiResults();
+    // 排查用：本轮结果落一行日志（之前润色失败在日志里完全看不到，用户报「没成功」时无从查证）
+    {
+      const failed = finalResults.filter(r => r.error);
+      if (failed.length) {
+        logEvent(`润色失败 ${failed.length} 项 | ${failed.map(r => `${r.displayScope}(${r.failKind || 'api'}:${String(r.error || '').slice(0, 60)})`).join('、').slice(0, 300)}`);
+      }
+    }
     const counted = retrying ? results : finalResults;   // 重新润色时只统计本轮重跑的对象
     const okCount = counted.filter(r => r.polished).length;
     if (aiPolishCancelled) {
@@ -1868,12 +2268,11 @@ async function renderAiResults() {
     copyBtn.type = 'button';
     copyBtn.className = 'btn btn-sm btn-outline';
     copyBtn.textContent = '复制结果';
-    copyBtn.onclick = () => {
-      navigator.clipboard.writeText(r.polished).then(() => {
-        showToast('success', '已复制', r.displayScope + ' 润色结果已复制到剪贴板');
-      }).catch(() => {
-        showToast('error', '复制失败', '请手动选择复制');
-      });
+    copyBtn.onclick = async () => {
+      // 走主进程剪贴板：网页权限被应用一律拒绝，navigator.clipboard 在 file:// 下必然失败
+      const res = await window.labAPI.copyText(r.polished);
+      if (res && res.ok) showToast('success', '已复制', r.displayScope + ' 润色结果已复制到剪贴板');
+      else showToast('error', '复制失败', (res && res.error) || '未知错误', 5000);
     };
     head.appendChild(copyBtn);
 
@@ -2091,6 +2490,7 @@ function bindEvents() {
   $('btnNavCustomVariants').onclick = () => { switchSettingsPane('customvariants'); loadCustomVariantsPane(); };
   $('btnNavReports').onclick = () => { switchSettingsPane('reports'); loadReportsList(); };
   $('btnRefreshReports').onclick = loadReportsList;
+  $('btnPickReportDir').onclick = pickReportDir;
   $('btnNavHelp').onclick = () => switchSettingsPane('help');
   $('btnNavDanger').onclick = () => switchSettingsPane('danger');
   $('btnNavUpdate').onclick = () => { switchSettingsPane('update'); loadUpdatePane(); };
@@ -2229,6 +2629,11 @@ function bindEvents() {
   // content 是正文。两路并发时预览与思考文本只跟随最先发起的一路，思考字数两路合计。
   window.labAPI.onAiChunk(({ requestId, delta, kind }) => {
     if (!aiPolishRequestIds.has(requestId)) return;
+    // 响应体异常偏大（主进程只告警、不再中止请求）：必须显式分支，否则会落进下面的正文追加
+    if (kind === 'warn') {
+      showToast('warning', '目前模型可能空转或跑飞', '这次响应内容异常偏大，已继续等待；可随时点「取消」中止', 9000);
+      return;
+    }
     if (kind === 'reasoning') {
       aiThinkingChars += delta.length;
       const bar = $('aiThinkingBar');
@@ -2261,6 +2666,37 @@ function bindEvents() {
     s.kbOnly = $('chkKbOnly').checked;
     saveSettings(s);
   };
+  // 提示词输入：失焦即按实验保存（清空 = 取消该实验的附加要求）
+  $('aiUserPrompt').onblur = () => {
+    if (currentExp) setUserPrompt(currentExp.id, $('aiUserPrompt').value);
+  };
+  // 自定义思考题：弹窗增删题目、保存到当前实验
+  $('btnCustomQuiz').onclick = openCustomQuizModal;
+  // 自定义画图：弹窗填写画图需求（首次需勾选同意在本机运行 AI 生成的绘图代码）
+  $('btnCustomPlot').onclick = openCustomPlotModal;
+  $('btnSaveCustomPlot').onclick = saveCustomPlotModal;
+  $('btnCancelCustomPlot').onclick = () => closeModal('customPlotModal');
+  $('btnCloseCustomPlot').onclick = () => closeModal('customPlotModal');
+  $('btnAddCustomQuiz').onclick = () => {
+    const cur = collectCustomQuizRows(true);
+    cur.push('');
+    renderCustomQuizRows(cur);
+    const box = $('customQuizList');
+    const all = box ? [...box.querySelectorAll('textarea')] : [];
+    if (all.length) all[all.length - 1].focus();
+  };
+  $('btnSaveCustomQuiz').onclick = () => {
+    if (!currentExp) return;
+    setCustomQuiz(currentExp.id, collectCustomQuizRows(false));
+    closeModal('customQuizModal');
+    const n = expCustomQuiz(currentExp.id).length;
+    showToast('success', '已保存', n
+      ? `报告里将只出现这 ${n} 道自定义题目，答案在生成报告时由 AI 生成`
+      : '已关闭自定义题目，恢复内置题目', 6000);
+    refreshAiScopeOptions(true);
+  };
+  $('btnCancelCustomQuiz').onclick = () => closeModal('customQuizModal');
+  $('btnCloseCustomQuiz').onclick = () => closeModal('customQuizModal');
   $('btnImportSkill').onclick = importSkillFiles;
   $('btnOpenSkillsFolder').onclick = () => window.labAPI.openSkillsFolder();
   $('btnGetSkill').onclick = openGetSkillModal;
@@ -2293,6 +2729,8 @@ function appConfirm(msg, opts = {}) {
     okBtn.textContent = opts.okText || '确定';
     okBtn.classList.toggle('btn-danger', !!opts.danger);
     okBtn.classList.toggle('btn-primary', !opts.danger);
+    const cancelBtn = $('btnConfirmCancel');
+    if (cancelBtn) cancelBtn.textContent = opts.cancelText || '取消';
     pendingConfirmResolve = resolve;
     openModal('confirmModal');
   });
@@ -2318,28 +2756,14 @@ function openGetSkillModal() {
 
 function closeGetSkillModal() { closeModal('getSkillModal'); }
 
-function copySkillLink() {
+async function copySkillLink() {
   const btn = $('btnCopySkillLink');
-  const done = () => {
-    btn.textContent = '已复制';
-    showToast('success', '已复制', '网盘链接已复制到剪贴板');
-    setTimeout(() => { if (btn.textContent === '已复制') btn.textContent = '复制链接'; }, 2000);
-  };
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(SKILL_PAN_URL).then(done).catch(() => legacyCopySkillLink(done));
-  } else {
-    legacyCopySkillLink(done);
-  }
-}
-
-function legacyCopySkillLink(done) {
-  const inp = $('skillPanLink');
-  inp.focus();
-  inp.select();
-  try {
-    if (document.execCommand('copy')) { done(); return; }
-  } catch (e) { /* 忽略 */ }
-  showToast('error', '复制失败', '请手动全选链接复制');
+  // 与 AI 结果复制同一机制：主进程剪贴板（网页权限在本应用一律被拒，navigator.clipboard 必失败）
+  const res = await window.labAPI.copyText(SKILL_PAN_URL);
+  if (!(res && res.ok)) { showToast('error', '复制失败', (res && res.error) || '未知错误', 5000); return; }
+  btn.textContent = '已复制';
+  showToast('success', '已复制', '网盘链接已复制到剪贴板');
+  setTimeout(() => { if (btn.textContent === '已复制') btn.textContent = '复制链接'; }, 2000);
 }
 
 async function openSkillLink() {
@@ -2385,7 +2809,6 @@ function toggleAiConfigPanel(which) {
   vision.hidden = !showVision;
   $('btnOpenApiConfig').classList.toggle('active', showApi);
   $('btnOpenVisionConfig').classList.toggle('active', showVision);
-  if (showVision && typeof updateVisionFields === 'function') updateVisionFields();
 }
 function collapseAiConfigPanels() {
   const api = $('panelApiConfig'), vision = $('panelVisionConfig');
@@ -3201,10 +3624,31 @@ function fmtSize(bytes) {
   return bytes + ' B';
 }
 
+// ── 自定义报告目录（设置 → 报告管理）──
+// 设置存 appSettings.customReportDir；生成成功后由主进程复制一份到该目录（实验目录原件保留）。
+// 界面上不再单独占一行展示路径（避免灰色小字），改为挂在「选择保存位置」按钮的 title 上。
+function renderReportDirSetting() {
+  const dir = loadSettings().customReportDir || '';
+  const btn = $('btnPickReportDir');
+  if (btn) btn.title = dir ? `当前保存位置：${dir}` : '未设置：报告只保存在实验目录';
+}
+
+async function pickReportDir() {
+  const r = await window.labAPI.pickDirectory(loadSettings().customReportDir || '');
+  if (!r || r.canceled) return;
+  if (!r.ok) { showToast('error', '无法使用该目录', r.error || '未知错误', 5000); return; }
+  const settings = loadSettings();
+  settings.customReportDir = r.dir;
+  saveSettings(settings);
+  renderReportDirSetting();
+  showToast('success', '已设置保存位置', '以后生成的报告会复制到：' + r.dir, 6000);
+}
+
 async function loadReportsList() {
   const list = $('reportsList');
   const summary = $('reportsSummary');
   if (!list || !summary) return;
+  renderReportDirSetting();
   summary.textContent = '加载中…';
   list.innerHTML = '';
   let reports = [];
@@ -3219,7 +3663,8 @@ async function loadReportsList() {
     summary.textContent = '暂无已生成的报告。先选择实验并点击「生成报告」。';
     return;
   }
-  summary.textContent = `共 ${reports.length} 份报告 · 按生成时间倒序 · 「删除」仅移除报告文件，不影响测量数据与变体`;
+  // 有报告时不再显示灰色计数小字（列表本身就说明了数量）
+  summary.textContent = '';
   for (const rep of reports) {
     const row = document.createElement('div');
     row.className = 'report-row';
@@ -3435,6 +3880,11 @@ async function runGenerate() {
 // 取消生成
 async function cancelGenerate() {
   if (!isGenerating) return;
+  // 若正在生成自定义思考题的答案，一并中止该 AI 请求
+  for (const id of [...customQuizRequestIds]) { try { window.labAPI.aiChatCancel(id); } catch (e) { /* 忽略 */ } }
+  // 自定义画图的 AI 请求与本机绘图进程同样一并中止
+  for (const id of [...customPlotRequestIds]) { try { window.labAPI.aiChatCancel(id); } catch (e) { /* 忽略 */ } }
+  if (activePlotRunId) { try { window.labAPI.cancelPlot(activePlotRunId); } catch (e) { /* 忽略 */ } }
   $('btnCancelGenerate').disabled = true;
   $('btnCancelGenerate').textContent = '正在取消...';
   $('logContent').textContent += '\n⏹ 正在取消生成...\n';
@@ -3487,7 +3937,21 @@ async function runGenerateReport(btn, genExpId) {
       variantChoices[sec] = idx;
     }
   });
-  const result = await window.labAPI.runGenerate(genExp.path, studentInfo, variantChoices, expOverrides(genExp.id), loadSettings().embedDataPhoto !== false);
+  // 自定义思考题：生成前用 AI 生成答案（每次重新请求，不缓存）
+  const cq = await ensureCustomQuizAnswers(genExp);
+  if (cq.stop) {
+    $('logContent').textContent += '\n⏹ 已按你的选择停止生成（自定义思考题答案未生成）\n';
+    return false;
+  }
+  const customQuiz = cq.none ? null : { questions: cq.questions, answers: cq.answers };
+  // 自定义画图：生成前让 AI 写绘图代码并本机绘制（每次重新请求，不缓存）
+  const cp = await ensureCustomPlotFigures(genExp);
+  if (cp.stop) {
+    $('logContent').textContent += '\n⏹ 已按你的选择停止生成（自定义画图未完成）\n';
+    return false;
+  }
+  const customPlot = cp.none ? null : { images: cp.images };
+  const result = await window.labAPI.runGenerate(genExp.path, studentInfo, variantChoices, expOverrides(genExp.id), loadSettings().embedDataPhoto !== false, loadSettings().customReportDir || '', customQuiz, customPlot);
   if (result.cancelled) {
     $('logContent').textContent += '\n⏹ 生成已取消\n';
     showToast('info', '生成已取消', getDisplayName(genExp));
@@ -3496,6 +3960,7 @@ async function runGenerateReport(btn, genExpId) {
   if (result.ok) {
     $('logContent').textContent += '\n✅ 报告生成成功！\n';
     if (result.reportFile) $('logContent').textContent += `📄 ${result.reportFile}\n`;
+    if (result.copiedTo) $('logContent').textContent += `📁 已复制到自定义目录：${result.copiedTo}\n`;
     showToast('success', '报告生成成功', getDisplayName(genExp));
     // 刷新实验列表
     experiments = await fetchExperiments();

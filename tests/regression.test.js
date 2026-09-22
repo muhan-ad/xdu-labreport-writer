@@ -87,6 +87,19 @@ test('installed upgrades refresh existing scripts but retain data, reports and c
   assert.equal(read(path.join(target, 'common/core.py')), 'hot-update');
 });
 
+test('installed upgrades retain the verified data-package state', t => {
+  const root = fixture(t), builtin = path.join(root, 'builtin'), target = path.join(root, 'user');
+  put(path.join(builtin, 'common/core.py'), 'v1');
+  store.syncBuiltin(builtin, target, store.resourceVersion(builtin), '1');
+  store.writeState(target, {
+    ...store.readState(target),
+    manifest: { dataVersion: '2.3.4', removed: ['已下架实验'] },
+  });
+  put(path.join(builtin, 'common/core.py'), 'v2');
+  store.syncBuiltin(builtin, target, store.resourceVersion(builtin), '2');
+  assert.deepEqual(store.readState(target).manifest, { dataVersion: '2.3.4', removed: ['已下架实验'] });
+});
+
 test('resource sync carries non-script data files (vendored formula deps)', async t => {
   // 回归：白名单曾只认 .py/.json/.md，导致公式转换依赖的符号表 .txt 既不进指纹也不同步，
   // 用户端生成报告直接失败（内置副本缺文件）。这里钉住"数据文件必须一起走"。
@@ -149,6 +162,35 @@ test('failed autosave unlocks the UI and never starts Word', async () => {
   await ui.runGenerate();
   assert.equal(ui.isGenerating, false);
   assert.equal(ui.$('btnGenerate').disabled, false);
+});
+
+test('batch generation saves the dirty current form before constructing its queue', async () => {
+  const ui = uiContext();
+  let saves = 0, queued = 0;
+  Object.assign(ui, {
+    experiments: [{ id: 'A', name: '实验 A', path: 'A' }], selectedIds: new Set(['A']),
+    queueState: 'idle', genQueue: [],
+    saveFormData: async () => { saves++; return true; },
+    openQueuePanel: () => {}, pumpQueue: async () => { queued++; },
+  });
+  load(ui, 'async function runBatchGenerate()', 'function openQueuePanel()');
+  await ui.runBatchGenerate();
+  assert.equal(saves, 1);
+  assert.equal(queued, 1);
+  assert.equal(ui.genQueue.length, 1);
+});
+
+test('form issue bar is refreshed while the user edits data', () => {
+  const ui = uiContext();
+  Object.assign(ui, {
+    currentSchema: { groups: [] }, readFormData: () => ({}),
+    dataValidation: { validate: () => ['读数：必须是有限数值'] }, escapeHtml: s => s,
+  });
+  load(ui, 'function refreshFormCheck()', '// 通知主进程当前是否有未保存的数据');
+  load(ui, 'function onFormInput()', '// 只读主表单');
+  ui.onFormInput();
+  assert.equal(ui.$('dataIssueBar').style.display, 'block');
+  assert.match(ui.$('dataIssueBar').innerHTML, /必须是有限数值/);
 });
 
 test('multi-section polishing uses the original snapshot after switching experiments', async () => {
@@ -450,8 +492,16 @@ test('vision contribution upload assembles photo + ai + proofread + manifest wit
   assert.equal(submitted.length, 1, '上传成功后标记已提交');
 });
 
-function mainHarness(t, failUpdateCopy = false) {
+function mainHarness(t, failUpdateCopy = false, realChild = false) {
   const root = fixture(t), handlers = new Map(), rawHandlers = new Map(), children = [], kills = [];
+  // main.js installs process-level crash handlers.  Each isolated evaluation needs
+  // to remove only the handlers it added so the regression runner stays leak-free.
+  const processHandlers = new Map(['uncaughtException', 'unhandledRejection'].map(event => [event, new Set(process.listeners(event))]));
+  t.after(() => {
+    for (const [event, before] of processHandlers) {
+      for (const listener of process.listeners(event)) if (!before.has(listener)) process.removeListener(event, listener);
+    }
+  });
   let ready;
   const copied = [];
   const webContents = { mainFrame: { url: require('node:url').pathToFileURL(path.join(__dirname, '../src/index.html')).href }, on: () => {}, setWindowOpenHandler: () => {}, send: () => {} };
@@ -462,18 +512,20 @@ function mainHarness(t, failUpdateCopy = false) {
     app: { isPackaged: false, getPath: () => root, getVersion: () => '1.7.5',
       whenReady: () => ({ then: fn => { ready = fn; } }), on: () => {}, requestSingleInstanceLock: () => true },
     clipboard: { writeText: text => copied.push(text) },
+    shell: { openPath: async () => '', showItemInFolder: () => {} },
+    dialog: { showOpenDialog: async () => ({ canceled: true, filePaths: [] }) },
     protocol: { registerSchemesAsPrivileged: () => {}, handle: () => {} },
     BrowserWindow: function() { this.webContents = webContents; this.on = () => {}; this.loadURL = () => {}; },
     session: { defaultSession: { setPermissionRequestHandler: () => {}, setPermissionCheckHandler: () => {} } },
     ipcMain: { handle: (name, fn) => { rawHandlers.set(name, fn); handlers.set(name, (event, ...args) => fn({ sender: webContents, senderFrame: webContents.mainFrame }, ...args)); }, on: () => {} },
   };
   const childTools = {
-    spawn: () => {
+    spawn: realChild ? require('node:child_process').spawn : () => {
       const child = new EventEmitter();
       Object.assign(child, { stdout: new PassThrough(), stderr: new PassThrough(), pid: 1234, exitCode: null });
       children.push(child); return child;
     },
-    execFile: (exe, args, options, callback) => {
+    execFile: realChild ? require('node:child_process').execFile : (exe, args, options, callback) => {
       kills.push({ exe, args });
       const cb = typeof options === 'function' ? options : callback;
       if (exe === 'taskkill') setImmediate(() => {
@@ -517,6 +569,35 @@ test('main process rejects concurrent generation and cancels by killing the pyth
   // 报告生成改为纯 Python（无 Word COM）：取消只需结束 python 进程树，不再有任何外部进程清理脚本
   assert.equal(h.kills.filter(k => k.exe === 'taskkill').length, 1);
   assert.equal(h.kills.filter(k => k.exe !== 'taskkill').length, 0);
+});
+
+test('deleting an already removed report is idempotent', t => {
+  const h = mainHarness(t);
+  const report = path.join(h.root, '实验数据', '实验脚本', '长度与体积的测量', '已删除.docx');
+  // reportPath 必须先确认父目录确实是一个实验；目标 DOCX 本身故意不存在。
+  put(path.join(path.dirname(report), 'generate.py'), 'print(1)');
+  const result = h.handlers.get('delete-report')({}, report);
+  assert.deepEqual(result, { ok: true, alreadyGone: true });
+});
+
+test('a failed photo replacement keeps the prior photo intact', t => {
+  const h = mainHarness(t);
+  const exp = path.join(__dirname, '../物理实验/实验脚本/长度与体积的测量');
+  const png = 'data:image/png;base64,' + Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString('base64');
+  assert.equal(h.handlers.get('save-table-image')({}, exp, png).ok, true);
+  const saved = path.join(h.root, '实验数据', '实验脚本', '长度与体积的测量', '原始数据照片.png');
+  assert.ok(fs.existsSync(saved));
+
+  const atomic = require('../src/main/atomic-store');
+  const originalWrite = atomic.writeFile;
+  atomic.writeFile = () => { throw Error('simulated disk failure'); };
+  try {
+    const failed = h.handlers.get('save-table-image')({}, exp, 'data:image/jpeg;base64,/9g=');
+    assert.equal(failed.ok, false);
+    assert.ok(fs.existsSync(saved), '新图写入失败时旧图不能提前删除');
+  } finally {
+    atomic.writeFile = originalWrite;
+  }
 });
 
 test('main process rejects data update during generation and reports old DOCX as failure', async t => {
@@ -872,4 +953,239 @@ test('settings thanks pane is wired above the danger entry', () => {
   for (const cls of ['.thanks-list', '.thanks-row', '.thanks-name', '.settings-nav-thanks']) {
     assert.ok(css.includes(cls), '样式 ' + cls + ' 存在');
   }
+});
+
+// ── 复制到剪贴板（AI 润色结果「复制结果」按钮）──
+// 历史缺陷：渲染层用 navigator.clipboard.writeText，而本应用对所有网页权限一律拒绝
+// （setPermissionCheckHandler 恒 false）+ 页面是 file:// 不透明源 → 必然失败，只弹「请手动选择复制」。
+test('copy-text writes arbitrary clipboard text and refuses invalid payloads', t => {
+  const h = mainHarness(t);
+  const copy = h.handlers.get('copy-text');
+  assert.equal(copy({}, '润色后的正文，含公式 $x^{2}$ 与换行\n第二行').ok, true);
+  assert.deepEqual(h.copied, ['润色后的正文，含公式 $x^{2}$ 与换行\n第二行']);
+  assert.equal(copy({}, 42).ok, false, '非字符串必须拒绝');
+  assert.equal(copy({}, 'x'.repeat(512 * 1024 + 1)).ok, false, '超长内容必须拒绝');
+  assert.equal(h.copied.length, 1, '被拒绝的调用不得写入剪贴板');
+});
+
+test('AI result copy goes through the main-process clipboard', () => {
+  assert.match(renderer, /await window\.labAPI\.copyText\(r\.polished\)/, '复制结果按钮走主进程剪贴板');
+  assert.ok(!/navigator\.clipboard\.writeText\s*\(/.test(renderer), '渲染层不得再调用 navigator.clipboard（本应用权限全拒，必然失败）');
+  const preload = read(path.join(__dirname, '../preload.js'));
+  assert.match(preload, /copyText: \(text\) => ipcRenderer\.invoke\('copy-text', text\)/, 'preload 暴露 copyText');
+});
+
+// ── 自定义报告目录（设置 → 报告管理）──
+test('run-generate copies the report into the custom directory and keeps the original', async t => {
+  const h = mainHarness(t);
+  const exp = path.join(__dirname, '../物理实验/实验脚本/长度与体积的测量');
+  const customDir = path.join(h.root, '自定义报告');
+  const pending = h.handlers.get('run-generate')({}, exp, {}, {}, {}, true, customDir);
+  const report = path.join(h.root, '实验数据/实验脚本/长度与体积的测量/长度与体积的测量.docx');
+  put(report, 'report bytes');
+  h.children[0].exitCode = 0;
+  h.children[0].emit('close', 0);
+  const r = await pending;
+  assert.equal(r.ok, true);
+  const copiedPath = path.join(customDir, '长度与体积的测量', '长度与体积的测量.docx');
+  assert.equal(fs.existsSync(copiedPath), true, '自定义目录里应有按实验名建子文件夹的副本');
+  assert.equal(fs.readFileSync(copiedPath, 'utf8'), 'report bytes');
+  assert.equal(fs.existsSync(report), true, '实验目录原件必须保留（预览/打开/报告列表仍用它）');
+  assert.equal(r.copiedTo, copiedPath, '返回值带上复制目标路径');
+  // 生成日志（app.log）里也要能看出这次复制
+  const logText = fs.readFileSync(path.join(h.root, 'logs', 'app.log'), 'utf8');
+  assert.match(logText, /generate \| 结束 \| .*复制=ok/, '生成结束行要带上复制结果');
+});
+
+test('an unusable custom report directory does not fail generation', async t => {
+  const h = mainHarness(t);
+  const exp = path.join(__dirname, '../物理实验/实验脚本/长度与体积的测量');
+  // 指向内置数据目录（安装目录内）→ 必须被拒；生成本身仍应成功
+  const bad = path.join(__dirname, '../物理实验/实验脚本');
+  const pending = h.handlers.get('run-generate')({}, exp, {}, {}, {}, true, bad);
+  put(path.join(h.root, '实验数据/实验脚本/长度与体积的测量/长度与体积的测量.docx'), 'report bytes');
+  h.children[0].exitCode = 0;
+  h.children[0].emit('close', 0);
+  const r = await pending;
+  assert.equal(r.ok, true, '自定义目录不可用时生成仍要成功');
+  assert.equal(r.copiedTo, undefined);
+  assert.match(r.logs, /\[自定义目录\] 复制失败/, '日志里要有告警');
+  assert.equal(fs.existsSync(path.join(bad, '长度与体积的测量', '长度与体积的测量.docx')), false, '不得写进内置数据目录');
+});
+
+// AI / 识图请求的诊断日志：这条链路此前完全没有日志（响应异常偏大、模型空转、润色失败都查不到）。
+// 现在每次请求结束都落一行：请求类型、模型、结果、实收字节、正文/思考字符数、耗时。
+test('AI and OCR requests each write one diagnostic log line', async t => {
+  const h = mainHarness(t);
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+  // 未配置密钥时请求必然失败，但日志照样要落一行（失败原因正是排查最需要的）
+  const chat = await h.handlers.get('ai-chat')({}, {
+    provider: 'custom', apiUrl: 'https://api.example.com/v1', model: 'test-model',
+    messages: [{ role: 'user', content: 'hi' }], label: '结果分析',
+  });
+  assert.equal(chat.ok, false);
+  const ocrRes = await h.handlers.get('ocr-recognize')({}, {
+    visionProvider: 'inherit', provider: 'custom', visionApiUrl: 'https://api.example.com/v1',
+    model: 'test-model', prompt: '抄录字段', imageDataUrl: png,
+  });
+  assert.equal(ocrRes.ok, false);
+  const logText = fs.readFileSync(path.join(h.root, 'logs', 'app.log'), 'utf8');
+  assert.match(logText, /ai-chat \| 结果分析 \| custom\/test-model \| 失败: .+ \| 字节=\d+ 正文=\d+ 思考=\d+ \| \d+ms/,
+    'AI 请求要落一行含 类型/模型/结果/字节/正文/思考/耗时 的日志');
+  assert.match(logText, /ocr \| inherit\/test-model \| 失败: .+ \| \d+ms/, '识图请求也要落一行');
+});
+
+// 提示词输入（按实验保存）+ 自定义思考题（题目硬编码、答案生成时由 AI 产出）
+test('per-experiment user prompt and custom quiz are wired through', () => {
+  const html = read(path.join(__dirname, '../src/index.html'));
+  const preload = read(path.join(__dirname, '../preload.js'));
+  const mainSrc = read(path.join(__dirname, '../main.js'));
+  // 提示词输入
+  assert.ok(html.includes('id="aiUserPrompt"'), '润色面板要有提示词输入框');
+  assert.match(renderer, /localStorage\.getItem\('userPrompts'\)/, '提示词按实验存本地');
+  assert.match(renderer, /\$\('aiUserPrompt'\)\.onblur = /, '失焦即保存');
+  assert.match(renderer, /【用户自定义要求（优先遵循，但不得违反下方格式与知识库硬性约束）】/, '提示词要注入 system 提示词');
+  assert.match(renderer, /getAiStylePrompt\(style\)\}\$\{skillBlock\}\$\{userPromptBlock\}/, '插入位置在技能块之后');
+  // 自定义思考题
+  assert.ok(html.includes('id="btnCustomQuiz"'), '数据卡片要有自定义思考题按钮');
+  assert.ok(html.indexOf('id="btnCustomQuiz"') < html.indexOf('id="btnRecognize"'), '按钮在「识别图片」左边');
+  for (const id of ['customQuizModal', 'customQuizList', 'btnAddCustomQuiz', 'btnSaveCustomQuiz']) {
+    assert.ok(html.includes(`id="${id}"`), '缺少控件 ' + id);
+  }
+  assert.match(renderer, /localStorage\.getItem\('customQuiz'\)/, '题目按实验存本地');
+  assert.match(renderer, /await ensureCustomQuizAnswers\(genExp\)/, '单份生成前先取答案');
+  assert.match(renderer, /await ensureCustomQuizAnswers\(q\.exp\)/, '批量生成逐实验取答案');
+  assert.match(mainSrc, /customQuiz = null, customPlot = null\) => \{/, 'run-generate 接收 customQuiz');
+  assert.match(mainSrc, /customQuiz: \(customQuiz && Array\.isArray\(customQuiz\.questions\)/, '主进程把它写进任务输入');
+  assert.match(preload, /reportCopyDir, customQuiz, customPlot\)/, 'preload 透传 customQuiz');
+  assert.match(renderer, /customQuizRequestIds/, '自动请求登记在独立集合（不被「取消润色」连带中止）');
+  assert.match(renderer, /appConfirm\([\s\S]{0,200}okText: '继续生成'/, '失败时给「继续生成 / 停止」选择');
+});
+
+test('custom plot: button, modal, consent, AI code path and job wiring', () => {
+  const html = read(path.join(__dirname, '../src/index.html'));
+  const preload = read(path.join(__dirname, '../preload.js'));
+  const mainSrc = read(path.join(__dirname, '../main.js'));
+  const css = read(path.join(__dirname, '../src/style.css'));
+  // UI：按钮在「自定义思考题」左边 + 弹窗控件齐全
+  assert.ok(html.includes('id="btnCustomPlot"'), '数据卡片要有自定义画图按钮');
+  assert.ok(html.indexOf('id="btnCustomPlot"') < html.indexOf('id="btnCustomQuiz"'), '按钮在「自定义思考题」左边');
+  for (const id of ['customPlotModal', 'customPlotReq', 'plotConsentRow', 'chkPlotConsent', 'btnSaveCustomPlot']) {
+    assert.ok(html.includes(`id="${id}"`), '缺少控件 ' + id);
+  }
+  assert.match(css, /\.plot-consent-row/, '同意区要有样式');
+  // 存储与生成链路
+  assert.match(renderer, /localStorage\.getItem\('customPlots'\)/, '画图需求按实验存本地');
+  assert.match(renderer, /await ensureCustomPlotFigures\(genExp\)/, '单份生成前先画图');
+  assert.match(renderer, /await ensureCustomPlotFigures\(q\.exp\)/, '批量生成逐实验画图');
+  assert.match(renderer, /const customPlot = cp\.none \? null : \{ images: cp\.images \}/, '结果转成 job 字段');
+  assert.match(renderer, /PLOT_CONTRACT/, '绘图硬性约定要注入提示词');
+  assert.match(renderer, /PLOT_BANNED/, '禁止模块的静态检查');
+  assert.match(renderer, /PLOT_MAX_ATTEMPTS = 3/, '失败重试上限');
+  assert.match(renderer, /customPlotRequestIds/, '绘图 AI 请求登记在独立集合');
+  assert.match(renderer, /window\.labAPI\.cancelPlot\(activePlotRunId\)/, '取消生成要中止本机绘图');
+  assert.match(renderer, /okText: '继续生成（用内置图）'/, '绘图失败给「继续生成（用内置图）/ 停止」');
+  // 主进程
+  assert.match(mainSrc, /customPlot = null\) => \{/, 'run-generate 接收 customPlot');
+  assert.match(mainSrc, /customPlot: normalizeCustomPlot\(customPlot\)/, '主进程归一后写进任务输入');
+  assert.match(mainSrc, /handle\('custom-plot-info'/, '图位信息 IPC');
+  assert.match(mainSrc, /handle\('run-plot'/, '运行绘图代码的 IPC');
+  assert.match(mainSrc, /listen\('cancel-plot'/, '取消绘图 IPC');
+  assert.match(mainSrc, /sweepPlotCache\(\);/, '启动时清理残留绘图目录');
+  assert.match(preload, /runPlot: \(expPath, code, runId\)/, 'preload 透传 runPlot');
+  assert.match(preload, /customPlotInfo: \(expPath\)/, 'preload 透传 customPlotInfo');
+  // 技能作用域：绘图技能不参与润色
+  assert.match(mainSrc, /scope: meta\.scope/, 'list-skills 返回 scope');
+  assert.match(renderer, /sk\.scope !== 'plot' && skillStates\[sk\.id\] !== false/, '润色/思考题排除绘图技能');
+  assert.match(renderer, /sk\.scope === 'plot' && skillStates\[sk\.id\] !== false/, '画图只取绘图技能');
+});
+
+// 真端到端（不花钱、不碰 UI）：run-plot 用自带 Python 真的跑一段绘图代码，
+// 再把产出的图交给 run-generate，报告里应出现 AI 图与图注、且内置图注消失。
+test('custom plot IPC runs real python and lands the AI figure in the report', async t => {
+  const h = mainHarness(t, false, true);
+  const exp = path.join(__dirname, '../物理实验/实验脚本/霍尔效应实验');
+  const code = [
+    'import numpy as np',
+    'x = np.arange(1.0, 6.0)',
+    'fig, ax = plt.subplots()',
+    'ax.plot(x, 2 * x, "o-")',
+    'save(fig, "fig1.png")',
+    'caption("fig1.png", "图1 端到端测试图注")',
+  ].join('\n');
+  const run = await h.handlers.get('run-plot')({}, exp, code, 'e2e-run-1');
+  assert.equal(run.ok, true, 'run-plot 应成功：' + JSON.stringify(run).slice(0, 400));
+  assert.equal((run.images || []).length, 1, '应产出 1 张图');
+  assert.equal(run.images[0].caption, '图1 端到端测试图注', '图注应被解析');
+  assert.ok(fs.existsSync(run.images[0].path), '图片应真实存在：' + run.images[0].path);
+
+  const gen = await h.handlers.get('run-generate')({}, exp,
+    { name: '测试同学', id: '2026000001', class: '物理2401', date: '2026-09-22' },
+    {}, {}, false, '', null, { images: run.images });
+  assert.equal(gen.ok, true, '报告应生成成功：' + JSON.stringify(gen).slice(0, 400));
+  const text = (await require('mammoth').extractRawText({ path: gen.reportFile })).value;
+  assert.ok(text.includes('图1 端到端测试图注'), '报告里应有 AI 图注');
+  assert.ok(!text.includes('图1 B–Im 关系曲线'), '内置图注不应再出现');
+  assert.ok(!text.includes('图2 B–I 关系曲线'), '第二张内置图也应被替换掉');
+  assert.ok(!fs.existsSync(run.images[0].path), '生成结束后绘图目录应被清理');
+});
+
+// 绘图代码的静态检查与代码块提取：挡住明显越界的模块，又不误伤正常绘图写法
+test('custom plot extracts fenced code and blocks out-of-bounds modules only', () => {
+  const ui = uiContext();
+  load(ui, 'const PLOT_BANNED =', 'async function ensureCustomPlotFigures');
+  // const 声明不会挂到 vm 全局上，显式导出后再断言
+  vm.runInContext('globalThis.PLOT_BANNED = PLOT_BANNED;', ui);
+  assert.equal(ui.extractPlotCode('```python\nimport matplotlib\nplt.plot([1], [2])\n```'),
+    'import matplotlib\nplt.plot([1], [2])', '围栏代码块应被取出');
+  assert.equal(ui.extractPlotCode('import matplotlib'), 'import matplotlib', '无围栏时整段即代码');
+  for (const bad of ['import subprocess', 'os.system("dir")', 'import socket', 'exec("x=1")', 'shutil.rmtree("x")']) {
+    assert.ok(ui.PLOT_BANNED.test(bad), '应拦下：' + bad);
+  }
+  for (const good of ['import matplotlib.pyplot as plt', 'pattern = re.compile("x")',
+    'data = pd.DataFrame(DATA)', 'from scipy.optimize import curve_fit', 'ax.plot(x, y, "o-")',
+    'fig.savefig(os.path.join(OUT_DIR, "fig1.png"))']) {
+    assert.ok(!ui.PLOT_BANNED.test(good), '不该误伤：' + good);
+  }
+});
+
+test('report pane keeps one action row with pick-directory, no open/clear buttons', () => {
+  const html = read(path.join(__dirname, '../src/index.html'));
+  const preload = read(path.join(__dirname, '../preload.js'));
+  const css = read(path.join(__dirname, '../src/style.css'));
+  for (const id of ['btnRefreshReports', 'btnPickReportDir', 'btnDeleteAllReports']) {
+    assert.ok(html.includes(`id="${id}"`), '缺少控件 ' + id);
+  }
+  for (const gone of ['btnOpenReportDir', 'btnClearReportDir', 'customReportDirPath']) {
+    assert.ok(!html.includes(`id="${gone}"`), '已移除的控件不该还在：' + gone);
+  }
+  assert.ok(html.includes('>选择保存位置</button>'), '按钮文案应为「选择保存位置」');
+  // 三个按钮同一行，且删除在最右（行内 margin-left:auto）
+  const row = html.indexOf('id="btnRefreshReports"');
+  const pick = html.indexOf('id="btnPickReportDir"');
+  const del = html.indexOf('id="btnDeleteAllReports"');
+  assert.ok(row > -1 && row < pick && pick < del, '按钮顺序：刷新列表 → 选择保存位置 → 删除全部报告');
+  assert.match(css, /#paneReports > \.skill-actions #btnDeleteAllReports \{ margin-left: auto; \}/, '删除全部报告靠右');
+  assert.match(css, /#paneReports > \.skill-actions \{/, '按钮行按直接子级吸底（相对位置固定）');
+  assert.ok(!/\.reports-list[^}]*overflow-y/.test(css), '列表不再自成滚动容器（整页只留一个滚动条）');
+  assert.match(renderer, /\$\('btnPickReportDir'\)\.onclick = pickReportDir;/, '选择保存位置按钮已绑定');
+  assert.match(renderer, /settings\.customReportDir = r\.dir;/, '选择后写入 appSettings');
+  assert.match(renderer, /loadSettings\(\)\.customReportDir \|\| ''/, '生成时把自定义目录传给主进程');
+  assert.match(preload, /pickDirectory: \(current\) => ipcRenderer\.invoke\('pick-directory', current\)/, 'preload 暴露 pickDirectory');
+  assert.ok(!/openDirectory:/.test(preload), 'preload 不再暴露已删除的 openDirectory');
+});
+
+// AI 润色响应体异常偏大：历史行为是直接中止并报「AI 响应内容过大」；现改为只告警不中止。
+test('oversized AI response warns instead of aborting the request', () => {
+  const mainSrc = read(path.join(__dirname, '../main.js'));
+  assert.ok(!/throw Error\('AI 响应内容过大'\)/.test(mainSrc), '不得再中止请求');
+  assert.ok(!/response\.destroy\(\)/.test(mainSrc), '不得再销毁响应流');
+  assert.match(mainSrc, /kind: 'warn'/, '超过阈值要发出告警事件');
+  assert.match(mainSrc, /OVERFLOW_KEEP/, '文本累积仍要有上限（防空转流无限吃内存）');
+  // 渲染层必须显式处理 warn，且分支要在「只跟随最先发起的一路」闸门之前，否则非跟随请求的告警会被丢弃
+  const warnIdx = renderer.indexOf("if (kind === 'warn')");
+  const followIdx = renderer.indexOf('if (requestId !== aiFollowedRequestId) return;');
+  assert.ok(warnIdx > -1, '渲染层要处理 warn');
+  assert.ok(followIdx > -1 && warnIdx < followIdx, 'warn 分支必须在跟随闸门之前');
+  assert.match(renderer, /showToast\('warning', '目前模型可能空转或跑飞'/, '提示文案');
 });

@@ -1,5 +1,6 @@
 # 可选依赖：缺失不影响任何实验报告生成，只有对应功能不可用。
-# 作图平滑插值（重力加速度实验）；无 scipy 时脚本用内置多项式拟合兜底。
+# 作图平滑插值（重力加速度实验）与「自定义画图」的曲线拟合/插值用；scipy 已随运行时内置
+# （见 requirements-runtime.txt），这里保留是为了给外部开发环境兜底：无 scipy 时脚本用内置多项式拟合。
 scipy>=1.9
 # Word 实物验收（tests/word_report_test.py）用；新管线（python-docx + OMML）不需要
 # Microsoft Word / pywin32，无 pywin32 时该脚本自动跳过。

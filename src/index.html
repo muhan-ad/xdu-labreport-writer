@@ -212,6 +212,8 @@
                 <div class="card-header">
                   <h4>测量数据</h4>
                   <div class="card-header-actions">
+                    <button class="btn btn-sm btn-outline" id="btnCustomPlot">自定义画图</button>
+                    <button class="btn btn-sm btn-outline" id="btnCustomQuiz">自定义思考题</button>
                     <button class="btn btn-sm btn-outline" id="btnRecognize">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;vertical-align:-2px;margin-right:4px;"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
                       识别图片
@@ -359,6 +361,11 @@
                     <div class="ai-option-group">
                       <label class="checkbox-label"><input type="checkbox" id="chkKbOnly" checked /> 限定知识库：只依据本实验教材原理润色</label>
                     </div>
+                    <div class="ai-option-group" style="flex-basis:100%">
+                      <label for="aiUserPrompt">本实验的附加要求（提示词，可选）</label>
+                      <textarea id="aiUserPrompt" rows="2" placeholder="例如：多用第一人称叙述；结论补充误差来源；不要出现“我们认为”这类表述……"></textarea>
+                      <span class="ai-option-note">只对当前实验生效，失焦即保存；与技能同属「优先遵循」，但不得违反格式与知识库硬性约束（上限 2000 字）</span>
+                    </div>
                   </div>
                   <div class="ai-actions">
                     <button class="btn btn-primary" id="btnAiPolish" disabled>
@@ -409,6 +416,48 @@
         </div>
       </div>
     </main>
+  </div>
+
+  <!-- 自定义思考题弹窗 -->
+  <div class="modal-overlay" id="customQuizModal">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h3>自定义思考题</h3>
+        <button class="modal-close" id="btnCloseCustomQuiz">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-hint">设置后，报告里只出现这些题目（内置题目不再输出），答案由 AI 在生成报告时自动生成。全部删除即为关闭自定义、恢复内置题目。</div>
+        <div id="customQuizList" class="custom-quiz-list"></div>
+        <div class="skill-actions" style="margin-top:10px;">
+          <button class="btn btn-sm btn-outline" id="btnAddCustomQuiz" type="button">增加问题</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="btnCancelCustomQuiz">取消</button>
+        <button class="btn btn-primary" id="btnSaveCustomQuiz">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 自定义画图弹窗 -->
+  <div class="modal-overlay" id="customPlotModal">
+    <div class="modal modal-wide">
+      <div class="modal-header">
+        <h3>自定义画图</h3>
+        <button class="modal-close" id="btnCloseCustomPlot">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-hint">写清你要的图（画什么、横纵轴、要不要拟合线或误差棒……）。启用后报告里不再使用内置插图，改由 AI 生成 Python 绘图代码、在你本机绘制并按顺序替换原有插图位置；图注也由 AI 一并给出。清空内容即为关闭自定义、恢复内置插图。</div>
+        <textarea id="customPlotReq" rows="6" placeholder="例如：把表1 的三组数据画在同一张图里，横轴 U_dx / V、纵轴 D / mm，数据点用不同标记，每组各画一条最小二乘拟合直线，图例标出 U₂=1000V/900V/800V。"></textarea>
+        <div id="plotConsentRow" class="plot-consent-row" style="display:none;">
+          <label class="ai-check"><input type="checkbox" id="chkPlotConsent"> 我已知晓并同意：AI 生成的 Python 绘图代码会在本机运行（隔离目录、120 秒超时、禁止联网与系统调用）</label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="btnCancelCustomPlot">取消</button>
+        <button class="btn btn-primary" id="btnSaveCustomPlot">保存</button>
+      </div>
+    </div>
   </div>
 
   <!-- 学生信息弹窗 -->
@@ -678,10 +727,11 @@
               <h4>已生成的报告</h4>
               <div class="form-hint" id="reportsSummary">加载中…</div>
               <div id="reportsList" class="reports-list"></div>
-              <div class="skill-actions">
-                <button class="btn btn-sm btn-outline" id="btnRefreshReports" type="button">刷新列表</button>
-                <button class="btn btn-sm btn-danger" id="btnDeleteAllReports" type="button" disabled>删除全部报告</button>
-              </div>
+            </div>
+            <div class="skill-actions">
+              <button class="btn btn-sm btn-outline" id="btnRefreshReports" type="button">刷新列表</button>
+              <button class="btn btn-sm btn-outline" id="btnPickReportDir" type="button">选择保存位置</button>
+              <button class="btn btn-sm btn-danger" id="btnDeleteAllReports" type="button" disabled>删除全部报告</button>
             </div>
           </div>
           <!-- 使用说明页 -->

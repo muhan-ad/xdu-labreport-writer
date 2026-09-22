@@ -70,6 +70,7 @@ test('AI 服务页：两个配置入口就地展开，小米默认模型为 mimo
   assert.match(ocrUi, /urlInput\.disabled = inherited/, '继承时识图地址栏禁用（灰显）');
   assert.match(ocrUi, /refreshVisionInheritedUrl/, '继承时自动填充主 API 地址');
   assert.match(ocrUi, /settings\.visionApiUrl = \$\(\'inputVisionApiUrl\'\)\.dataset\.ownValue/, '继承态保存时不覆盖用户自填地址');
+  assert.match(ocrUi, /inputVisionApiUrl'\)\.addEventListener\('input'/, '编辑中的专用地址应立即备份，切换面板不能覆盖');
 });
 
 test('识别弹窗样式：JS 用到的类在 ocr.css 里都有，且不再落到蓝色 fallback', () => {

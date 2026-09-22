@@ -4,6 +4,7 @@
 # （报告生成不再通过 Word COM，见 docs/Word迁移说明.md）。
 # 注：这两个包已随资源内置在 物理实验/实验脚本/common/_vendor/（应用运行不依赖本清单），
 # 此处仅记录开发环境版本；重建运行时时按此清单安装即可保持一致。
+# scipy / pandas / tzdata：供「自定义画图」里 AI 生成的绘图代码使用（曲线拟合、插值、数据处理）。
 contourpy==1.3.3
 cycler==0.12.1
 et_xmlfile==2.0.0
@@ -16,9 +17,12 @@ matplotlib==3.11.1
 numpy==2.5.2
 openpyxl==3.1.5
 packaging==26.3
+pandas==3.0.6
 pillow==12.3.0
 pyparsing==3.3.2
 python-dateutil==2.9.0.post0
 python-docx==1.2.0
+scipy==1.18.1
 six==1.17.0
+tzdata==2026.4
 typing_extensions==4.16.0

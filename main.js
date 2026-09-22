@@ -72,8 +72,9 @@ function resolveExe(cmd) {
 // ── 工具：解析真实可用的 python.exe（优先应用自带运行时，其次 Store/常见安装）──
 function resolvePythonExe() {
   // 0. 应用自带 Python 运行时（打包后: resources/python-runtime；dev: 项目根/python-runtime）
+  // resourcesPath 缺失时不能拼出相对路径（会随 cwd 变化误判），只保留绝对候选
   const bundled = [
-    path.join(process.resourcesPath || '', 'python-runtime', 'python.exe'),
+    process.resourcesPath ? path.join(process.resourcesPath, 'python-runtime', 'python.exe') : '',
     path.join(__dirname, 'python-runtime', 'python.exe'),
   ];
   for (const p of bundled) {
@@ -253,6 +254,7 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_, __, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   seedBuiltinSkills();
+  sweepPlotCache();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -421,11 +423,15 @@ handle('save-table-image', (_, expPath, dataUrl) => {
   if (!bytes.length || bytes.length > 20 * 1024 * 1024) throw Error('图片为空或超过 20MB 上限');
   if (!ocr.hasImageSignature(match[1], bytes)) throw Error('图片内容与声明格式不一致');
   const dir = ensureUserCopy(expPath);
-  for (const name of fs.readdirSync(dir)) {
-    if (/^原始数据照片\.(?:jpe?g|png|webp)$/i.test(name)) fs.unlinkSync(security.inside(path.join(dir, name), dir));
-  }
   const file = security.inside(path.join(dir, PHOTO_BASENAME + PHOTO_EXTENSIONS[match[1]]), dir);
+  // 先以原子方式落盘新图；写入失败时旧照片仍完整保留。
   atomic.writeFile(file, bytes, undefined, false);
+  for (const name of fs.readdirSync(dir)) {
+    if (/^原始数据照片\.(?:jpe?g|png|webp)$/i.test(name) && name !== path.basename(file)) {
+      // 清理旧格式失败不应否定已经成功保存的新照片；下次替换时会再次清理。
+      try { fs.unlinkSync(security.inside(path.join(dir, name), dir)); } catch (_) { /* 保留待清理的旧副本 */ }
+    }
+  }
   return { ok: true, file: path.basename(file) };
 });
 
@@ -544,13 +550,15 @@ function experimentPath(raw) {
   if (!fs.existsSync(path.join(p, 'generate.py'))) throw Error('实验入口不存在');
   return p;
 }
-function reportPath(raw) {
+function reportPath(raw, { allowMissing = false } = {}) {
   if (typeof raw !== 'string' || !/\.docx$/i.test(raw)) throw Error('只允许访问实验报告 DOCX');
   const p = path.resolve(raw);
   experimentPath(path.dirname(p));
   security.inside(p, path.dirname(p));
-  const st = fs.statSync(p);
-  if (!st.isFile() || st.size > 32 * 1024 * 1024) throw Error('报告不存在或超过 32MB');
+  if (!allowMissing || fs.existsSync(p)) {
+    const st = fs.statSync(p);
+    if (!st.isFile() || st.size > 32 * 1024 * 1024) throw Error('报告不存在或超过 32MB');
+  }
   return p;
 }
 
@@ -828,9 +836,10 @@ function syncPackagedSkills(srcDir, warnings) {
   return n;
 }
 
-// 解析 SKILL.md frontmatter（--- name/description ---）；无 frontmatter 时用文件名兜底
+// 解析 SKILL.md frontmatter（--- name/description/scope ---）；无 frontmatter 时用文件名兜底
+// scope: plot 的技能只在「自定义画图」请求里注入，不参与 AI 润色
 function parseSkillMeta(text, fallbackName) {
-  let name = fallbackName, description = '', body = text;
+  let name = fallbackName, description = '', scope = '', body = text;
   const m = String(text).match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
   if (m) {
     body = text.slice(m[0].length);
@@ -841,9 +850,10 @@ function parseSkillMeta(text, fallbackName) {
       const v = kv[2].trim().replace(/^["']|["']$/g, '');
       if (k === 'name' && v) name = v;
       else if (k === 'description' && v) description = v;
+      else if (k === 'scope' && v) scope = v;
     }
   }
-  return { name, description, body: body.trim() };
+  return { name, description, scope, body: body.trim() };
 }
 
 handle('list-skills', () => {
@@ -854,7 +864,7 @@ handle('list-skills', () => {
       if (!/\.(md|markdown|txt)$/i.test(f)) continue;
       try {
         const meta = parseSkillMeta(fs.readFileSync(path.join(dir, f), 'utf-8'), path.basename(f, path.extname(f)));
-        out.push({ id: f, name: meta.name, description: meta.description, content: meta.body });
+        out.push({ id: f, name: meta.name, description: meta.description, scope: meta.scope, content: meta.body });
       } catch (e) { /* 跳过损坏文件 */ }
     }
     out.sort((a, b) => String(a.name).localeCompare(String(b.name), 'zh'));
@@ -1151,6 +1161,35 @@ handle('open-skills-folder', () => {
 });
 
 // ── IPC: 报告管理（设置页）──
+// ── 自定义报告目录（设置 → 报告管理）──
+// 校验：绝对路径、不得落在应用安装目录/内置数据目录/asar 内；create 时按需建目录。
+function customReportDir(raw, { create = false } = {}) {
+  if (typeof raw !== 'string' || !raw.trim()) throw Error('未设置自定义报告目录');
+  const p = path.resolve(raw.trim());
+  if (!path.isAbsolute(p)) throw Error('自定义报告目录必须是绝对路径');
+  const low = p.toLowerCase();
+  if (low.includes('.asar')) throw Error('自定义报告目录不能位于应用安装包内');
+  for (const g of [PROJECT_ROOT, EXPERIMENTS_DIR].map(x => path.resolve(x).toLowerCase())) {
+    if (low === g || low.startsWith(g + path.sep)) throw Error('自定义报告目录不能位于应用安装目录或内置数据目录内');
+  }
+  if (create) fs.mkdirSync(p, { recursive: true });
+  if (!fs.statSync(p).isDirectory()) throw Error('自定义报告目录不是文件夹');
+  return p;
+}
+
+// 选择自定义报告目录（复用「导出自建变体」的 openDirectory 模式）
+handle('pick-directory', async (_, current) => {
+  try {
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: '选择报告保存目录',
+      defaultPath: (typeof current === 'string' && current && fs.existsSync(current)) ? current : undefined,
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (picked.canceled || !picked.filePaths || !picked.filePaths.length) return { ok: true, canceled: true };
+    return { ok: true, dir: customReportDir(picked.filePaths[0], { create: true }) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 // 列出全部实验目录下已生成的 .docx（含大小/修改时间），按时间倒序
 handle('list-reports', () => {
   const out = [];
@@ -1192,18 +1231,10 @@ handle('list-reports', () => {
 // 删除报告：仅允许删除实验目录之内的 .docx（规范化路径并校验包含关系）
 handle('delete-report', (_, filePath) => {
   try {
-    filePath = reportPath(filePath);
-    if (typeof filePath !== 'string' || !filePath) return { ok: false, error: '无效路径' };
-    const p = path.resolve(filePath);
-    const { roots } = getDataRoots();
-    if (!p.toLowerCase().endsWith('.docx')) return { ok: false, error: '仅允许删除 .docx 报告' };
-    const inside = roots.some(r => {
-      const root = path.resolve(r.dir);
-      return p !== root && p.startsWith(root + path.sep);
-    });
-    if (!inside) return { ok: false, error: '仅允许删除实验目录内的报告' };
+    const p = reportPath(filePath, { allowMissing: true });
     if (!fs.existsSync(p)) return { ok: true, alreadyGone: true };
-    fs.unlinkSync(p);
+    try { fs.unlinkSync(p); }
+    catch (err) { if (err.code === 'ENOENT') return { ok: true, alreadyGone: true }; throw err; }
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -1670,6 +1701,15 @@ handle('copy-link', (_, rawUrl) => {
   try { const url = network.publicUrl(rawUrl); if (url.href.length > 4096) throw Error('链接过长'); clipboard.writeText(url.href); return { ok: true }; }
   catch (e) { return { ok: false, error: e.message }; }
 });
+// 复制任意文本（AI 润色结果等）：网页侧 navigator.clipboard 在本应用必然失败——主进程对所有
+// 网页权限一律拒绝（setPermissionCheckHandler 恒 false），页面又是 file:// 不透明源。
+// 走主进程 Electron clipboard 不受网页权限约束（与「复制链接」同一机制）。
+handle('copy-text', (_, text) => {
+  if (typeof text !== 'string') return { ok: false, error: '复制内容无效' };
+  if (Buffer.byteLength(text) > 512 * 1024) return { ok: false, error: '复制内容过长（上限 512KB）' };
+  clipboard.writeText(text);
+  return { ok: true };
+});
 handle('open-data-file', async (_, rawPath) => {
   try {
     const dir = experimentPath(rawPath), file = security.inside(path.join(dir, 'data.json'), dir);
@@ -1917,7 +1957,7 @@ handle('export-diagnostics', async (_, payload) => {
 // ── IPC: 运行 generate.py 生成报告 ──
 // variants.compose 向 stdout 打印的章节原文标记（供应用侧按章节润色/导入重生成）
 const SECTIONS_MARKER = '.LAB_SECTIONS_JSON:';
-handle('run-generate', async (_, expPath, studentInfo, variants, polish, embedDataPhoto = true) => {
+handle('run-generate', async (_, expPath, studentInfo, variants, polish, embedDataPhoto = true, reportCopyDir = '', customQuiz = null, customPlot = null) => {
   if (generationBusy || resourceUpdating) return { ok: false, error: '已有任务正在运行，请稍后重试' };
   syncInstalledResources();
   generationBusy = true;
@@ -1952,7 +1992,13 @@ handle('run-generate', async (_, expPath, studentInfo, variants, polish, embedDa
   const dataPhoto = embedDataPhoto ? findDataPhoto(expPath) : null;
   if (dataPhoto) env.LAB_DATA_PHOTO = dataPhoto;
   else delete env.LAB_DATA_PHOTO;
-  const jobInput = JSON.stringify({ variants: variants || {}, polish: polish || {}, disabledSections: readSectionsConfig(expPath).disabled });
+  const jobInput = JSON.stringify({
+    variants: variants || {}, polish: polish || {}, disabledSections: readSectionsConfig(expPath).disabled,
+    // 自定义思考题：题目由用户给定、答案由应用侧 AI 生成（Python 侧渲染后跳过内置题目）
+    customQuiz: (customQuiz && Array.isArray(customQuiz.questions) && customQuiz.questions.length) ? customQuiz : null,
+    // 自定义画图：AI 生成并绘制好的图（Python 侧渲染后不再插入内置图）
+    customPlot: normalizeCustomPlot(customPlot),
+  });
   if (Buffer.byteLength(jobInput) > 512 * 1024) throw Error('润色与变体内容过长，请减少后重试');
   job.inputFile = path.join(expPath, '.job-' + crypto.randomUUID() + '.json');
   atomic.writeFile(job.inputFile, jobInput, 'utf8', false);
@@ -2042,7 +2088,22 @@ handle('run-generate', async (_, expPath, studentInfo, variants, polish, embedDa
       }
       // 退出码 0 但未产出新 docx：视为失败（多数情况是测量数据未填写完整，generate.py 打印缺失列表后静默退出）
       const ok = !job.cancelled && code === 0 && !!reportFile;
-      log(`generate | 结束 | 实验=${genExpName} exit=${code} ok=${ok}${reportFile ? ' 报告=' + path.basename(reportFile) : ''} | ${Date.now() - genT0}ms`);
+      // 自定义报告目录：生成成功后复制一份（实验目录原件保留 —— 预览/打开/报告列表继续用原件）；
+      // 复制失败只记日志告警，不影响本次生成结果。
+      let copiedTo = '';
+      if (ok && reportCopyDir) {
+        try {
+          const destDir = path.join(customReportDir(reportCopyDir, { create: true }), path.basename(expPath));
+          fs.mkdirSync(destDir, { recursive: true });
+          const dest = path.join(destDir, path.basename(reportFile));
+          fs.copyFileSync(reportFile, dest);
+          copiedTo = dest;
+          logs.push(`[自定义目录] 已复制报告：${dest}\n`);
+        } catch (e) {
+          logs.push(`[自定义目录] 复制失败（不影响本次生成）：${e.message}\n`);
+        }
+      }
+      log(`generate | 结束 | 实验=${genExpName} exit=${code} ok=${ok}${reportFile ? ' 报告=' + path.basename(reportFile) : ''}${copiedTo ? ' 复制=ok' : ''} | ${Date.now() - genT0}ms`);
       try {
         // 诊断现场：job 摘要（变体/润色覆盖章节名/禁用章节，不含文本）+ 报告文件信息 + 章节缓存存在性
         let jobSummary = {};
@@ -2080,6 +2141,7 @@ handle('run-generate', async (_, expPath, studentInfo, variants, polish, embedDa
         cancelled: job.cancelled,
         logs: logs.join(''),
         reportFile,
+        copiedTo: copiedTo || undefined,
         sections: capturedSections || undefined,
         error: !ok && code === 0 && !reportFile
           ? '未生成报告文件，请查看日志中的缺失提示（通常为测量数据未填写完整）'
@@ -2100,8 +2162,177 @@ handle('run-generate', async (_, expPath, studentInfo, variants, polish, embedDa
     return { ok: false, error: error.message };
   } finally {
     if (job.inputFile && fs.existsSync(job.inputFile)) fs.unlinkSync(job.inputFile);
+    cleanupPlotImages(normalizeCustomPlot(customPlot));
     generationBusy = false;
   }
+});
+
+// ── IPC: 自定义画图 ──────────────────────────────────────────────────────────
+// 用户填画图需求后，渲染层让 AI 写一段 matplotlib 代码，由本进程用自带 Python 在
+// 隔离目录里跑出来；图片路径随任务输入交给报告脚本（Python 侧不再插内置图）。
+// 代码由用户显式启用并同意后运行，日志保留代码与报错便于事后复核。
+const PLOT_TIMEOUT_MS = 120000;
+const PLOT_MAX_IMAGES = 8;
+let activePlot = null;
+
+function plotCacheRoot() {
+  return path.join(app.getPath('userData'), 'plot-cache');
+}
+
+function plotRunDir(runId) {
+  const root = plotCacheRoot();
+  const safe = String(runId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64) || crypto.randomUUID();
+  const dir = security.inside(path.join(root, safe), root);
+  fs.mkdirSync(path.join(dir, 'out'), { recursive: true });
+  return dir;
+}
+
+// 渲染层传来的图只认隔离目录内的 png/jpg（防越界读取与伪造路径）
+function normalizeCustomPlot(raw) {
+  if (!raw || !Array.isArray(raw.images)) return null;
+  const root = path.resolve(plotCacheRoot());
+  const images = [];
+  for (const item of raw.images.slice(0, PLOT_MAX_IMAGES)) {
+    const p = path.resolve(String((item && item.path) || ''));
+    if (!p.startsWith(root + path.sep) || !/\.(png|jpg|jpeg)$/i.test(p)) continue;
+    images.push({ path: p, caption: String((item && item.caption) || '').slice(0, 500) });
+  }
+  return images.length ? { images } : null;
+}
+
+function cleanupPlotImages(plot) {
+  if (!plot || !Array.isArray(plot.images)) return;
+  const root = path.resolve(plotCacheRoot());
+  const depth = root.split(path.sep).length + 1;
+  for (const item of plot.images) {
+    const p = path.resolve(String(item && item.path || ''));
+    if (!p.startsWith(root + path.sep)) continue;
+    const dir = p.split(path.sep).slice(0, depth).join(path.sep);
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch (e) { /* 清理失败不影响生成 */ }
+  }
+}
+
+// 启动时清掉上次异常退出留下的绘图目录（保留 24 小时内的，便于排查）
+function sweepPlotCache() {
+  const root = plotCacheRoot();
+  let names = [];
+  try { names = fs.readdirSync(root); } catch (e) { return; }
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  for (const name of names) {
+    const dir = path.join(root, name);
+    try {
+      if (fs.statSync(dir).mtimeMs < cutoff) fs.rmSync(dir, { recursive: true, force: true });
+    } catch (e) { /* 忽略 */ }
+  }
+}
+
+function parsePlotResult(text) {
+  const marker = '###PLOT_RESULT###';
+  const idx = String(text).lastIndexOf(marker);
+  if (idx < 0) return null;
+  try { return JSON.parse(String(text).slice(idx + marker.length).split('\n')[0]); } catch (e) { return null; }
+}
+
+// 结束绘图进程：pid 只接受本进程 spawn 出来的正整数（绘图脚本不派生孙进程）
+function killPlotTree(proc) {
+  const pid = Number(proc && proc.pid);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 'SIGKILL'); } catch (e) { /* 进程已退出 */ }
+  return true;
+}
+
+// 图位信息：实验脚本里 render_custom_plot 的调用次数即报告插图位置数
+handle('custom-plot-info', (_, expPath) => {
+  try {
+    const p = experimentPath(expPath);
+    const genPy = security.inside(path.join(p, 'generate.py'), p);
+    const src = fs.readFileSync(genPy, 'utf-8');
+    const slots = (src.match(/render_custom_plot\(/g) || []).length;
+    return { ok: true, supported: slots > 0, slots };
+  } catch (err) {
+    return { ok: false, error: err.message, supported: false, slots: 0 };
+  }
+});
+
+handle('run-plot', async (_, expPath, code, runId) => {
+  const t0 = Date.now();
+  let outcome = 'fail';
+  try {
+    if (typeof code !== 'string' || !code.trim()) return { ok: false, error: '绘图代码为空' };
+    if (Buffer.byteLength(code) > 60000) return { ok: false, error: '绘图代码过长（超过 60KB）' };
+    if (activePlot) return { ok: false, error: '已有绘图任务在运行，请稍后重试' };
+    const exp = ensureUserCopy(experimentPath(expPath));
+    const dir = plotRunDir(runId);
+    const outDir = path.join(dir, 'out');
+    const dataFile = path.join(dir, 'data.json');
+    const srcData = security.inside(path.join(exp, 'data.json'), exp);
+    atomic.writeFile(dataFile, fs.existsSync(srcData) ? fs.readFileSync(srcData, 'utf-8') : '{}', 'utf8', false);
+    const codeFile = path.join(dir, 'ai_plot.py');
+    atomic.writeFile(codeFile, code, 'utf8', false);
+    const runnerSrc = fs.readFileSync(path.join(__dirname, 'src', 'main', 'plot-runner.py'), 'utf-8');
+    const pythonExe = resolvePythonExe() || 'python';
+    log(`plot | 开始 | 实验=${path.basename(exp)} | 代码=${code.length}字`);
+    const result = await new Promise((resolve) => {
+      const proc = spawn(pythonExe, ['-B', '-X', 'utf8', '-', codeFile, outDir, dataFile], {
+        cwd: dir, shell: false, windowsHide: true,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+      });
+      const job = { proc, runId: String(runId || ''), cancelled: false, timedOut: false, timer: null };
+      activePlot = job;
+      let stdout = '', stderr = '';
+      const finish = (payload) => {
+        if (job.timer) clearTimeout(job.timer);
+        if (activePlot === job) activePlot = null;
+        resolve(payload);
+      };
+      job.timer = setTimeout(() => {
+        job.timedOut = true;
+        killPlotTree(proc);
+      }, PLOT_TIMEOUT_MS);
+      proc.stdout.on('data', (d) => { stdout += d.toString(); if (stdout.length > 512 * 1024) stdout = stdout.slice(-256 * 1024); });
+      proc.stderr.on('data', (d) => { stderr += d.toString(); if (stderr.length > 256 * 1024) stderr = stderr.slice(-128 * 1024); });
+      proc.stdin.on('error', () => { /* 进程早退时忽略 EPIPE */ });
+      proc.stdin.end(runnerSrc, 'utf-8');
+      proc.on('error', (err) => finish({ ok: false, error: err.message }));
+      proc.on('close', () => {
+        if (job.cancelled) return finish({ ok: false, cancelled: true, error: '已取消' });
+        if (job.timedOut) return finish({ ok: false, error: '绘图超时（超过 120 秒）', stderr: stderr.slice(-2000) });
+        const marker = parsePlotResult(stdout);
+        if (!marker) {
+          const tail = (stderr.trim().split('\n').pop() || '').trim();
+          return finish({ ok: false, error: '绘图未返回结果' + (tail ? '：' + tail : ''), stderr: stderr.slice(-2000) });
+        }
+        if (!marker.ok) {
+          return finish({ ok: false, error: marker.error || '绘图失败', traceback: marker.traceback, stderr: stderr.slice(-2000) });
+        }
+        finish({ ok: true, images: marker.images || [] });
+      });
+    });
+    outcome = result.ok ? 'ok' : 'fail';
+    // 代码与报错都留档：用户可据此复核 AI 到底在本机跑了什么
+    log(`plot | 代码 | ${code.replace(/\s+/g, ' ').slice(0, 6000)}`);
+    if (!result.ok) {
+      log(`plot | 失败 | ${result.error}${result.traceback ? ' | ' + String(result.traceback).replace(/\s+/g, ' ').slice(-1200) : ''}`);
+    } else if (!result.images.length) {
+      log('plot | 提示 | 代码运行成功但没有产出图片');
+    }
+    return result;
+  } catch (err) {
+    outcome = 'error';
+    log(`plot | 异常 | ${err.message}`);
+    return { ok: false, error: err.message };
+  } finally {
+    log(`plot | 结束 | ${outcome} | ${Date.now() - t0}ms`);
+  }
+});
+
+listen('cancel-plot', (_, runId) => {
+  const job = activePlot;
+  if (!job || (runId && String(runId) !== job.runId)) return { ok: false, reason: 'no-active' };
+  job.cancelled = true;
+  killPlotTree(job.proc);
+  log('plot | 已取消');
+  return { ok: true };
 });
 
 // ── IPC: 取消生成（结束 python 进程树；报告生成已无外部程序，无需额外清理）──
@@ -2201,6 +2432,8 @@ handle('ocr-recognize', async (_, params) => {
   if (aiAbortControllers.size >= 2 || aiAbortControllers.has(requestId)) return { ok: false, error: 'AI 请求正在处理，请稍后重试' };
   const controller = new AbortController();
   aiAbortControllers.set(requestId, controller);
+  const t0 = Date.now();
+  let outcome = '';
   try {
     const image = ocr.parseImageDataUrl(params.imageDataUrl);
     const baseUrl = visionEndpoint(params);
@@ -2221,10 +2454,17 @@ handle('ocr-recognize', async (_, params) => {
       method: 'POST', signal: controller.signal, timeoutMs: 120000, idleTimeoutMs: 90000, maxBytes: 2 * 1024 * 1024,
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey }, body,
     });
-    return { ok: true, content: ocr.extractContent(payload), usage: payload.usage, requestId };
+    const content = ocr.extractContent(payload);
+    outcome = `ok 输出=${content.length} 字`;
+    return { ok: true, content, usage: payload.usage, requestId };
   } catch (e) {
+    outcome = controller.signal.aborted ? '已取消' : '失败: ' + e.message;
     return { ok: false, cancelled: controller.signal.aborted, error: controller.signal.aborted ? '已取消识别' : e.message };
-  } finally { aiAbortControllers.delete(requestId); }
+  } finally {
+    // 排查用：识图请求同样一次一行（模型、结果、输出字符数、耗时）
+    log(`ocr | ${params?.visionProvider || 'inherit'}/${params?.model || '默认'} | ${outcome} | ${Date.now() - t0}ms`);
+    aiAbortControllers.delete(requestId);
+  }
 });
 // SSE 行解析：`data: {...}` → delta.content；非数据行返回 ''（纯函数便于单测）
 function extractDeltaFromSSELine(line) {
@@ -2265,6 +2505,9 @@ handle('ai-chat', async (event, params) => {
   if (aiAbortControllers.size >= 2 || aiAbortControllers.has(requestId)) return { ok: false, error: 'AI 请求正在处理，请稍后重试' };
   const controller = new AbortController();
   aiAbortControllers.set(requestId, controller);
+  // 排查用计数（放在 try 外，finally 里要写日志）
+  const t0 = Date.now();
+  let outcome = '', total = 0, contentChars = 0, reasoningChars = 0, overflowWarned = false;
   const pushChunk = (delta, kind) => {
     try { event.sender.send('ai-chat-chunk', { requestId, delta, kind: kind || 'content' }); } catch (e) { /* 窗口已关闭忽略 */ }
   };
@@ -2282,26 +2525,46 @@ handle('ai-chat', async (event, params) => {
         messages, temperature, stream: true }),
     });
     const decoder = new TextDecoder('utf-8');
-    let content = '', carry = '', total = 0;
+    let content = '', carry = '';
+    const consumeLine = line => {
+      const delta = extractDeltaFromSSELine(line);
+      if (delta) { content += delta; contentChars += delta.length; pushChunk(delta); }
+      // 思考增量只透传给渲染层做状态展示，不并入返回文本
+      const reasoning = extractReasoningFromSSELine(line);
+      if (reasoning) { reasoningChars += reasoning.length; pushChunk(reasoning, 'reasoning'); }
+    };
+    const consumeText = text => {
+      const lines = (carry + text).split('\n');
+      carry = lines.pop() || '';
+      lines.forEach(consumeLine);
+    };
+    // 响应体异常偏大：历史行为是直接中止并报「AI 响应内容过大」，但该判据会误伤正常场景
+    // （SSE 信封让每个字占几十~上百字节；服务端空转/心跳时更是全算进来）。改为**只告警不中止**：
+    // 超阈值时通知渲染层提示「目前模型可能空转或跑飞」，请求继续；同时给文本累积设上限，
+    // 超出部分只丢弃不再拼接（防空转流无限吃内存），用户仍可点「取消」随时中止。
+    const OVERFLOW_WARN = 2 * 1024 * 1024;   // 触发告警的字节数
+    const OVERFLOW_KEEP = 4 * 1024 * 1024;   // 文本累积上限（超过只丢弃、不再拼接）
     for await (const chunk of response) {
       total += chunk.length;
-      if (total > 2 * 1024 * 1024) { response.destroy(); throw Error('AI 响应内容过大'); }
-      const text = carry + decoder.decode(chunk, { stream: true });
-      const lines = text.split('\n');
-      carry = lines.pop() || '';
-      for (const line of lines) {
-        const delta = extractDeltaFromSSELine(line);
-        if (delta) { content += delta; pushChunk(delta); }
-        // 思考增量只透传给渲染层做状态展示，不并入返回文本
-        const reasoning = extractReasoningFromSSELine(line);
-        if (reasoning) pushChunk(reasoning, 'reasoning');
+      if (!overflowWarned && total > OVERFLOW_WARN) {
+        overflowWarned = true;
+        try { event.sender.send('ai-chat-chunk', { requestId, delta: '', kind: 'warn' }); } catch (e) { /* 窗口已关闭忽略 */ }
       }
+      if (total <= OVERFLOW_KEEP) consumeText(decoder.decode(chunk, { stream: true }));
     }
+    consumeText(decoder.decode());
+    if (carry) consumeLine(carry); // 服务端未附终止换行时，不能丢弃最后一个 SSE 事件。
     if (!content.trim()) throw Error('AI 返回了空内容');
+    outcome = 'ok';
     return { ok: true, content, usage: undefined };
   } catch (e) {
+    outcome = controller.signal.aborted ? '已取消' : '失败: ' + e.message;
     return { ok: false, cancelled: controller.signal.aborted, error: controller.signal.aborted ? '已取消生成' : e.message };
-  } finally { aiAbortControllers.delete(requestId); }
+  } finally {
+    // 排查用：一次请求一行。之前这条链路完全没有日志，出问题（如响应异常偏大/模型空转）无从查证。
+    log(`ai-chat | ${params?.label || '未标注'} | ${provider}/${model || '默认'} | ${outcome} | 字节=${total} 正文=${contentChars} 思考=${reasoningChars}${overflowWarned ? ' 偏大告警=1' : ''} | ${Date.now() - t0}ms`);
+    aiAbortControllers.delete(requestId);
+  }
 });
 
 // 取消一次进行中的 AI 请求

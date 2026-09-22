@@ -22,6 +22,7 @@ async function loadOcrSettingsForm() {
   $('selectVisionProvider').value = s.visionProvider || 'inherit';
   $('inputVisionModel').value = s.visionModel || '';
   $('inputVisionApiUrl').value = s.visionApiUrl || '';
+  $('inputVisionApiUrl').dataset.ownValue = s.visionApiUrl || '';
   $('inputVisionApiKey').value = '';
   $('chkEmbedDataPhoto').checked = s.embedDataPhoto !== false;
   const status = await window.labAPI.visionCredentialStatus();
@@ -950,6 +951,12 @@ function bindRecognizeEvents() {
   });
 
   $('selectVisionProvider').onchange = updateVisionFields;
+  // 面板收起前尚未保存的专用地址也要在切换继承/独立服务时保留。
+  $('inputVisionApiUrl').addEventListener('input', () => {
+    if ($('selectVisionProvider').value !== 'inherit') {
+      $('inputVisionApiUrl').dataset.ownValue = $('inputVisionApiUrl').value;
+    }
+  });
   $('btnClearVisionApiKey').onclick = async () => {
     const s = loadSettings();
     const r = await window.labAPI.saveVisionCredential({

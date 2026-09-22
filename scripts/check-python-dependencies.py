@@ -10,6 +10,8 @@ PACKAGES = {
     'numpy': 'numpy', 'matplotlib': 'matplotlib', 'openpyxl': 'openpyxl',
     'docx': 'python-docx', 'latex2mathml': 'latex2mathml',
     'mathml2omml': 'mathml2omml', 'lxml': 'lxml', 'scipy': 'scipy',
+    # Pillow：matplotlib 的依赖；绘图相关测试用它造 PNG 夹具
+    'PIL': 'pillow',
     # Word 实物验收（tests/word_report_test.py，可选）用；报告生成不需要它，
     # 因此声明在 requirements-optional.txt —— 声明了才不会报 Undeclared import，
     # 不在 required 里则不会强制安装、也不做导入检查。
