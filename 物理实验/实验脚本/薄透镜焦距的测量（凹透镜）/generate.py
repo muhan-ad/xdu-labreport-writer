@@ -25,7 +25,8 @@ sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
 from common.data_io import load_data
-from common.variants import compose
+from common.variants import compose, render_custom_quiz
+from common.custom_plot import render_custom_plot
 
 # ── 物理常数与仪器参数（按教材与讲义） ──
 DELTA_INSTRUMENT = 0.05          # cm, Δ_仪 = 0.5 × 0.1 cm（钢尺/光具座最小分度 0.1 cm）
@@ -330,6 +331,11 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_paragraph("物像法数据按讲义要求不计算不确定度，仅以平均值作为结果：")
     doc.add_math(rf"f = {f_im_bar:.2f} \mathrm{{cm}}")
+    # 自定义画图：本实验无内置图，AI 生成的图按顺序追加在「数据处理」末尾
+    render_custom_plot(doc, 1, width_cm=14)
+    render_custom_plot(doc, 2, width_cm=14)
+    render_custom_plot(doc, 3, width_cm=14)
+
 
     # ── 变体章节：误差分析 ──
     if "误差分析" in variants:
@@ -340,75 +346,76 @@ def _generate_docx(data: dict, output_path: str):
     # 三、思考题和结果分析
     # ═══════════════════════════════════════════
     doc.add_heading("三、思考题和结果分析", level=1)
+    if not render_custom_quiz(doc, r):
 
-    # Q1
-    doc.add_heading("1. 为什么凹透镜的焦距不能直接测量？本实验用哪两种方法解决？", level=2)
-    doc.add_paragraph("凹透镜是发散透镜，对实物只能成虚像，且虚像位置在物与凹透镜之间，"
-                      "无法用像屏接收，因而不能像凸透镜那样直接由物距、像距求出焦距。")
-    doc.add_paragraph("本实验用两种方法解决：")
-    doc.add_paragraph("(1) 自准法：凸透镜先把物成像，凹透镜与平面镜配合使光束返回物屏，"
-                      "得到与物等大的倒立实像，此时凹透镜的焦距等于两次成像位置之差，")
-    doc.add_math(r"f = -\left|O_1F - O_1O_2\right| = -\left|X_7 - X_6\right|")
-    doc.add_paragraph_rich("(2) 物像法：先用凸透镜成一个倒立实像 $A'B'$，把它作为凹透镜的虚物，"
-                           "凹透镜对此虚物成一个可被像屏接收的实像 $A''B''$，由")
-    doc.add_math(r"-\frac{1}{u} + \frac{1}{v} = \frac{1}{f} \;\Rightarrow\; f = \frac{uv}{u - v}")
-    doc.add_paragraph("")
-    doc.add_run("其中 ")
-    doc.add_inline_math(r"u = X_7 - X_6")
-    doc.add_run("、")
-    doc.add_inline_math(r"v = X_8 - X_6")
-    doc.add_run("，由于 ")
-    doc.add_inline_math(r"u < v")
-    doc.add_run("，所得 ")
-    doc.add_inline_math(r"f")
-    doc.add_run(" 为负值，与凹透镜的发散性质一致。")
+        # Q1
+        doc.add_heading("1. 为什么凹透镜的焦距不能直接测量？本实验用哪两种方法解决？", level=2)
+        doc.add_paragraph("凹透镜是发散透镜，对实物只能成虚像，且虚像位置在物与凹透镜之间，"
+                          "无法用像屏接收，因而不能像凸透镜那样直接由物距、像距求出焦距。")
+        doc.add_paragraph("本实验用两种方法解决：")
+        doc.add_paragraph("(1) 自准法：凸透镜先把物成像，凹透镜与平面镜配合使光束返回物屏，"
+                          "得到与物等大的倒立实像，此时凹透镜的焦距等于两次成像位置之差，")
+        doc.add_math(r"f = -\left|O_1F - O_1O_2\right| = -\left|X_7 - X_6\right|")
+        doc.add_paragraph_rich("(2) 物像法：先用凸透镜成一个倒立实像 $A'B'$，把它作为凹透镜的虚物，"
+                               "凹透镜对此虚物成一个可被像屏接收的实像 $A''B''$，由")
+        doc.add_math(r"-\frac{1}{u} + \frac{1}{v} = \frac{1}{f} \;\Rightarrow\; f = \frac{uv}{u - v}")
+        doc.add_paragraph("")
+        doc.add_run("其中 ")
+        doc.add_inline_math(r"u = X_7 - X_6")
+        doc.add_run("、")
+        doc.add_inline_math(r"v = X_8 - X_6")
+        doc.add_run("，由于 ")
+        doc.add_inline_math(r"u < v")
+        doc.add_run("，所得 ")
+        doc.add_inline_math(r"f")
+        doc.add_run(" 为负值，与凹透镜的发散性质一致。")
 
-    # Q2
-    doc.add_heading("2. 自准法测凹透镜焦距时，为什么要撤去凹透镜和反射镜后再测 X₇？", level=2)
-    doc.add_paragraph("凹透镜的焦距无法从“有凹透镜”的光路中单独提取：加上凹透镜与反射镜后，"
-                      "光路中同时含有凸透镜、凹透镜和反射镜三个元件，物屏上的等大倒立实像是三者共同作用的结果。")
-    doc.add_paragraph_rich("撤去凹透镜和反射镜后，保持物和凸透镜不动，物经凸透镜单独成像于某点，"
-                           "该点位置 $X_7 = O_1F$ 正是凹透镜的虚物（即凸透镜所成实像）所在位置，"
-                           "而 $X_6 = O_1O_2$ 是凹透镜所在位置，两者之差即凹透镜的焦距。")
-    doc.add_paragraph_rich("若不撤去凹透镜，就无法确定凸透镜单独成像的位置，也就得不到 $O_1F$，"
-                           "这正是“凸透镜与物不得移动”这一操作要求的原因。")
+        # Q2
+        doc.add_heading("2. 自准法测凹透镜焦距时，为什么要撤去凹透镜和反射镜后再测 X₇？", level=2)
+        doc.add_paragraph("凹透镜的焦距无法从“有凹透镜”的光路中单独提取：加上凹透镜与反射镜后，"
+                          "光路中同时含有凸透镜、凹透镜和反射镜三个元件，物屏上的等大倒立实像是三者共同作用的结果。")
+        doc.add_paragraph_rich("撤去凹透镜和反射镜后，保持物和凸透镜不动，物经凸透镜单独成像于某点，"
+                               "该点位置 $X_7 = O_1F$ 正是凹透镜的虚物（即凸透镜所成实像）所在位置，"
+                               "而 $X_6 = O_1O_2$ 是凹透镜所在位置，两者之差即凹透镜的焦距。")
+        doc.add_paragraph_rich("若不撤去凹透镜，就无法确定凸透镜单独成像的位置，也就得不到 $O_1F$，"
+                               "这正是“凸透镜与物不得移动”这一操作要求的原因。")
 
-    # Q3
-    doc.add_heading("3. 实验中如何确定清晰成像的位置？放大像与缩小像的位置如何判断？", level=2)
-    doc.add_paragraph("确定成像位置时，以像的某一条边的清晰度作为判断依据：前后微动像屏（或透镜），"
-                      "观察选定边缘的锐利程度，取其最清晰处为该次成像位置。"
-                      "这样比笼统地看“像是否清晰”更容易复现，可减小判读的偶然误差。")
-    doc.add_paragraph("放大像与缩小像的位置判断：")
-    doc.add_paragraph("(1) 缩小像：物距大于二倍焦距（本实验凸透镜距物屏 40.00 cm 左右），"
-                      "像成在透镜另一侧一倍焦距与二倍焦距之间，像的尺寸小于物，边缘较锐利，易于判读；")
-    doc.add_paragraph("(2) 放大像：插入凹透镜后移动凹透镜与像屏，使光束进一步会聚，"
-                      "像的尺寸变大、亮度降低、边缘变软，需要更仔细地前后逼近才能确定位置。")
-    doc.add_paragraph("整个测量过程中物屏与凸透镜的位置一旦固定就不再移动，"
-                      "读数一律使用置于仪器顶端的钢尺，并估读到最小分度的下一位。")
+        # Q3
+        doc.add_heading("3. 实验中如何确定清晰成像的位置？放大像与缩小像的位置如何判断？", level=2)
+        doc.add_paragraph("确定成像位置时，以像的某一条边的清晰度作为判断依据：前后微动像屏（或透镜），"
+                          "观察选定边缘的锐利程度，取其最清晰处为该次成像位置。"
+                          "这样比笼统地看“像是否清晰”更容易复现，可减小判读的偶然误差。")
+        doc.add_paragraph("放大像与缩小像的位置判断：")
+        doc.add_paragraph("(1) 缩小像：物距大于二倍焦距（本实验凸透镜距物屏 40.00 cm 左右），"
+                          "像成在透镜另一侧一倍焦距与二倍焦距之间，像的尺寸小于物，边缘较锐利，易于判读；")
+        doc.add_paragraph("(2) 放大像：插入凹透镜后移动凹透镜与像屏，使光束进一步会聚，"
+                          "像的尺寸变大、亮度降低、边缘变软，需要更仔细地前后逼近才能确定位置。")
+        doc.add_paragraph("整个测量过程中物屏与凸透镜的位置一旦固定就不再移动，"
+                          "读数一律使用置于仪器顶端的钢尺，并估读到最小分度的下一位。")
 
-    # Q4
-    doc.add_heading("4. 自准法与物像法测凹透镜焦距的结果为何有差异？哪种方法重复性更好？", level=2)
-    doc.add_paragraph("本次测量结果：")
-    doc.add_math(
-        rf"f_{{\text{{自准}}}} = -({format_number(f_ca_abs_bar, u_ca)}"
-        rf" \pm {format_number(u_ca, u_ca)})\ \mathrm{{cm}},\qquad "
-        rf"f_{{\text{{物像}}}} = {f_im_bar:.2f}\ \mathrm{{cm}}"
-    )
-    doc.add_math(
-        rf"\Delta = \left|f_{{\text{{自准}}}} - f_{{\text{{物像}}}}\right|"
-        rf" = \left|{abs(f_ca_abs_bar):.2f} - {abs(f_im_bar):.2f}\right|"
-        rf" = {diff_ca_im:.2f}\ \mathrm{{cm}}"
-    )
-    doc.add_paragraph("差异来源：")
-    doc.add_paragraph_rich("(1) 自准法只用到两次成像位置之差 $X_7 - X_6$，"
-                           "凹透镜与反射镜同步移动的联动误差是其主要来源；")
-    doc.add_paragraph_rich("(2) 物像法的 $u = X_7 - X_6$、$v = X_8 - X_6$ 都是两次读数之差，"
-                           "同一次位置读数的偏差会同时进入 $u$ 与 $v$，"
-                           "且 $f = uv/(u - v)$ 的分母是两个接近的小量之差，误差被进一步放大，"
-                           "因此物像法对位置判读的精度要求更高。")
-    doc.add_paragraph("结论：自准法步骤少、参与运算的读数少，重复性更好；"
-                      "物像法虽然计算直接，但误差传递路径更长。"
-                      f"两者结果相差 {diff_ca_im:.2f} cm，处于本实验的不确定度水平之内，说明测量自洽。")
+        # Q4
+        doc.add_heading("4. 自准法与物像法测凹透镜焦距的结果为何有差异？哪种方法重复性更好？", level=2)
+        doc.add_paragraph("本次测量结果：")
+        doc.add_math(
+            rf"f_{{\text{{自准}}}} = -({format_number(f_ca_abs_bar, u_ca)}"
+            rf" \pm {format_number(u_ca, u_ca)})\ \mathrm{{cm}},\qquad "
+            rf"f_{{\text{{物像}}}} = {f_im_bar:.2f}\ \mathrm{{cm}}"
+        )
+        doc.add_math(
+            rf"\Delta = \left|f_{{\text{{自准}}}} - f_{{\text{{物像}}}}\right|"
+            rf" = \left|{abs(f_ca_abs_bar):.2f} - {abs(f_im_bar):.2f}\right|"
+            rf" = {diff_ca_im:.2f}\ \mathrm{{cm}}"
+        )
+        doc.add_paragraph("差异来源：")
+        doc.add_paragraph_rich("(1) 自准法只用到两次成像位置之差 $X_7 - X_6$，"
+                               "凹透镜与反射镜同步移动的联动误差是其主要来源；")
+        doc.add_paragraph_rich("(2) 物像法的 $u = X_7 - X_6$、$v = X_8 - X_6$ 都是两次读数之差，"
+                               "同一次位置读数的偏差会同时进入 $u$ 与 $v$，"
+                               "且 $f = uv/(u - v)$ 的分母是两个接近的小量之差，误差被进一步放大，"
+                               "因此物像法对位置判读的精度要求更高。")
+        doc.add_paragraph("结论：自准法步骤少、参与运算的读数少，重复性更好；"
+                          "物像法虽然计算直接，但误差传递路径更长。"
+                          f"两者结果相差 {diff_ca_im:.2f} cm，处于本实验的不确定度水平之内，说明测量自洽。")
 
     # ── 变体章节：结论（置于思考题和结果分析后） ──
     if "结论" in variants:

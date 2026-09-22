@@ -14,6 +14,7 @@
 import json
 import os
 import re
+import sys
 
 DATA_PATTERN = re.compile(r"%%DATA:([^:]+):(.+?)%%")
 
@@ -189,6 +190,80 @@ def normalize_polish_md(text):
     return text.strip()
 
 
+# 思考题整段润色文本 → 按问回答：切分规则与应用侧 importQuizAnswers 逐字一致
+# （src/renderer.js 用 /\n(?=\d+\.\s)/，这里同一条正则，别只改一边）
+_QUIZ_SPLIT_RE = re.compile(r"\n(?=\d+\.\s)")
+_QUIZ_ITEM_RE = re.compile(r"^(\d+)\.\s*")
+# 应用从 docx 截取思考题原文时是从关键字处开始的，整段文本首行常是章节标题
+_QUIZ_HEAD_RE = re.compile(r"^[ \t]*(?:[一二三四五六七八九十]+、)?[ \t]*(?:课后)?(?:思考题|问题讨论)[ \t]*\n")
+
+
+def split_quiz_polish(text: str) -> dict:
+    """把「整段润色」的思考题文本拆成 {题号: [回答]}；识别不到题号时返回 {}。
+
+    文本形如（首行章节标题可有可无，题目逐字保留是润色的硬约束）：
+        思考题
+        1. 题目……
+        答：回答……
+        2. 题目……
+    """
+    body = _QUIZ_HEAD_RE.sub("", text.strip(), count=1)
+    out = {}
+    for part in _QUIZ_SPLIT_RE.split(body):
+        part = part.strip()
+        m = _QUIZ_ITEM_RE.match(part)
+        if not m:
+            continue
+        lines = part.split("\n", 1)
+        answer = lines[1].strip() if len(lines) > 1 else ""
+        if answer:
+            out.setdefault(m.group(1), []).append(answer)
+    return out
+
+
+def get_custom_quiz():
+    """读取应用传入的自定义思考题：{"questions": [...], "answers": {题号: [答案...]}}；无则 None。"""
+    raw = _job_value("customQuiz", "LAB_CUSTOM_QUIZ")
+    if not raw:
+        return None
+    try:
+        d = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(d, dict):
+        return None
+    questions = [str(q).strip() for q in (d.get("questions") or []) if str(q or "").strip()]
+    if not questions:
+        return None
+    answers = d.get("answers") if isinstance(d.get("answers"), dict) else {}
+    return {"questions": questions, "answers": answers}
+
+
+def render_custom_quiz(doc, data):
+    """渲染用户自定义的思考题（题目 + 应用侧 AI 生成的答案）；返回 True 表示已渲染。
+
+    返回 False 时调用方照常输出内置题目。答案按题号取，逐条过
+    normalize_polish_md / render_variant（%%DATA%% 占位符与公式同样生效）。
+    """
+    quiz = get_custom_quiz()
+    if not quiz:
+        return False
+    for i, q in enumerate(quiz["questions"], 1):
+        doc.add_heading("%d. %s" % (i, q), level=2)
+        answers = quiz["answers"].get(str(i))
+        if answers is None:
+            answers = quiz["answers"].get(i)
+        if isinstance(answers, str):
+            answers = [answers]
+        rendered = [render_variant(normalize_polish_md(str(a)), data)
+                    for a in (answers or []) if str(a or "").strip()]
+        if rendered:
+            doc.add_paragraph_rich(rendered[0])
+        else:
+            doc.add_paragraph("答：（本次未生成回答）")
+    return True
+
+
 def compose(script_dir: str, data: dict) -> dict:
     """按 LAB_VARIANTS 组合各章节文本，并应用 LAB_POLISH 润色导入覆盖。
 
@@ -221,6 +296,21 @@ def compose(script_dir: str, data: dict) -> dict:
         if section in disabled:
             continue   # 润色覆盖同样受章节开关约束
         if not isinstance(md, str) or not md.strip():
+            continue
+        if section == "思考题":
+            # 整段润色文本自带题目与答案，而 generate.py 的题目写死、按问取回答：
+            # 这里解析成按问回答，避免「整段文本」与「写死题目 + 兜底答案」各输出一遍。
+            # 解析不到题号就忽略该覆盖（绝不整段输出）——报告退回写死题目 + 变体/兜底答案。
+            quiz = split_quiz_polish(md)
+            if not quiz:
+                print("quiz-polish | 整段润色文本里没有识别到题号，已忽略该覆盖（避免与写死题目重复）",
+                      file=sys.stderr, flush=True)
+                continue
+            base = out.get("思考题")
+            merged = dict(base) if isinstance(base, dict) else {}
+            for qno, answers in quiz.items():
+                merged[qno] = [render_variant(normalize_polish_md(a), data) for a in answers]
+            out["思考题"] = merged
             continue
         out[section] = render_variant(normalize_polish_md(md), data)
     if out:

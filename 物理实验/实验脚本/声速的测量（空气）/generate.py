@@ -12,7 +12,8 @@ sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
 from common.data_io import load_data
-from common.variants import compose
+from common.variants import compose, render_custom_quiz
+from common.custom_plot import render_custom_plot
 
 # ── 物理常数与仪器参数（按教材） ──
 V0 = 331.45           # 0°C 时空气中声速 (m/s)
@@ -362,6 +363,11 @@ def _generate_docx(data: dict, output_path: str):
     # （二）位相比较法
     doc.add_heading("（二）位相比较法", level=2)
     _write_method_section(doc, r2, "3-6-2")
+    # 自定义画图：本实验无内置图，AI 生成的图按顺序追加在「数据处理」末尾
+    render_custom_plot(doc, 1, width_cm=14)
+    render_custom_plot(doc, 2, width_cm=14)
+    render_custom_plot(doc, 3, width_cm=14)
+
 
     # ════════════════════════════════════════
     # 三、实验结果分析
@@ -448,53 +454,54 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
     import random
-    _quiz = variants.get("思考题")
-    if isinstance(_quiz, str) and _quiz.strip():
-        doc.add_paragraph_rich(_quiz)
-        _quiz = None
-    elif not isinstance(_quiz, dict):
-        _quiz = None
+    if not render_custom_quiz(doc, r):
+        _quiz = variants.get("思考题")
+        if isinstance(_quiz, str) and _quiz.strip():
+            doc.add_paragraph_rich(_quiz)
+            _quiz = None
+        elif not isinstance(_quiz, dict):
+            _quiz = None
 
-    doc.add_heading("1. 用共振干涉法和位相比较法测声速有何相同和不同？", level=2)
-    _o = _quiz.get("1") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_heading("1. 用共振干涉法和位相比较法测声速有何相同和不同？", level=2)
+        _o = _quiz.get("1") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph(
-            "相同：都是基于声波在空气中传播的原理进行测量，"
-            "通过测量声波传播的时间或频率来计算声速。"
-        )
-        doc.add_paragraph("不同：")
-        doc.add_paragraph(
-            "① 共振干涉法：通过测量声波在管道或腔体内的共振频率来确定声速，"
-            "利用声波与腔体内壁反射后形成的干涉现象来测量声速。"
-        )
-        doc.add_paragraph(
-            "② 位相比较法：通过测量两个声波信号之间的相位差来计算声速，"
-            "通常用频率较稳定的信号源和精确计时设备来实现。"
-        )
+            doc.add_paragraph(
+                "相同：都是基于声波在空气中传播的原理进行测量，"
+                "通过测量声波传播的时间或频率来计算声速。"
+            )
+            doc.add_paragraph("不同：")
+            doc.add_paragraph(
+                "① 共振干涉法：通过测量声波在管道或腔体内的共振频率来确定声速，"
+                "利用声波与腔体内壁反射后形成的干涉现象来测量声速。"
+            )
+            doc.add_paragraph(
+                "② 位相比较法：通过测量两个声波信号之间的相位差来计算声速，"
+                "通常用频率较稳定的信号源和精确计时设备来实现。"
+            )
 
-    doc.add_heading(
-        "2. 声速测量实验中，定性分析共振法测量时声压振幅极大值"
-        "随距离变大而减少的原因。", level=2
-    )
-    _o = _quiz.get("2") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
-
-        doc.add_paragraph(
-            "① 能量减小：声波在传播过程中会受到空气和管道等介质的吸收和散射，"
-            "导致声波能量逐渐减小，声压振幅减小。"
+        doc.add_heading(
+            "2. 声速测量实验中，定性分析共振法测量时声压振幅极大值"
+            "随距离变大而减少的原因。", level=2
         )
-        doc.add_paragraph(
-            "② 波动扩散：声波传播时会发生波动扩散，随着距离增大，"
-            "声波波动波束逐渐扩散，导致声波的能量分布在更大的区域内，"
-            "从而导致声压振幅减小。"
-        )
+        _o = _quiz.get("2") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        # ── 保存 ──
+            doc.add_paragraph(
+                "① 能量减小：声波在传播过程中会受到空气和管道等介质的吸收和散射，"
+                "导致声波能量逐渐减小，声压振幅减小。"
+            )
+            doc.add_paragraph(
+                "② 波动扩散：声波传播时会发生波动扩散，随着距离增大，"
+                "声波波动波束逐渐扩散，导致声波的能量分布在更大的区域内，"
+                "从而导致声压振幅减小。"
+            )
+
+            # ── 保存 ──
     doc.save()
     doc.close()
     print(f"报告已生成: {output_path}")

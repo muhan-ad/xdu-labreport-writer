@@ -16,7 +16,8 @@ sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
 from common.data_io import load_data
-from common.variants import compose
+from common.variants import compose, render_custom_quiz
+from common.custom_plot import render_custom_plot
 
 # ── 实验参数（教材口径） ──
 # 电流表改装：表头量程扩大 10 倍 → 分流电阻 R_s = R_g / 9
@@ -210,6 +211,11 @@ def _generate_docx(data: dict, output_path: str):
         rows.append([f"{a:.1f}", f"{b:.3f}", f"{c:+.3f}"])
     doc.add_table(["$U_x$ / V", "$U_s$ / V", "$U_s-U_x$ / V"], rows,
                   col_widths=[3.0, 3.0, 3.5])
+    # 自定义画图：本实验无内置图，AI 生成的图按顺序追加在「数据处理」末尾
+    render_custom_plot(doc, 1, width_cm=14)
+    render_custom_plot(doc, 2, width_cm=14)
+    render_custom_plot(doc, 3, width_cm=14)
+
 
     # ── 三、实验结果分析 ──
     doc.add_heading("三、实验结果分析", level=1)
@@ -243,53 +249,55 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
     import random
-    _quiz = variants.get("思考题")
-    if isinstance(_quiz, str) and _quiz.strip():
-        doc.add_paragraph_rich(_quiz)
-        _quiz = None
-    elif not isinstance(_quiz, dict):
-        _quiz = None
+    if not render_custom_quiz(doc, r):
+        _quiz = variants.get("思考题")
+        if isinstance(_quiz, str) and _quiz.strip():
+            doc.add_paragraph_rich(_quiz)
+            _quiz = None
+        elif not isinstance(_quiz, dict):
+            _quiz = None
 
-    doc.add_heading("1. 为什么电流表改装要用并联电阻？", level=2)
-    _o = _quiz.get("1") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_heading("1. 为什么电流表改装要用并联电阻？", level=2)
+        _o = _quiz.get("1") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph(
-            "答：电流表本质是微安表头，内阻较大，只能通过很小的电流。"
-            "要扩大电流量程，必须并联一个分流电阻，使大部分被测电流从分流电阻流过，"
-            "表头只流过与其内阻成反比的份额，从而保证表头工作在额定电流范围内。"
-        )
+            doc.add_paragraph(
+                "答：电流表本质是微安表头，内阻较大，只能通过很小的电流。"
+                "要扩大电流量程，必须并联一个分流电阻，使大部分被测电流从分流电阻流过，"
+                "表头只流过与其内阻成反比的份额，从而保证表头工作在额定电流范围内。"
+            )
 
-    doc.add_heading("2. 电压表改装为什么串联大电阻？", level=2)
-    _o = _quiz.get("2") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_heading("2. 电压表改装为什么串联大电阻？", level=2)
+        _o = _quiz.get("2") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph(
-            "答：电压表要求内阻很大，测量时几乎不分流被测电路电流。"
-            "扩大量程时需串联分压电阻，使绝大部分电压降落在分压电阻上，"
-            "表头只承担额定电压降，同时使改装表的总内阻按量程成比例增大（欧姆/伏特）。"
-        )
+            doc.add_paragraph(
+                "答：电压表要求内阻很大，测量时几乎不分流被测电路电流。"
+                "扩大量程时需串联分压电阻，使绝大部分电压降落在分压电阻上，"
+                "表头只承担额定电压降，同时使改装表的总内阻按量程成比例增大（欧姆/伏特）。"
+            )
 
-    doc.add_heading("3. 校正时发现改装表读数普遍偏大，说明什么？", level=2)
-    _o = _quiz.get("3") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_heading("3. 校正时发现改装表读数普遍偏大，说明什么？", level=2)
+        _o = _quiz.get("3") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph(
-            "答：读数普遍偏大说明表头支路电流偏大，即分流/分压电阻取值偏大（或表头内阻标定偏小），"
-            "导致流过表头的电流超过额定值。应适当减小分流电阻（电流表）或减小分压电阻（电压表），"
-            "并重新校正，使各点修正值尽量减小且正负对称。"
-        )
+            doc.add_paragraph(
+                "答：读数普遍偏大说明表头支路电流偏大，即分流/分压电阻取值偏大（或表头内阻标定偏小），"
+                "导致流过表头的电流超过额定值。应适当减小分流电阻（电流表）或减小分压电阻（电压表），"
+                "并重新校正，使各点修正值尽量减小且正负对称。"
+            )
 
-        # ── 变体章节：实验结论（置于思考题之后） ──
-        if "实验结论" in variants:
-            doc.add_heading("实验结论", level=1)
-            doc.add_paragraph_rich(variants["实验结论"])
+    # ── 变体章节：实验结论（置于思考题之后） ──
+    # 必须留在函数体层级：缩进进上一问的 else 时，最后一问有变体答案就整段不输出
+    if "实验结论" in variants:
+        doc.add_heading("实验结论", level=1)
+        doc.add_paragraph_rich(variants["实验结论"])
 
         # ── 保存 ──
     doc.save()

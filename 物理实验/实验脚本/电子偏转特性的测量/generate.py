@@ -9,7 +9,8 @@ sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
 from common.data_io import load_data
-from common.variants import compose
+from common.variants import compose, render_custom_quiz
+from common.custom_plot import render_custom_plot
 
 # 给定量（教材，预填入模板）
 # 表1/表2 的 D 为 -16…+16（9 点），表3 的 D 为 -9…+9（7 点，见 rag/原理.md 表3）。
@@ -175,10 +176,11 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_inline_math(r"D - U_{dx}")
     doc.add_run(" 曲线，对数据点作最小二乘线性拟合，直线斜率即为 X 轴的电偏转灵敏度：")
     doc.add_math(r"\varepsilon_{x} = \frac{\Delta D}{\Delta U_{dx}}")
-    doc.add_image(fig1_path, width_cm=12)
-    doc.add_paragraph("图1 ")
-    doc.add_inline_math(r"D - U_{dx}")
-    doc.add_run(" 关系曲线")
+    if not render_custom_plot(doc, 1, width_cm=12):
+        doc.add_image(fig1_path, width_cm=12)
+        doc.add_paragraph("图1 ")
+        doc.add_inline_math(r"D - U_{dx}")
+        doc.add_run(" 关系曲线")
     doc.add_paragraph("拟合得 ")
     doc.add_inline_math(r"U_{2} = 1000\,\mathrm{V}")
     doc.add_run(" 时 ")
@@ -202,10 +204,11 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_inline_math(r"D - U_{dy}")
     doc.add_run(" 曲线并作最小二乘线性拟合，直线斜率即为 Y 轴的电偏转灵敏度：")
     doc.add_math(r"\varepsilon_{y} = \frac{\Delta D}{\Delta U_{dy}}")
-    doc.add_image(fig2_path, width_cm=12)
-    doc.add_paragraph("图2 ")
-    doc.add_inline_math(r"D - U_{dy}")
-    doc.add_run(" 关系曲线")
+    if not render_custom_plot(doc, 2, width_cm=12):
+        doc.add_image(fig2_path, width_cm=12)
+        doc.add_paragraph("图2 ")
+        doc.add_inline_math(r"D - U_{dy}")
+        doc.add_run(" 关系曲线")
     doc.add_paragraph("拟合得 ")
     doc.add_inline_math(r"U_{2} = 1000\,\mathrm{V}")
     doc.add_run(" 时 ")
@@ -231,10 +234,11 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_inline_math(r"D - I_{m}")
     doc.add_run(" 曲线并作最小二乘线性拟合，直线斜率的绝对值即为磁偏转灵敏度：")
     doc.add_math(r"\delta_{m} = \left| \frac{\Delta D}{\Delta I_{m}} \right|")
-    doc.add_image(fig3_path, width_cm=12)
-    doc.add_paragraph("图3 ")
-    doc.add_inline_math(r"D - I_{m}")
-    doc.add_run(" 关系曲线")
+    if not render_custom_plot(doc, 3, width_cm=12):
+        doc.add_image(fig3_path, width_cm=12)
+        doc.add_paragraph("图3 ")
+        doc.add_inline_math(r"D - I_{m}")
+        doc.add_run(" 关系曲线")
     doc.add_paragraph("拟合得 ")
     doc.add_inline_math(r"U_{2} = 1000\,\mathrm{V}")
     doc.add_run(" 时 ")
@@ -267,52 +271,54 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
     import random
-    _quiz = variants.get("思考题")
-    if isinstance(_quiz, str) and _quiz.strip():
-        doc.add_paragraph_rich(_quiz)
-        _quiz = None
-    elif not isinstance(_quiz, dict):
-        _quiz = None
-    doc.add_paragraph("1. 由电偏转灵敏度的计算结果，能得出 ", bold=True)
-    _o = _quiz.get("1") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
-
+    if not render_custom_quiz(doc, r):
+        _quiz = variants.get("思考题")
+        if isinstance(_quiz, str) and _quiz.strip():
+            doc.add_paragraph_rich(_quiz)
+            _quiz = None
+        elif not isinstance(_quiz, dict):
+            _quiz = None
+        # 题目本体必须完整输出（续写在 if 之前）：放进 else 时，一旦有按问变体答案就会把题目截断
+        doc.add_paragraph("1. 由电偏转灵敏度的计算结果，能得出 ", bold=True)
         doc.add_inline_math(r"\varepsilon", bold=True)
         doc.add_run(" 与 ", bold=True)
         doc.add_inline_math(r"U_{2}", bold=True)
         doc.add_run(" 有什么关系？", bold=True)
-        doc.add_paragraph("答：由式")
-        doc.add_math(r"\varepsilon = k_{e}\frac{1}{U_{2}}")
-        doc.add_paragraph("知，")
-        doc.add_inline_math(r"U_{2}")
-        doc.add_run(" 越大，")
-        doc.add_inline_math(r"\varepsilon")
-        doc.add_run(" 越小，即 ")
-        doc.add_inline_math(r"\varepsilon")
-        doc.add_run(" 与 ")
-        doc.add_inline_math(r"U_{2}")
-        doc.add_run(" 成反比关系。")
+        _o = _quiz.get("1") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-    doc.add_paragraph("2. 偏转量的大小与光点的亮度是否有关？为什么？", bold=True)
-    _o = _quiz.get("2") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+            doc.add_paragraph("答：由式")
+            doc.add_math(r"\varepsilon = k_{e}\frac{1}{U_{2}}")
+            doc.add_paragraph("知，")
+            doc.add_inline_math(r"U_{2}")
+            doc.add_run(" 越大，")
+            doc.add_inline_math(r"\varepsilon")
+            doc.add_run(" 越小，即 ")
+            doc.add_inline_math(r"\varepsilon")
+            doc.add_run(" 与 ")
+            doc.add_inline_math(r"U_{2}")
+            doc.add_run(" 成反比关系。")
 
-        doc.add_paragraph("答：有关，偏转量的大小会影响聚焦，从而影响光点亮度。")
+        doc.add_paragraph("2. 偏转量的大小与光点的亮度是否有关？为什么？", bold=True)
+        _o = _quiz.get("2") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-    doc.add_paragraph("3. 地球表面的磁场对电子显像管中电子的运动有多大影响？能否忽略？", bold=True)
-    _o = _quiz.get("3") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+            doc.add_paragraph("答：有关，偏转量的大小会影响聚焦，从而影响光点亮度。")
 
-        doc.add_paragraph("答：地磁场强度为 ")
-        doc.add_inline_math(r"(2.5 \sim 6.5) \times 10^{-5}\,\mathrm{T}")
-        doc.add_run("，与电子显像管中磁场相比，磁场强度很弱，因此地磁场对电子显像管中"
-                    "电子的运动影响很小，从而可以忽略。")
+        doc.add_paragraph("3. 地球表面的磁场对电子显像管中电子的运动有多大影响？能否忽略？", bold=True)
+        _o = _quiz.get("3") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
+
+            doc.add_paragraph("答：地磁场强度为 ")
+            doc.add_inline_math(r"(2.5 \sim 6.5) \times 10^{-5}\,\mathrm{T}")
+            doc.add_run("，与电子显像管中磁场相比，磁场强度很弱，因此地磁场对电子显像管中"
+                        "电子的运动影响很小，从而可以忽略。")
 
     doc.save()
     doc.close()

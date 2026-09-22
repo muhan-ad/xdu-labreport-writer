@@ -8,7 +8,8 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
-from common.variants import compose
+from common.variants import compose, render_custom_quiz
+from common.custom_plot import render_custom_plot
 from common.data_io import load_data
 
 # ── 物理常数与仪器参数（按教材 + 范例） ──
@@ -419,6 +420,11 @@ def _generate_docx(data: dict, output_path: str):
         + format_number(i_mantissa, di_mantissa) + r" \pm " + format_number(di_mantissa, di_mantissa)
         + r") \times 10^{" + f"{i_power}" + r"}\,\mathrm{kg·m²}"
     )
+    # 自定义画图：本实验无内置图，AI 生成的图按顺序追加在「数据处理」末尾
+    render_custom_plot(doc, 1, width_cm=14)
+    render_custom_plot(doc, 2, width_cm=14)
+    render_custom_plot(doc, 3, width_cm=14)
+
 
     # ═══════════════════════════════════════════════
     # ── 三、实验结果分析 ──
@@ -464,44 +470,45 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
     import random
-    _quiz = variants.get("思考题")
-    if isinstance(_quiz, str) and _quiz.strip():
-        doc.add_paragraph_rich(_quiz)
-        _quiz = None
-    elif not isinstance(_quiz, dict):
-        _quiz = None
-
-    doc.add_paragraph(
-        "1. 实验中转动惯量公式中的 R 是否为下圆盘半径？其数值如何测量？", bold=True
-    )
-    _o = _quiz.get("1") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
-
-        doc.add_paragraph("")
-        doc.add_run("答：不是，R 是下盘圆心到悬挂点的距离。"
-                     "测量方法：三悬点组成一个等边三角形，设其边长为 L，"
-                     "则 R 等于其外接圆的半径，测量出 L 的长度后，")
-        doc.add_inline_math(r"R = \frac{L}{\sqrt{3}}")
-        doc.add_run("，通过计算即可得到 R 的数值。")
-
-    doc.add_paragraph(
-        "2. 当待测物体的转动惯量比下圆盘的转动惯量小得多时，"
-        "为何不宜采用三线摆测量？", bold=True
-    )
-    _o = _quiz.get("2") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+    if not render_custom_quiz(doc, r):
+        _quiz = variants.get("思考题")
+        if isinstance(_quiz, str) and _quiz.strip():
+            doc.add_paragraph_rich(_quiz)
+            _quiz = None
+        elif not isinstance(_quiz, dict):
+            _quiz = None
 
         doc.add_paragraph(
-            "答：若待测物转动惯量远小于下盘，则加与不加样品时周期变化极小，"
-            "T ≈ T₀，公式中差值项接近零，测量误差被放大，灵敏度不足，"
-            "会导致误差过多，无法得到理想结果。"
+            "1. 实验中转动惯量公式中的 R 是否为下圆盘半径？其数值如何测量？", bold=True
         )
+        _o = _quiz.get("1") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        # ── 保存 ──
+            doc.add_paragraph("")
+            doc.add_run("答：不是，R 是下盘圆心到悬挂点的距离。"
+                         "测量方法：三悬点组成一个等边三角形，设其边长为 L，"
+                         "则 R 等于其外接圆的半径，测量出 L 的长度后，")
+            doc.add_inline_math(r"R = \frac{L}{\sqrt{3}}")
+            doc.add_run("，通过计算即可得到 R 的数值。")
+
+        doc.add_paragraph(
+            "2. 当待测物体的转动惯量比下圆盘的转动惯量小得多时，"
+            "为何不宜采用三线摆测量？", bold=True
+        )
+        _o = _quiz.get("2") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
+
+            doc.add_paragraph(
+                "答：若待测物转动惯量远小于下盘，则加与不加样品时周期变化极小，"
+                "T ≈ T₀，公式中差值项接近零，测量误差被放大，灵敏度不足，"
+                "会导致误差过多，无法得到理想结果。"
+            )
+
+            # ── 保存 ──
     doc.save()
     doc.close()
     print(f"报告已生成: {output_path}")

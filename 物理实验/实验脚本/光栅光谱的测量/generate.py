@@ -14,7 +14,8 @@ sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
 from common.data_io import load_data
-from common.variants import compose
+from common.variants import compose, render_custom_quiz
+from common.custom_plot import render_custom_plot
 
 # ============================================================
 # 物理常数 / 实验参数（按教材）
@@ -356,6 +357,11 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     doc.add_run("，但经实验观察，实际能观察到的最高衍射级数为 ")
     doc.add_inline_math(f"K_{{\\text{{max}}}} = {kmax_obs}")
     doc.add_run("。")
+    # 自定义画图：本实验无内置图，AI 生成的图按顺序追加在「数据处理」末尾
+    render_custom_plot(doc, 1, width_cm=14)
+    render_custom_plot(doc, 2, width_cm=14)
+    render_custom_plot(doc, 3, width_cm=14)
+
 
     # ---- 变体章节：误差分析 ----
     if variants.get("误差分析"):
@@ -385,74 +391,75 @@ def _generate_docx(data: dict, output_path: str) -> bool:
 
     # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
     import random
-    _quiz = variants.get("思考题")
-    if isinstance(_quiz, str) and _quiz.strip():
-        doc.add_paragraph_rich(_quiz)
-        _quiz = None
-    elif not isinstance(_quiz, dict):
-        _quiz = None
+    if not render_custom_quiz(doc, r):
+        _quiz = variants.get("思考题")
+        if isinstance(_quiz, str) and _quiz.strip():
+            doc.add_paragraph_rich(_quiz)
+            _quiz = None
+        elif not isinstance(_quiz, dict):
+            _quiz = None
 
-    doc.add_heading(
-        "1. 同一光栅对不同波长的光，其最高衍射级数是否相同？不同波长的谱线宽度"
-        "是否一致？同一波长不同衍射级数的光谱宽度是否相同？为什么？", level=2)
-    _o = _quiz.get("1") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_heading(
+            "1. 同一光栅对不同波长的光，其最高衍射级数是否相同？不同波长的谱线宽度"
+            "是否一致？同一波长不同衍射级数的光谱宽度是否相同？为什么？", level=2)
+        _o = _quiz.get("1") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph("")
-        doc.add_run("答：同一光栅对不同波长的光，其最高衍射级数不相同。最高衍射级数由光栅方程 ")
-        doc.add_inline_math(r"d\sin\theta = Kλ")  # 行尾 \lambda 会被丢弃，用 Unicode λ
-        doc.add_run(" 决定，")
-        doc.add_inline_math(r"K_{\text{max}} = ⌊d/\lambda⌋")
-        doc.add_run("，波长越小，")
-        doc.add_inline_math(r"K_{\text{max}}")
-        doc.add_run(" 越高；波长越大，")
-        doc.add_inline_math(r"K_{\text{max}}")
-        doc.add_run(" 越低。不同波长的谱线宽度不一致。谱线宽度由光栅的角色散率和仪器函数决定：角色散率 ")
-        doc.add_inline_math(r"D = d\theta/d\lambda = K/(d\cos\theta)")
-        doc.add_run("，同一级次 K 下，波长越大，衍射角越大，因此 D 越大（色散更明显），"
-                    "谱线越宽；光栅的刻线数 N 固定时，分辨率 ")
-        doc.add_inline_math(r"R = KN")
-        doc.add_run("，但实际谱线宽度还受狭缝宽度、像差等因素影响。"
-                    "同一波长不同衍射级数的光谱宽度不相同。光谱宽度与衍射级次 K 直接相关：角色散率 ")
-        doc.add_inline_math(r"D \propto K")
-        doc.add_run("，高级次衍射的色散更大，谱线更宽；分辨率 ")
-        doc.add_inline_math(r"R = KN")
-        doc.add_run("，虽然分辨率提高，但谱线间距（色散）的增加更显著，导致谱线展宽。")
+            doc.add_paragraph("")
+            doc.add_run("答：同一光栅对不同波长的光，其最高衍射级数不相同。最高衍射级数由光栅方程 ")
+            doc.add_inline_math(r"d\sin\theta = Kλ")  # 行尾 \lambda 会被丢弃，用 Unicode λ
+            doc.add_run(" 决定，")
+            doc.add_inline_math(r"K_{\text{max}} = ⌊d/\lambda⌋")
+            doc.add_run("，波长越小，")
+            doc.add_inline_math(r"K_{\text{max}}")
+            doc.add_run(" 越高；波长越大，")
+            doc.add_inline_math(r"K_{\text{max}}")
+            doc.add_run(" 越低。不同波长的谱线宽度不一致。谱线宽度由光栅的角色散率和仪器函数决定：角色散率 ")
+            doc.add_inline_math(r"D = d\theta/d\lambda = K/(d\cos\theta)")
+            doc.add_run("，同一级次 K 下，波长越大，衍射角越大，因此 D 越大（色散更明显），"
+                        "谱线越宽；光栅的刻线数 N 固定时，分辨率 ")
+            doc.add_inline_math(r"R = KN")
+            doc.add_run("，但实际谱线宽度还受狭缝宽度、像差等因素影响。"
+                        "同一波长不同衍射级数的光谱宽度不相同。光谱宽度与衍射级次 K 直接相关：角色散率 ")
+            doc.add_inline_math(r"D \propto K")
+            doc.add_run("，高级次衍射的色散更大，谱线更宽；分辨率 ")
+            doc.add_inline_math(r"R = KN")
+            doc.add_run("，虽然分辨率提高，但谱线间距（色散）的增加更显著，导致谱线展宽。")
 
-    doc.add_heading(
-        "2. 试根据实验时同一级正负衍射光谱的对称性，判断光栅放置的位置；并利用"
-        "这种现象将光栅调至正确的位置；当同一级正负衍射角不等时，试估算入射光束"
-        "不垂直的程度（即求入射角的大小）。", level=2)
-    _o = _quiz.get("2") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_heading(
+            "2. 试根据实验时同一级正负衍射光谱的对称性，判断光栅放置的位置；并利用"
+            "这种现象将光栅调至正确的位置；当同一级正负衍射角不等时，试估算入射光束"
+            "不垂直的程度（即求入射角的大小）。", level=2)
+        _o = _quiz.get("2") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph("")
-        doc.add_run("答：当入射光束严格垂直于光栅平面时，同一衍射级 K 的正负方向衍射角应满足对称性 ")
-        doc.add_inline_math(r"|\theta_{+K}| = |\theta_{-K}|")
-        doc.add_run("；若光栅未垂直于入射光，正负级衍射角会不对称。"
-                    "因此可以通过测量同一级（如 K=1）的正负衍射角来判断光栅的放置位置：若 ")
-        doc.add_inline_math(r"|\theta_{+1}| \neq |\theta_{-1}|")
-        doc.add_run("，说明光栅未垂直于入射光。此时若 ")
-        doc.add_inline_math(r"|\theta_{+1}| > |\theta_{-1}|")
-        doc.add_run("，入射光偏向光栅法线的一侧，需旋转光栅使 ")
-        doc.add_inline_math(r"\theta_{+1}")
-        doc.add_run(" 减小或 ")
-        doc.add_inline_math(r"\theta_{-1}")
-        doc.add_run(" 增大，反复调整，直到二者相等。当正负衍射角不等时，可通过光栅方程推导入射角")
-        doc.add_math(r"\alpha = \text{arcsin}\left(\frac{\sin\theta_{K}"
-                     r" + \sin\theta_{-K}}{2}\right)")
-        doc.add_paragraph("")
-        doc.add_run("例如，若测得绿光 ")
-        doc.add_inline_math(r"\theta_{+1} = 164°29′")
-        doc.add_run("、")
-        doc.add_inline_math(r"\theta_{-1} = 183°21′")
-        doc.add_run("，代入得 ")
-        doc.add_inline_math(r"\alpha \approx 6.0°")
-        doc.add_run("，则应将光栅旋转约 6° 使入射角趋近于 0。")
+            doc.add_paragraph("")
+            doc.add_run("答：当入射光束严格垂直于光栅平面时，同一衍射级 K 的正负方向衍射角应满足对称性 ")
+            doc.add_inline_math(r"|\theta_{+K}| = |\theta_{-K}|")
+            doc.add_run("；若光栅未垂直于入射光，正负级衍射角会不对称。"
+                        "因此可以通过测量同一级（如 K=1）的正负衍射角来判断光栅的放置位置：若 ")
+            doc.add_inline_math(r"|\theta_{+1}| \neq |\theta_{-1}|")
+            doc.add_run("，说明光栅未垂直于入射光。此时若 ")
+            doc.add_inline_math(r"|\theta_{+1}| > |\theta_{-1}|")
+            doc.add_run("，入射光偏向光栅法线的一侧，需旋转光栅使 ")
+            doc.add_inline_math(r"\theta_{+1}")
+            doc.add_run(" 减小或 ")
+            doc.add_inline_math(r"\theta_{-1}")
+            doc.add_run(" 增大，反复调整，直到二者相等。当正负衍射角不等时，可通过光栅方程推导入射角")
+            doc.add_math(r"\alpha = \text{arcsin}\left(\frac{\sin\theta_{K}"
+                         r" + \sin\theta_{-K}}{2}\right)")
+            doc.add_paragraph("")
+            doc.add_run("例如，若测得绿光 ")
+            doc.add_inline_math(r"\theta_{+1} = 164°29′")
+            doc.add_run("、")
+            doc.add_inline_math(r"\theta_{-1} = 183°21′")
+            doc.add_run("，代入得 ")
+            doc.add_inline_math(r"\alpha \approx 6.0°")
+            doc.add_run("，则应将光栅旋转约 6° 使入射角趋近于 0。")
 
     doc.save()
     doc.close()

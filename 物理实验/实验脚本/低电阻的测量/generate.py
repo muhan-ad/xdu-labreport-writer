@@ -14,7 +14,8 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
-from common.variants import compose
+from common.variants import compose, render_custom_quiz
+from common.custom_plot import render_custom_plot
 from common.data_io import load_data
 
 # ── t 因子表（与计算器一致）──
@@ -324,6 +325,11 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("")
     doc.add_run("电阻率最终结果：")
     doc.add_math(r"\rho = " + format_measure(r["rho_a"], r["rho_u"]) + r" \times 10^{-8}\,\Omega\cdot\mathrm{m}")
+    # 自定义画图：本实验无内置图，AI 生成的图按顺序追加在「数据处理」末尾
+    render_custom_plot(doc, 1, width_cm=14)
+    render_custom_plot(doc, 2, width_cm=14)
+    render_custom_plot(doc, 3, width_cm=14)
+
 
     doc.add_heading("三、实验结果分析", level=1)
 
@@ -357,49 +363,50 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
     import random
-    _quiz = variants.get("思考题")
-    if isinstance(_quiz, str) and _quiz.strip():
-        doc.add_paragraph_rich(_quiz)
-        _quiz = None
-    elif not isinstance(_quiz, dict):
-        _quiz = None
+    if not render_custom_quiz(doc, r):
+        _quiz = variants.get("思考题")
+        if isinstance(_quiz, str) and _quiz.strip():
+            doc.add_paragraph_rich(_quiz)
+            _quiz = None
+        elif not isinstance(_quiz, dict):
+            _quiz = None
 
-    doc.add_heading("1. 双臂电桥为什么能消除接触电阻和引线电阻的影响？", level=2)
-    _o = _quiz.get("1") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_heading("1. 双臂电桥为什么能消除接触电阻和引线电阻的影响？", level=2)
+        _o = _quiz.get("1") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph(
-            "答：双臂电桥在单臂电桥基础上增加了两个比例臂（R_3、R_4），将待测电阻 R_x 和标准电阻 R_n "
-            "的电压端直接接入比例臂回路，使电流端的接触电阻和引线电阻被排除在桥臂之外。"
-            "当满足 R_1/R_2 = R_3/R_4 时，跨线电阻的影响也被消除，从而准确测量低电阻。"
-        )
+            doc.add_paragraph(
+                "答：双臂电桥在单臂电桥基础上增加了两个比例臂（R_3、R_4），将待测电阻 R_x 和标准电阻 R_n "
+                "的电压端直接接入比例臂回路，使电流端的接触电阻和引线电阻被排除在桥臂之外。"
+                "当满足 R_1/R_2 = R_3/R_4 时，跨线电阻的影响也被消除，从而准确测量低电阻。"
+            )
 
-    doc.add_heading("2. 为什么要进行正反向测量？", level=2)
-    _o = _quiz.get("2") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_heading("2. 为什么要进行正反向测量？", level=2)
+        _o = _quiz.get("2") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph(
-            "答：在低电阻测量中，回路中存在热电势和接触电势（由不同金属接触点的温度差引起），"
-            "这些附加电势会叠加在测量信号上，导致电桥平衡点偏移。正反向测量（交换电流方向）后，"
-            "热电势的符号反转而电阻电压不变，取两次读数的平均值即可消除热电势的系统误差。"
-        )
+            doc.add_paragraph(
+                "答：在低电阻测量中，回路中存在热电势和接触电势（由不同金属接触点的温度差引起），"
+                "这些附加电势会叠加在测量信号上，导致电桥平衡点偏移。正反向测量（交换电流方向）后，"
+                "热电势的符号反转而电阻电压不变，取两次读数的平均值即可消除热电势的系统误差。"
+            )
 
-    doc.add_heading("3. 如果金属丝直径不均匀，对电阻率测量结果有何影响？", level=2)
-    _o = _quiz.get("3") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_heading("3. 如果金属丝直径不均匀，对电阻率测量结果有何影响？", level=2)
+        _o = _quiz.get("3") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph(
-            "答：电阻率计算中使用的是直径的平均值 d_a，假设金属丝是均匀圆柱。如果直径实际不均匀，"
-            "不同位置的横截面积不同，电阻分布也不均匀。平均直径只能给出等效横截面积，"
-            "当直径波动较大时，等效截面积与实际截面积存在偏差，引入系统误差。"
-            "因此实验中在不同位置多次测量直径取平均，以减小这种影响。"
-        )
+            doc.add_paragraph(
+                "答：电阻率计算中使用的是直径的平均值 d_a，假设金属丝是均匀圆柱。如果直径实际不均匀，"
+                "不同位置的横截面积不同，电阻分布也不均匀。平均直径只能给出等效横截面积，"
+                "当直径波动较大时，等效截面积与实际截面积存在偏差，引入系统误差。"
+                "因此实验中在不同位置多次测量直径取平均，以减小这种影响。"
+            )
 
     doc.save()
     doc.close()

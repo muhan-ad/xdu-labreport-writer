@@ -9,7 +9,8 @@ sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
 from common.data_io import load_data
-from common.variants import compose
+from common.variants import compose, render_custom_quiz
+from common.custom_plot import render_custom_plot
 
 # ============================================================
 # 物理常数（AC15/4 型直流复射式检流计）
@@ -337,6 +338,11 @@ def _generate_docx(data: dict, output_path: str):
         rows=comp_rows,
         col_widths=[3.5, 3.5, 3.5, 2.5],
     )
+    # 自定义画图：本实验无内置图，AI 生成的图按顺序追加在「数据处理」末尾
+    render_custom_plot(doc, 1, width_cm=14)
+    render_custom_plot(doc, 2, width_cm=14)
+    render_custom_plot(doc, 3, width_cm=14)
+
 
     # ---- 三、实验结果分析 ----
     doc.add_heading("三、实验结果分析", level=1)
@@ -392,52 +398,57 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
     import random
-    _quiz = variants.get("思考题")
-    if isinstance(_quiz, str) and _quiz.strip():
-        doc.add_paragraph_rich(_quiz)
-        _quiz = None
-    elif not isinstance(_quiz, dict):
-        _quiz = None
+    if not render_custom_quiz(doc, r):
+        _quiz = variants.get("思考题")
+        if isinstance(_quiz, str) and _quiz.strip():
+            doc.add_paragraph_rich(_quiz)
+            _quiz = None
+        elif not isinstance(_quiz, dict):
+            _quiz = None
 
-    # 题 1
-    doc.add_heading("1. 内阻测量结果误差比较大，甚至个别学生测量得到的是负电阻，是何原因？", level=2)
-    _o = _quiz.get("1") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
-
-
-        doc.add_paragraph("灵敏电流计内阻测量误差主要来源于温差电动势引起的零点漂移：")
-        doc.add_paragraph("灵敏电流计的悬丝和接线端多使用不同金属材料（如磷青铜悬丝、黄铜接线柱），在室温变化时不同金属接点处产生温差电动势（塞贝克效应），形成微小的温差电流 ΔI。经过零点校准后，环境温度的缓慢变化会使光标再次偏离零点。当定偏法测量中 R 取值较小时，通过电流计的测量电流 I 本身也很小（约 10⁻⁹ A 量级），温差电流 ΔI 与 I 大小可比拟，叠加后严重干扰测量结果。")
-        doc.add_paragraph("")
-        doc.add_run("ΔI 与 I 的方向可相同或相反：当 ΔI 与 I 同向时，等效电流偏大，需在更大电压下才能达到相同偏转，导致 R-U 图的截距 b 偏负（即 |b| 偏大），Rg = −b 偏大；当 ΔI 与 I 反向且 |ΔI| 较大时，等效电流偏小甚至反向，截距 b 偏正，严重时 Rg = −b 表现为负值。")
-        doc.add_paragraph("此外，定偏法要求每次调节 U 使偏转距离 d 精确保持恒定，实际操作中难以完全做到，微小的偏转变化也会引入测量误差，进一步影响回归截距的准确性。")
-
-        # 题 2
-    doc.add_heading("2. 标准电阻作为二级分压是如何保护电流计的？", level=2)
-    _o = _quiz.get("2") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        # 题 1
+        doc.add_heading("1. 内阻测量结果误差比较大，甚至个别学生测量得到的是负电阻，是何原因？", level=2)
+        _o = _quiz.get("1") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
 
-        doc.add_paragraph("")
-        doc.add_run("标准电阻 Rs（0.100 Ω）在电路中起二级分压限流保护作用。第一级分压：Rs 与 R₁（约 3000 Ω）串联，根据分压公式 ")
-        doc.add_inline_math(r"U_s \approx U \cdot \frac{R_s}{R_1} \approx U \times 3.3 \times 10^{-5}")
-        doc.add_run("，Rs 两端获得约 10⁻⁵ 量级的微小电压（当 U = 3 V 时 Us ≈ 0.1 mV）。第二级分流：该微小电压施加在 R + Rg 回路两端，通过电流计的电流 ")
-        doc.add_inline_math(r"I_g = \frac{U_s}{R + R_g}")
-        doc.add_run("，再经并联分流后实际流过电流计线圈的电流降至 10⁻⁹ A 量级，恰好在 AC15/4 型灵敏电流计的额定测量范围（电流常数 ~10⁻⁹ A/mm）内，从而确保了电流计的安全运行。")
-        doc.add_paragraph("此外，当电流计外部电路处于短路状态时（如 R = 0），线圈在磁场中摆动切割磁感线产生感应电流，短路形成的低阻闭合回路中感应电流产生电磁阻尼力矩，使线圈迅速停止摆动，起到对悬丝的机械保护作用。")
+            doc.add_paragraph("灵敏电流计内阻测量误差主要来源于温差电动势引起的零点漂移：")
+            doc.add_paragraph("灵敏电流计的悬丝和接线端多使用不同金属材料（如磷青铜悬丝、黄铜接线柱），在室温变化时不同金属接点处产生温差电动势（塞贝克效应），形成微小的温差电流 ΔI。经过零点校准后，环境温度的缓慢变化会使光标再次偏离零点。当定偏法测量中 R 取值较小时，通过电流计的测量电流 I 本身也很小（约 10⁻⁹ A 量级），温差电流 ΔI 与 I 大小可比拟，叠加后严重干扰测量结果。")
+            doc.add_paragraph("")
+            doc.add_run("ΔI 与 I 的方向可相同或相反：当 ΔI 与 I 同向时，等效电流偏大，需在更大电压下才能达到相同偏转，导致 R-U 图的截距 b 偏负（即 |b| 偏大），Rg = −b 偏大；当 ΔI 与 I 反向且 |ΔI| 较大时，等效电流偏小甚至反向，截距 b 偏正，严重时 Rg = −b 表现为负值。")
+            doc.add_paragraph("此外，定偏法要求每次调节 U 使偏转距离 d 精确保持恒定，实际操作中难以完全做到，微小的偏转变化也会引入测量误差，进一步影响回归截距的准确性。")
 
-        # 题 3
+            # 题 2
+        doc.add_heading("2. 标准电阻作为二级分压是如何保护电流计的？", level=2)
+        _o = _quiz.get("2") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
+
+
+            doc.add_paragraph("")
+            doc.add_run("标准电阻 Rs（0.100 Ω）在电路中起二级分压限流保护作用。第一级分压：Rs 与 R₁（约 3000 Ω）串联，根据分压公式 ")
+            doc.add_inline_math(r"U_s \approx U \cdot \frac{R_s}{R_1} \approx U \times 3.3 \times 10^{-5}")
+            doc.add_run("，Rs 两端获得约 10⁻⁵ 量级的微小电压（当 U = 3 V 时 Us ≈ 0.1 mV）。第二级分流：该微小电压施加在 R + Rg 回路两端，通过电流计的电流 ")
+            doc.add_inline_math(r"I_g = \frac{U_s}{R + R_g}")
+            doc.add_run("，再经并联分流后实际流过电流计线圈的电流降至 10⁻⁹ A 量级，恰好在 AC15/4 型灵敏电流计的额定测量范围（电流常数 ~10⁻⁹ A/mm）内，从而确保了电流计的安全运行。")
+            doc.add_paragraph("此外，当电流计外部电路处于短路状态时（如 R = 0），线圈在磁场中摆动切割磁感线产生感应电流，短路形成的低阻闭合回路中感应电流产生电磁阻尼力矩，使线圈迅速停止摆动，起到对悬丝的机械保护作用。")
+
+        # 题 3（必须留在函数体层级：缩进进上一问的 else 时，上一问有变体答案就整段不输出）
         doc.add_heading('3. 为什么电流计在不用时，分流器必须要“短路”？', level=2)
+        _o = _quiz.get("3") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph("灵敏电流计的线圈由弹性极弱的磷青铜悬丝悬挂在永磁体磁隙中，悬丝兼具导电和提供恢复力矩的功能，其扭力系数极小（约 10⁻⁸ N·m/rad 量级）。当电流计不使用时，若分流器处于开路状态（即外电路断开），线圈两端无低阻闭合回路，此时：")
-        doc.add_paragraph("任何外部振动、实验台轻微移动或偶然触碰都会引起线圈在磁场中摆动。线圈切割磁感线产生感应电动势，但由于外电路断开，感应电流无法流通，无法形成电磁阻尼力矩。线圈会因惯性长时间持续振荡（类似欠阻尼状态），悬丝因反复扭转产生疲劳，弹性系数逐渐改变，致使测量精度下降，严重时悬丝断裂导致仪器报废。同时，线圈长时间大幅度摆动可能撞击磁极或极靴，损坏线圈骨架和反射镜光学系统。")
-        doc.add_paragraph("")
-        doc.add_run('将分流器置于“短路”挡（电阻调至零）后，线圈两端通过低阻导线短接，形成闭合回路。根据楞次定律，线圈摆动时在回路中产生的感应电流，其受到的安培力方向始终与线圈运动方向相反，形成与运动速度成正比的电磁阻尼力矩。该阻尼力矩使线圈迅速停止摆动，回到平衡位置，从而有效保护悬丝和线圈免受机械损伤。因此，灵敏电流计在日常存放和搬运过程中，必须将分流器置于“短路”挡，这是保护仪器的基本操作规程。')
+            doc.add_paragraph("灵敏电流计的线圈由弹性极弱的磷青铜悬丝悬挂在永磁体磁隙中，悬丝兼具导电和提供恢复力矩的功能，其扭力系数极小（约 10⁻⁸ N·m/rad 量级）。当电流计不使用时，若分流器处于开路状态（即外电路断开），线圈两端无低阻闭合回路，此时：")
+            doc.add_paragraph("任何外部振动、实验台轻微移动或偶然触碰都会引起线圈在磁场中摆动。线圈切割磁感线产生感应电动势，但由于外电路断开，感应电流无法流通，无法形成电磁阻尼力矩。线圈会因惯性长时间持续振荡（类似欠阻尼状态），悬丝因反复扭转产生疲劳，弹性系数逐渐改变，致使测量精度下降，严重时悬丝断裂导致仪器报废。同时，线圈长时间大幅度摆动可能撞击磁极或极靴，损坏线圈骨架和反射镜光学系统。")
+            doc.add_paragraph("")
+            doc.add_run('将分流器置于“短路”挡（电阻调至零）后，线圈两端通过低阻导线短接，形成闭合回路。根据楞次定律，线圈摆动时在回路中产生的感应电流，其受到的安培力方向始终与线圈运动方向相反，形成与运动速度成正比的电磁阻尼力矩。该阻尼力矩使线圈迅速停止摆动，回到平衡位置，从而有效保护悬丝和线圈免受机械损伤。因此，灵敏电流计在日常存放和搬运过程中，必须将分流器置于“短路”挡，这是保护仪器的基本操作规程。')
 
-        # ----
+            # ----
     doc.save()
     doc.close()
 

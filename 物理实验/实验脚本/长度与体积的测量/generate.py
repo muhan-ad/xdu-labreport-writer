@@ -23,7 +23,8 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
-from common.variants import compose
+from common.variants import compose, render_custom_quiz
+from common.custom_plot import render_custom_plot
 from common.data_io import load_data
 
 # t 因子（置信概率 0.683，与全项目口径一致）：下标 = 测量次数 n
@@ -477,6 +478,11 @@ def _generate_docx(data: dict, output_path: str):
         + r" \pm " + format_number(r["uV"] / 10 ** v_power, r["uV"] / 10 ** v_power)
         + r") \times 10^{" + f"{v_power}" + r"} \text{ mm}^3"
     )
+    # 自定义画图：本实验无内置图，AI 生成的图按顺序追加在「数据处理」末尾
+    render_custom_plot(doc, 1, width_cm=14)
+    render_custom_plot(doc, 2, width_cm=14)
+    render_custom_plot(doc, 3, width_cm=14)
+
 
     doc.add_heading("三、实验结果分析", level=1)
 
@@ -512,51 +518,52 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
     import random
-    _quiz = variants.get("思考题")
-    if isinstance(_quiz, str) and _quiz.strip():
-        doc.add_paragraph_rich(_quiz)
-        _quiz = None
-    elif not isinstance(_quiz, dict):
-        _quiz = None
+    if not render_custom_quiz(doc, r):
+        _quiz = variants.get("思考题")
+        if isinstance(_quiz, str) and _quiz.strip():
+            doc.add_paragraph_rich(_quiz)
+            _quiz = None
+        elif not isinstance(_quiz, dict):
+            _quiz = None
 
-    doc.add_heading("1. 为什么米尺读数要估读到分度值的 1/10？", level=2)
-    _o = _quiz.get("1") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_heading("1. 为什么米尺读数要估读到分度值的 1/10？", level=2)
+        _o = _quiz.get("1") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph(
-            "答：米尺最小分度为 1 mm，测量时可精确读到毫米位。估读到分度值的 1/10（即 0.1 mm）"
-            "可以在不降低可靠性的前提下充分利用仪器信息，减小读数随机误差。估读本身就是一次"
-            "在相邻刻线之间的内插，是人为判断的结果，其不确定度约为最小分度的 1/10，故读数结果"
-            "记为 L ± 0.1 mm 量级。"
-        )
+            doc.add_paragraph(
+                "答：米尺最小分度为 1 mm，测量时可精确读到毫米位。估读到分度值的 1/10（即 0.1 mm）"
+                "可以在不降低可靠性的前提下充分利用仪器信息，减小读数随机误差。估读本身就是一次"
+                "在相邻刻线之间的内插，是人为判断的结果，其不确定度约为最小分度的 1/10，故读数结果"
+                "记为 L ± 0.1 mm 量级。"
+            )
 
-    doc.add_heading("2. 游标卡尺为什么能准确读出分度值的 1/n？", level=2)
-    _o = _quiz.get("2") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_heading("2. 游标卡尺为什么能准确读出分度值的 1/n？", level=2)
+        _o = _quiz.get("2") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph(
-            "答：游标卡尺利用游标（副尺）与主尺分度之间的微小差值来实现细分。n 个游标分度与主尺上 "
-            "Mn−1 个分度等长，主尺分度 a 与游标分度 b 之差 h = a − b = a/n，即为游标卡尺的分度值。"
-            "读数时只需判断游标上哪一根刻线与主尺刻线对齐，该刻线的序号 k 与 h 的乘积 kh 就是"
-            "小于一个主尺分度的部分，因此可以准确读出 a/n 的整数倍而无需估读。"
-        )
+            doc.add_paragraph(
+                "答：游标卡尺利用游标（副尺）与主尺分度之间的微小差值来实现细分。n 个游标分度与主尺上 "
+                "Mn−1 个分度等长，主尺分度 a 与游标分度 b 之差 h = a − b = a/n，即为游标卡尺的分度值。"
+                "读数时只需判断游标上哪一根刻线与主尺刻线对齐，该刻线的序号 k 与 h 的乘积 kh 就是"
+                "小于一个主尺分度的部分，因此可以准确读出 a/n 的整数倍而无需估读。"
+            )
 
-    doc.add_heading("3. 为什么要对千分尺和游标卡尺进行零点修正？", level=2)
-    _o = _quiz.get("3") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_heading("3. 为什么要对千分尺和游标卡尺进行零点修正？", level=2)
+        _o = _quiz.get("3") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph(
-            "答：仪器在长期使用后，测量面磨损或装配间隙变化会使“零位”偏离理想位置。若测量前两测量面"
-            "直接接触时微分套筒读数不为零（千分尺零点读数 d₀ 可正可负），或游标零线与主尺零线不重合"
-            "（游标卡尺零点读数 D₀），则所有测量读数都带有固定的系统偏差。通过测量前记录零点读数，"
-            "并在结果中扣除（实际长度 = 测量读数 − 零点读数），即可消除该系统误差。"
-        )
+            doc.add_paragraph(
+                "答：仪器在长期使用后，测量面磨损或装配间隙变化会使“零位”偏离理想位置。若测量前两测量面"
+                "直接接触时微分套筒读数不为零（千分尺零点读数 d₀ 可正可负），或游标零线与主尺零线不重合"
+                "（游标卡尺零点读数 D₀），则所有测量读数都带有固定的系统偏差。通过测量前记录零点读数，"
+                "并在结果中扣除（实际长度 = 测量读数 − 零点读数），即可消除该系统误差。"
+            )
 
     doc.save()
     doc.close()

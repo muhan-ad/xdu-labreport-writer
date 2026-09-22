@@ -9,7 +9,8 @@ sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
 from common.data_io import load_data
-from common.variants import compose
+from common.variants import compose, render_custom_quiz
+from common.custom_plot import render_custom_plot
 
 # ============================================================
 # 实验参数
@@ -281,7 +282,8 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     )
     doc.add_paragraph("以 1/p 为横轴、可视体积 V′ 为纵轴作图并作线性拟合，"
                       "得同一温度下测量气体压强与体积的关系图：")
-    doc.add_image(boyle_plot, width_cm=14)
+    if not render_custom_plot(doc, 1, width_cm=14):
+        doc.add_image(boyle_plot, width_cm=14)
     doc.add_paragraph("由图可验证波义耳—马略特定律：")
     doc.add_math(r"k = nRT,\ T = " + f"{T_iso:.2f}"
                  + r"\ \mathrm{K},\ R = 8.31\ \mathrm{J/(mol·K)}")
@@ -316,7 +318,8 @@ def _generate_docx(data: dict, output_path: str) -> bool:
         charles_intro = (charles_intro[:-1]
                          + "，图中同时绘出降温过程的测量数据以作对比（不参与拟合）：")
     doc.add_paragraph(charles_intro)
-    doc.add_image(charles_plot, width_cm=14)
+    if not render_custom_plot(doc, 2, width_cm=14):
+        doc.add_image(charles_plot, width_cm=14)
     doc.add_paragraph("由查理定律，p–T 直线的斜率为：")
     doc.add_math(r"k = \frac{nR}{V' + V_{0}}")
     doc.add_paragraph("")
@@ -342,86 +345,87 @@ def _generate_docx(data: dict, output_path: str) -> bool:
 
     # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
     import random
-    _quiz = variants.get("思考题")
-    if isinstance(_quiz, str) and _quiz.strip():
-        doc.add_paragraph_rich(_quiz)
-        _quiz = None
-    elif not isinstance(_quiz, dict):
-        _quiz = None
+    if not render_custom_quiz(doc, r):
+        _quiz = variants.get("思考题")
+        if isinstance(_quiz, str) and _quiz.strip():
+            doc.add_paragraph_rich(_quiz)
+            _quiz = None
+        elif not isinstance(_quiz, dict):
+            _quiz = None
 
-    doc.add_paragraph("1. 三大气体实验定律的内容是什么？这些定律的适用范围是什么？"
-                      "如果某种气体的三个状态参量（p、V、T）都发生了变化，"
-                      "它们之间又遵从什么规律？", bold=True)
-    _o = _quiz.get("1") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_paragraph("1. 三大气体实验定律的内容是什么？这些定律的适用范围是什么？"
+                          "如果某种气体的三个状态参量（p、V、T）都发生了变化，"
+                          "它们之间又遵从什么规律？", bold=True)
+        _o = _quiz.get("1") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph("答：波义耳—马略特定律：在恒定温度下，一定质量气体压强与体积成反比。"
-                          "查理定律：在恒定容积下，一定质量气体温度与压强成正比。"
-                          "盖·吕萨克定律：在恒定压强下，一定质量气体的体积与温度成正比。")
-        doc.add_paragraph("适用范围：理想气体，即分子间无相互作用力，体积可以忽略不计的气体。")
-        doc.add_paragraph("")
-        doc.add_run("规律：")
-        doc.add_inline_math(r"pV = nRT")
-        doc.add_run("。")
+            doc.add_paragraph("答：波义耳—马略特定律：在恒定温度下，一定质量气体压强与体积成反比。"
+                              "查理定律：在恒定容积下，一定质量气体温度与压强成正比。"
+                              "盖·吕萨克定律：在恒定压强下，一定质量气体的体积与温度成正比。")
+            doc.add_paragraph("适用范围：理想气体，即分子间无相互作用力，体积可以忽略不计的气体。")
+            doc.add_paragraph("")
+            doc.add_run("规律：")
+            doc.add_inline_math(r"pV = nRT")
+            doc.add_run("。")
 
-    doc.add_paragraph("2. 推导理想气体的状态方程。", bold=True)
-    _o = _quiz.get("2") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_paragraph("2. 推导理想气体的状态方程。", bold=True)
+        _o = _quiz.get("2") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph("")
-        doc.add_run("答：气体的体积随压强 p、温度 T 以及气体分子的数量 N 而变，"
-                    "写成函数形式是 ")
-        doc.add_inline_math(r"V = f(p,T,N)")
-        doc.add_run("，对其求全微分：")
-        doc.add_math(r"dV = (\frac{∂V}{∂p})_{T,N} dp + (\frac{∂V}{∂T})_{p,N} dT"
-                     r" + (\frac{∂V}{∂N})_{T,p} dN")
-        doc.add_paragraph("对于一定量的气体，N 为常数，dN = 0，所以有")
-        doc.add_math(r"dV = (\frac{∂V}{∂p})_{T,N} dp + (\frac{∂V}{∂T})_{p,N} dT")
-        doc.add_paragraph("")
-        doc.add_run("根据波义耳—马略特定律，")
-        doc.add_inline_math(r"V = C/p")
-        doc.add_run("（C 为常数），于是有")
-        doc.add_math(r"(\frac{∂V}{∂p})_{T,N} = -\frac{C}{p^{2}} = -\frac{V}{p}")
-        doc.add_paragraph("")
-        doc.add_run("根据盖·吕萨克定律，")
-        doc.add_inline_math(r"V = C'T")
-        doc.add_run("（C′ 为常数），于是有")
-        doc.add_math(r"(\frac{∂V}{∂T})_{p,N} = C' = \frac{V}{T}")
-        doc.add_paragraph("将两偏导数代入上式可得")
-        doc.add_math(r"dV = -\frac{V}{p} dp + \frac{V}{T} dT")
-        doc.add_paragraph("即")
-        doc.add_math(r"\frac{dV}{V} = -\frac{dp}{p} + \frac{dT}{T}")
-        doc.add_paragraph("上式两边同时求积分可得")
-        doc.add_math(r"\ln{V} + \ln{p} = \ln{T} + C_{1}")
-        doc.add_paragraph("故有")
-        doc.add_math(r"\frac{pV}{T} = \text{恒量}")
-        doc.add_paragraph("（气体质量一定）")
-        doc.add_paragraph("又由 R 的定义：")
-        doc.add_math(r"R = \frac{p_{0}V_{m}}{T_{0}} = 8.31\ \mathrm{J/(mol·K)}")
-        doc.add_paragraph("式中 R 称为普适气体常数。对于任一物质的量为 n mol 的理想气体，有")
-        doc.add_math(r"\frac{pV}{T} = \frac{p_{0}nV_{m}}{T_{0}} = nR")
-        doc.add_paragraph("即")
-        doc.add_math(r"pV = nRT")
+            doc.add_paragraph("")
+            doc.add_run("答：气体的体积随压强 p、温度 T 以及气体分子的数量 N 而变，"
+                        "写成函数形式是 ")
+            doc.add_inline_math(r"V = f(p,T,N)")
+            doc.add_run("，对其求全微分：")
+            doc.add_math(r"dV = (\frac{∂V}{∂p})_{T,N} dp + (\frac{∂V}{∂T})_{p,N} dT"
+                         r" + (\frac{∂V}{∂N})_{T,p} dN")
+            doc.add_paragraph("对于一定量的气体，N 为常数，dN = 0，所以有")
+            doc.add_math(r"dV = (\frac{∂V}{∂p})_{T,N} dp + (\frac{∂V}{∂T})_{p,N} dT")
+            doc.add_paragraph("")
+            doc.add_run("根据波义耳—马略特定律，")
+            doc.add_inline_math(r"V = C/p")
+            doc.add_run("（C 为常数），于是有")
+            doc.add_math(r"(\frac{∂V}{∂p})_{T,N} = -\frac{C}{p^{2}} = -\frac{V}{p}")
+            doc.add_paragraph("")
+            doc.add_run("根据盖·吕萨克定律，")
+            doc.add_inline_math(r"V = C'T")
+            doc.add_run("（C′ 为常数），于是有")
+            doc.add_math(r"(\frac{∂V}{∂T})_{p,N} = C' = \frac{V}{T}")
+            doc.add_paragraph("将两偏导数代入上式可得")
+            doc.add_math(r"dV = -\frac{V}{p} dp + \frac{V}{T} dT")
+            doc.add_paragraph("即")
+            doc.add_math(r"\frac{dV}{V} = -\frac{dp}{p} + \frac{dT}{T}")
+            doc.add_paragraph("上式两边同时求积分可得")
+            doc.add_math(r"\ln{V} + \ln{p} = \ln{T} + C_{1}")
+            doc.add_paragraph("故有")
+            doc.add_math(r"\frac{pV}{T} = \text{恒量}")
+            doc.add_paragraph("（气体质量一定）")
+            doc.add_paragraph("又由 R 的定义：")
+            doc.add_math(r"R = \frac{p_{0}V_{m}}{T_{0}} = 8.31\ \mathrm{J/(mol·K)}")
+            doc.add_paragraph("式中 R 称为普适气体常数。对于任一物质的量为 n mol 的理想气体，有")
+            doc.add_math(r"\frac{pV}{T} = \frac{p_{0}nV_{m}}{T_{0}} = nR")
+            doc.add_paragraph("即")
+            doc.add_math(r"pV = nRT")
 
-    doc.add_paragraph("3. 升温曲线与降温曲线不同，如何解释？实验时应如何避免？", bold=True)
-    _o = _quiz.get("3") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_paragraph("3. 升温曲线与降温曲线不同，如何解释？实验时应如何避免？", bold=True)
+        _o = _quiz.get("3") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph("答：升温曲线与降温曲线不同的现象称为滞后现象，气体具有热惯性，"
-                          "在升温过程中，气体需要时间吸收热量并达到新的平衡温度。"
-                          "在降温过程中，气体也需要时间来释放热量并达到新的平衡温度。"
-                          "这种热惯性会导致升温和降温曲线出现差异。")
-        doc.add_paragraph("避免方法：慢慢加热或冷却：不要一下子把温度变得太高或太低，"
-                          "而是慢慢地改变温度，这样可以让气体有更多的时间来适应温度的变化，"
-                          "减少热惯性的影响。使用更好的隔热材料：这样可以减少热量的损失，"
-                          "让气体更容易保持稳定的温度。确保实验装置的均匀性：让气体在实验装置中"
-                          "均匀地加热或冷却，这样可以减少局部的温度差异，减少热惯性的影响。")
+            doc.add_paragraph("答：升温曲线与降温曲线不同的现象称为滞后现象，气体具有热惯性，"
+                              "在升温过程中，气体需要时间吸收热量并达到新的平衡温度。"
+                              "在降温过程中，气体也需要时间来释放热量并达到新的平衡温度。"
+                              "这种热惯性会导致升温和降温曲线出现差异。")
+            doc.add_paragraph("避免方法：慢慢加热或冷却：不要一下子把温度变得太高或太低，"
+                              "而是慢慢地改变温度，这样可以让气体有更多的时间来适应温度的变化，"
+                              "减少热惯性的影响。使用更好的隔热材料：这样可以减少热量的损失，"
+                              "让气体更容易保持稳定的温度。确保实验装置的均匀性：让气体在实验装置中"
+                              "均匀地加热或冷却，这样可以减少局部的温度差异，减少热惯性的影响。")
 
     doc.save()
     doc.close()

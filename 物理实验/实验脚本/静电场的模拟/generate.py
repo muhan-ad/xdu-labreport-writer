@@ -17,7 +17,8 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
-from common.variants import compose
+from common.variants import compose, render_custom_quiz
+from common.custom_plot import render_custom_plot
 from common.plot_utils import plot_fit
 from common.data_io import load_data
 
@@ -207,7 +208,8 @@ def _generate_docx(data: dict, output_path: str):
     )
     doc.add_paragraph("")
     doc.add_run("线性拟合图如下：")
-    doc.add_image(fit_img_path, width_cm=12)
+    if not render_custom_plot(doc, 1, width_cm=12):
+        doc.add_image(fit_img_path, width_cm=12)
 
     doc.add_heading("3. 静电场分布规律验证", level=2)
     doc.add_paragraph("")
@@ -307,48 +309,49 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
     import random
-    _quiz = variants.get("思考题")
-    if isinstance(_quiz, str) and _quiz.strip():
-        doc.add_paragraph_rich(_quiz)
-        _quiz = None
-    elif not isinstance(_quiz, dict):
-        _quiz = None
+    if not render_custom_quiz(doc, r):
+        _quiz = variants.get("思考题")
+        if isinstance(_quiz, str) and _quiz.strip():
+            doc.add_paragraph_rich(_quiz)
+            _quiz = None
+        elif not isinstance(_quiz, dict):
+            _quiz = None
 
-    doc.add_heading("1. 为什么可以用稳恒电流场模拟静电场？", level=2)
-    _o = _quiz.get("1") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_heading("1. 为什么可以用稳恒电流场模拟静电场？", level=2)
+        _o = _quiz.get("1") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph_rich(
-            "答：稳恒电流场与静电场在一定条件下具有相似的空间分布。"
-            r"两者都满足拉普拉斯方程（$\nabla^2 U = 0$），且在相同的边界条件下具有相同的解。"
-            "因此可以用容易测量的稳恒电流场来模拟难以直接测量的静电场。"
-        )
+            doc.add_paragraph_rich(
+                "答：稳恒电流场与静电场在一定条件下具有相似的空间分布。"
+                r"两者都满足拉普拉斯方程（$\nabla^2 U = 0$），且在相同的边界条件下具有相同的解。"
+                "因此可以用容易测量的稳恒电流场来模拟难以直接测量的静电场。"
+            )
 
-    doc.add_heading("2. 实验中为什么要保持电极与导电介质良好接触？", level=2)
-    _o = _quiz.get("2") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_heading("2. 实验中为什么要保持电极与导电介质良好接触？", level=2)
+        _o = _quiz.get("2") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph(
-            "答：如果电极与导电介质接触不良，会产生接触电阻，导致电极附近的电流分布发生畸变，"
-            "等势线不再是理想的同心圆，从而引入系统误差。良好的接触保证电极表面是等势面，"
-            "使电流场分布与静电场的边界条件一致。"
-        )
+            doc.add_paragraph(
+                "答：如果电极与导电介质接触不良，会产生接触电阻，导致电极附近的电流分布发生畸变，"
+                "等势线不再是理想的同心圆，从而引入系统误差。良好的接触保证电极表面是等势面，"
+                "使电流场分布与静电场的边界条件一致。"
+            )
 
-    doc.add_heading("3. 如果将同轴电缆的内外电极电压反接，等势线分布会如何变化？", level=2)
-    _o = _quiz.get("3") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        doc.add_heading("3. 如果将同轴电缆的内外电极电压反接，等势线分布会如何变化？", level=2)
+        _o = _quiz.get("3") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph(
-            "答：电压反接后，电场方向反转，但等势线的几何形状（同心圆）不变，"
-            "只是各等势线对应的电压值符号相反。ln(r) 与 U 的线性关系仍然成立，"
-            "只是拟合斜率的符号变为正（原斜率为负，因为 U 越大 r 越小）。"
-        )
+            doc.add_paragraph(
+                "答：电压反接后，电场方向反转，但等势线的几何形状（同心圆）不变，"
+                "只是各等势线对应的电压值符号相反。ln(r) 与 U 的线性关系仍然成立，"
+                "只是拟合斜率的符号变为正（原斜率为负，因为 U 越大 r 越小）。"
+            )
 
     doc.save()
     doc.close()

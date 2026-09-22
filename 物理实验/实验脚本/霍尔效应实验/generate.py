@@ -9,7 +9,8 @@ sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
 from common.data_io import load_data
-from common.variants import compose
+from common.variants import compose, render_custom_quiz
+from common.custom_plot import render_custom_plot
 
 # 给定量（教材/仪器标称，预填入模板）
 I_WORK_MA = 10.0    # 表1 固定工作电流 I/mA
@@ -191,16 +192,18 @@ def _generate_docx(data: dict, output_path: str):
                  + r"} \approx " + f"{t2_b[0]:.3f}" + r"\,\mathrm{T}")
     doc.add_paragraph("其余各列同法计算，B–Im 与 B–I 关系曲线如下图所示。")
 
-    doc.add_image(fig1_path, width_cm=12)
-    doc.add_paragraph("图1 B–Im 关系曲线")
+    if not render_custom_plot(doc, 1, width_cm=12):
+        doc.add_image(fig1_path, width_cm=12)
+        doc.add_paragraph("图1 B–Im 关系曲线")
     doc.add_paragraph("对 B–Im 数据用最小二乘法作线性回归，得直线斜率")
     doc.add_math(r"k = " + f"{reg.slope:.4f}" + r"\,\mathrm{T/A}")
     doc.add_paragraph("相关系数 ")
     doc.add_inline_math(f"r = {reg.r:.5f}")
     doc.add_run("，B 与励磁电流 Im 呈良好的线性关系。")
 
-    doc.add_image(fig2_path, width_cm=12)
-    doc.add_paragraph("图2 B–I 关系曲线")
+    if not render_custom_plot(doc, 2, width_cm=12):
+        doc.add_image(fig2_path, width_cm=12)
+        doc.add_paragraph("图2 B–I 关系曲线")
     doc.add_paragraph("由图2 可见，改变工作电流 I 时磁感应强度 B 基本保持恒定（平均值 ")
     doc.add_inline_math(f"\\bar{{B}} = {b2_mean:.3f}" + r"\,\mathrm{T}")
     doc.add_run("），验证了磁感应强度与工作电流无关。")
@@ -217,33 +220,34 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
     import random
-    _quiz = variants.get("思考题")
-    if isinstance(_quiz, str) and _quiz.strip():
-        doc.add_paragraph_rich(_quiz)
-        _quiz = None
-    elif not isinstance(_quiz, dict):
-        _quiz = None
-    doc.add_paragraph("1. 若磁感应强度跟霍尔元件不完全正交，则按 B = U_H/(K_H·I) 计算出的"
-                      "磁感应强度比实际值大还是小？要准确测量磁场应如何操作？", bold=True)
-    _o = _quiz.get("1") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+    if not render_custom_quiz(doc, r):
+        _quiz = variants.get("思考题")
+        if isinstance(_quiz, str) and _quiz.strip():
+            doc.add_paragraph_rich(_quiz)
+            _quiz = None
+        elif not isinstance(_quiz, dict):
+            _quiz = None
+        doc.add_paragraph("1. 若磁感应强度跟霍尔元件不完全正交，则按 B = U_H/(K_H·I) 计算出的"
+                          "磁感应强度比实际值大还是小？要准确测量磁场应如何操作？", bold=True)
+        _o = _quiz.get("1") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph("答：偏小。当霍尔片平面与磁场不完全正交时，只有垂直于霍尔片平面的"
-                          "磁场分量对霍尔电压有贡献，测得的霍尔电压偏小，按公式计算出的磁感应"
-                          "强度比实际值小。要准确测量磁场，应缓慢转动霍尔元件的方位，使霍尔"
-                          "电压达到最大，此时霍尔片平面与磁场方向严格正交，测得的才是真实磁场。")
-    doc.add_paragraph("2. 如何用霍尔效应法判断 N 型半导体和 P 型半导体？", bold=True)
-    _o = _quiz.get("2") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+            doc.add_paragraph("答：偏小。当霍尔片平面与磁场不完全正交时，只有垂直于霍尔片平面的"
+                              "磁场分量对霍尔电压有贡献，测得的霍尔电压偏小，按公式计算出的磁感应"
+                              "强度比实际值小。要准确测量磁场，应缓慢转动霍尔元件的方位，使霍尔"
+                              "电压达到最大，此时霍尔片平面与磁场方向严格正交，测得的才是真实磁场。")
+        doc.add_paragraph("2. 如何用霍尔效应法判断 N 型半导体和 P 型半导体？", bold=True)
+        _o = _quiz.get("2") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph("答：在相同的工作电流方向和磁场方向下，N 型半导体（载流子为电子）与"
-                          "P 型半导体（载流子为空穴）产生的霍尔电压极性相反。将待测半导体通入"
-                          "已知方向的工作电流并置于已知方向的磁场中，测出霍尔电压的正负，即可"
-                          "判断载流子的符号：与空穴导电情形一致的为 P 型半导体，反之为 N 型半导体。")
+            doc.add_paragraph("答：在相同的工作电流方向和磁场方向下，N 型半导体（载流子为电子）与"
+                              "P 型半导体（载流子为空穴）产生的霍尔电压极性相反。将待测半导体通入"
+                              "已知方向的工作电流并置于已知方向的磁场中，测出霍尔电压的正负，即可"
+                              "判断载流子的符号：与空穴导电情形一致的为 P 型半导体，反之为 N 型半导体。")
 
     doc.save()
     doc.close()

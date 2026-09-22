@@ -15,7 +15,8 @@ sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
 from common.data_io import load_data
-from common.variants import compose
+from common.variants import compose, render_custom_quiz
+from common.custom_plot import render_custom_plot
 
 # ── 物理常数与仪器参数（按教材） ──
 DELTA_INSTRUMENT = 0.05  # cm, Δ_仪 = 0.5 × 0.1cm（光具座最小分度 0.1cm）
@@ -466,6 +467,11 @@ def _generate_docx(data: dict, output_path: str):
         rf" = \frac{{{u_f_uv:.6f}}}{{{f_uv_bar:.5f}}} \times 100\%"
         rf" \approx {e_uv:.2f}\%"
     )
+    # 自定义画图：本实验无内置图，AI 生成的图按顺序追加在「数据处理」末尾
+    render_custom_plot(doc, 1, width_cm=14)
+    render_custom_plot(doc, 2, width_cm=14)
+    render_custom_plot(doc, 3, width_cm=14)
+
 
     # ── 变体章节：误差分析（置于结果分析/思考题前） ──
     if "误差分析" in variants:
@@ -479,100 +485,102 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
     import random
-    _quiz = variants.get("思考题")
-    if isinstance(_quiz, str) and _quiz.strip():
-        doc.add_paragraph_rich(_quiz)
-        _quiz = None
-    elif not isinstance(_quiz, dict):
-        _quiz = None
+    if not render_custom_quiz(doc, r):
+        _quiz = variants.get("思考题")
+        if isinstance(_quiz, str) and _quiz.strip():
+            doc.add_paragraph_rich(_quiz)
+            _quiz = None
+        elif not isinstance(_quiz, dict):
+            _quiz = None
 
-    # Q1
-    doc.add_heading("1. 用物距像距法测凸透镜焦距时，证明当 u = 2f 时测量的相对不确定度误差最小。", level=2)
-    _o = _quiz.get("1") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+        # Q1
+        doc.add_heading("1. 用物距像距法测凸透镜焦距时，证明当 u = 2f 时测量的相对不确定度误差最小。", level=2)
+        _o = _quiz.get("1") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph("对物距像距法公式求相对不确定度：")
-        doc.add_math(r"\frac{\Delta f}{f} = \frac{\Delta u}{u} + \frac{\Delta v}{v}")
-        doc.add_paragraph("")
-        doc.add_run("由透镜公式 ")
-        doc.add_inline_math(r"\frac{1}{f} = \frac{1}{u} + \frac{1}{v}")
-        doc.add_run(" 得 ")
-        doc.add_inline_math(r"v = \frac{uf}{u - f}")
-        doc.add_run("，代入上式化简：")
-        doc.add_math(r"\frac{\Delta f}{f} = \frac{\Delta u}{u} + \frac{\Delta u}{u - f}")
-        doc.add_paragraph("")
-        doc.add_run("令 ")
-        doc.add_inline_math(r"x = u")
-        doc.add_run("，则误差函数 ")
-        doc.add_inline_math(r"E(x) = \frac{\Delta x}{x} + \frac{\Delta x}{x - f}")
-        doc.add_run("。")
-        doc.add_paragraph("对 x 求导并令导数为 0：")
-        doc.add_math(r"\frac{dE}{dx} = -\frac{\Delta x}{x^2} + \frac{\Delta x}{(x - f)^2} = 0")
-        doc.add_paragraph("解得：")
-        doc.add_math(r"x = 2f")
-        doc.add_paragraph("")
-        doc.add_run("即 ")
-        doc.add_inline_math(r"u = 2f")
-        doc.add_run(" 时，相对不确定度最小。此时 ")
-        doc.add_inline_math(r"u = v = 2f")
-        doc.add_run("，物和像对称分布在透镜两侧。")
+            doc.add_paragraph("对物距像距法公式求相对不确定度：")
+            doc.add_math(r"\frac{\Delta f}{f} = \frac{\Delta u}{u} + \frac{\Delta v}{v}")
+            doc.add_paragraph("")
+            doc.add_run("由透镜公式 ")
+            doc.add_inline_math(r"\frac{1}{f} = \frac{1}{u} + \frac{1}{v}")
+            doc.add_run(" 得 ")
+            doc.add_inline_math(r"v = \frac{uf}{u - f}")
+            doc.add_run("，代入上式化简：")
+            doc.add_math(r"\frac{\Delta f}{f} = \frac{\Delta u}{u} + \frac{\Delta u}{u - f}")
+            doc.add_paragraph("")
+            doc.add_run("令 ")
+            doc.add_inline_math(r"x = u")
+            doc.add_run("，则误差函数 ")
+            doc.add_inline_math(r"E(x) = \frac{\Delta x}{x} + \frac{\Delta x}{x - f}")
+            doc.add_run("。")
+            doc.add_paragraph("对 x 求导并令导数为 0：")
+            doc.add_math(r"\frac{dE}{dx} = -\frac{\Delta x}{x^2} + \frac{\Delta x}{(x - f)^2} = 0")
+            doc.add_paragraph("解得：")
+            doc.add_math(r"x = 2f")
+            doc.add_paragraph("")
+            doc.add_run("即 ")
+            doc.add_inline_math(r"u = 2f")
+            doc.add_run(" 时，相对不确定度最小。此时 ")
+            doc.add_inline_math(r"u = v = 2f")
+            doc.add_run("，物和像对称分布在透镜两侧。")
 
-        # Q2
-    doc.add_heading("2. 用共轭法测凸透镜焦距时，为什么必须使 D > 4f？", level=2)
-    _o = _quiz.get("2") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+            # Q2
+        doc.add_heading("2. 用共轭法测凸透镜焦距时，为什么必须使 D > 4f？", level=2)
+        _o = _quiz.get("2") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
-        doc.add_paragraph("由透镜公式和共轭法几何关系：")
-        doc.add_math(r"uv = fD")
-        doc.add_math(r"u + v = D")
-        doc.add_paragraph("联立解得：")
-        doc.add_math(r"u, v = \frac{D \pm \sqrt{D^2 - 4fD}}{2}")
-        doc.add_paragraph("")
-        doc.add_run("要有两个不同的实解（即透镜可在两个位置成清晰实像），必须满足判别式大于零：")
-        doc.add_math(r"D^2 - 4fD > 0")
-        doc.add_paragraph("即：")
-        doc.add_math(r"D > 4f")
-        doc.add_paragraph("")
-        doc.add_run("若 ")
-        doc.add_inline_math(r"D \leq 4f")
-        doc.add_run("，则透镜在物屏与像屏之间移动时最多只有一个位置能成清晰实像，无法完成共轭法测量。")
+            doc.add_paragraph("由透镜公式和共轭法几何关系：")
+            doc.add_math(r"uv = fD")
+            doc.add_math(r"u + v = D")
+            doc.add_paragraph("联立解得：")
+            doc.add_math(r"u, v = \frac{D \pm \sqrt{D^2 - 4fD}}{2}")
+            doc.add_paragraph("")
+            doc.add_run("要有两个不同的实解（即透镜可在两个位置成清晰实像），必须满足判别式大于零：")
+            doc.add_math(r"D^2 - 4fD > 0")
+            doc.add_paragraph("即：")
+            doc.add_math(r"D > 4f")
+            doc.add_paragraph("")
+            doc.add_run("若 ")
+            doc.add_inline_math(r"D \leq 4f")
+            doc.add_run("，则透镜在物屏与像屏之间移动时最多只有一个位置能成清晰实像，无法完成共轭法测量。")
 
-        # Q3
-    doc.add_heading("3. 三种测量凸透镜焦距的方法中，试分析哪种方法更为精确。", level=2)
-    _o = _quiz.get("3") if _quiz else None
-    if _o:
-        doc.add_paragraph_rich(random.choice(_o))
-    else:
+            # Q3
+        doc.add_heading("3. 三种测量凸透镜焦距的方法中，试分析哪种方法更为精确。", level=2)
+        _o = _quiz.get("3") if _quiz else None
+        if _o:
+            doc.add_paragraph_rich(random.choice(_o))
+        else:
 
 
-        doc.add_paragraph("(1) 物距像距法")
-        doc.add_paragraph("")
-        doc.add_run("原理：")
-        doc.add_inline_math(r"f = \frac{uv}{u + v}")
-        doc.add_run("。")
-        doc.add_paragraph("误差来源：像距 v 的测量误差，且当 u 不等于 2f 时误差较大。需要同时测量物距和像距，透镜光心位置的估计会引入额外误差。")
+            doc.add_paragraph("(1) 物距像距法")
+            doc.add_paragraph("")
+            doc.add_run("原理：")
+            doc.add_inline_math(r"f = \frac{uv}{u + v}")
+            doc.add_run("。")
+            doc.add_paragraph("误差来源：像距 v 的测量误差，且当 u 不等于 2f 时误差较大。需要同时测量物距和像距，透镜光心位置的估计会引入额外误差。")
 
-        doc.add_paragraph("(2) 共轭法")
-        doc.add_paragraph("")
-        doc.add_run("原理：")
-        doc.add_inline_math(r"f = \frac{D^2 - d^2}{4D}")
-        doc.add_run("。")
-        doc.add_paragraph("误差来源：d（两次成像透镜位移）的测量误差。但 D > 4f 时误差较小，且该方法把焦距的测量归结为对可以精确测量的量 D 和 d 的测量，避免了测量 u 和 v 时由于估计透镜光心位置不准带来的误差。")
+            doc.add_paragraph("(2) 共轭法")
+            doc.add_paragraph("")
+            doc.add_run("原理：")
+            doc.add_inline_math(r"f = \frac{D^2 - d^2}{4D}")
+            doc.add_run("。")
+            doc.add_paragraph("误差来源：d（两次成像透镜位移）的测量误差。但 D > 4f 时误差较小，且该方法把焦距的测量归结为对可以精确测量的量 D 和 d 的测量，避免了测量 u 和 v 时由于估计透镜光心位置不准带来的误差。")
 
-        doc.add_paragraph("(3) 自准法")
-        doc.add_paragraph("原理：当倒立实像与物等大倒立时，物屏到透镜的距离即为焦距。")
-        doc.add_paragraph("误差来源：钢尺测量存在读数误差，平面镜是否严格垂直于光轴影响成像质量，清晰成像的判断也有一定主观误差。")
+            doc.add_paragraph("(3) 自准法")
+            doc.add_paragraph("原理：当倒立实像与物等大倒立时，物屏到透镜的距离即为焦距。")
+            doc.add_paragraph("误差来源：钢尺测量存在读数误差，平面镜是否严格垂直于光轴影响成像质量，清晰成像的判断也有一定主观误差。")
 
-        doc.add_paragraph("结论：共轭法最为精确。该方法避免了透镜光心位置的估计误差，将焦距测量转化为物屏像屏间距 D 和透镜位移 d 的测量，这两个量均可在光具座上精确读取。")
+            doc.add_paragraph("结论：共轭法最为精确。该方法避免了透镜光心位置的估计误差，将焦距测量转化为物屏像屏间距 D 和透镜位移 d 的测量，这两个量均可在光具座上精确读取。")
 
-        # ── 变体章节：结论（置于结果分析/思考题后） ──
-        if "结论" in variants:
-            doc.add_heading("结论", level=1)
-            doc.add_paragraph_rich(variants["结论"])
+    # ── 变体章节：结论（置于结果分析/思考题后） ──
+    # 必须留在函数体层级：缩进进上一问的 else 时，最后一问有变体答案就整段不输出
+    if "结论" in variants:
+        doc.add_heading("结论", level=1)
+        doc.add_paragraph_rich(variants["结论"])
 
         # ── 保存 ──
     doc.save()
