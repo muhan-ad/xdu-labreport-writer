@@ -785,9 +785,13 @@ handle('save-chart-config', (_, expPath, config) => {
 });
 
 // ── IPC: 将图表插入已生成的报告 docx ──
-handle('insert-chart-into-report', async (_, docxPath, expPath) => {
+handle('insert-chart-into-report', async (_, docxPath, expPath, reportCopyDir = '') => {
+  const chartT0 = Date.now();
+  let chartOutcome = '';
   try {
     const p = ensureUserCopy(expPath);
+    // 报告路径校验：只允许实验目录内的 docx（与报告管理/预览同一套规则）
+    const report = reportPath(docxPath);
     // 读图表配置
     const cfg = atomic.readJson(security.inside(path.join(p, '.chart-config.json'), p), null);
     if (!cfg || !cfg.xField || !cfg.yField) return { ok: false, error: '未找到图表配置，请先在「图表」页配置并生成预览' };
@@ -795,77 +799,56 @@ handle('insert-chart-into-report', async (_, docxPath, expPath) => {
     const section = (cfg.insertSection || '实验结果分析').replace('实验结果与分析', '实验结果分析');
     const imageWidth = cfg.imageWidth || 14;
     const chartType = cfg.chartType || 'scatter';
-    const scriptsDir = path.join(__dirname, 'scripts');
-    const chartPy = path.join(scriptsDir, 'chart_preview.py');
-    const insertPy = path.join(scriptsDir, 'insert_chart_to_docx.py');
 
-    // 生成临时图表图片
-    const chartOut = path.join(p, '.chart_insert_temp.png');
-    const pythonExe = resolvePythonExe() || 'python';
-
-    const chartResult = await new Promise((resolve) => {
-      const args = [
-        chartPy,
+    // 临时图表图片放在 userData 的图表目录（不往用户的实验目录里塞中间产物）
+    const chartOut = path.join(getChartTempDir(), `insert_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.png`);
+    try {
+      const chartArgs = [
         '--exp-path', p,
         '--x-field', cfg.xField,
         '--y-field', cfg.yField,
         '--chart-type', chartType,
+        '--output', chartOut,
+        '--scripts-root', EXPERIMENTS_DIR,
       ];
-      if (cfg.title) args.push('--title', cfg.title);
-      if (cfg.xlabel) args.push('--xlabel', cfg.xlabel);
-      if (cfg.ylabel) args.push('--ylabel', cfg.ylabel);
-      args.push('--output', chartOut);
+      if (cfg.title) chartArgs.push('--title', cfg.title);
+      if (cfg.xlabel) chartArgs.push('--xlabel', cfg.xlabel);
+      if (cfg.ylabel) chartArgs.push('--ylabel', cfg.ylabel);
 
-      const proc = spawn(pythonExe, args, {
-        cwd: __dirname,
-        shell: false,
-        windowsHide: true,
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
-      });
-      let out = '', err = '';
-      proc.stdout.on('data', d => out += d.toString());
-      proc.stderr.on('data', d => err += d.toString());
-      proc.on('close', code => {
-        try { resolve({ ok: code === 0, data: JSON.parse(out) }); }
-        catch (e) { resolve({ ok: false, error: err || out }); }
-      });
-      proc.on('error', e => resolve({ ok: false, error: e.message }));
-    });
-    if (!chartResult.ok) return { ok: false, error: '图表生成失败: ' + (chartResult.error || '') };
-    if (!fs.existsSync(chartOut)) return { ok: false, error: '图表图片未生成' };
+      const chartRun = await runChartHelper('chart-preview.py', chartArgs);
+      if (!chartRun.ok) return { ok: false, error: '图表生成失败: ' + chartRun.error };
+      if (!fs.existsSync(chartOut)) return { ok: false, error: '图表图片未生成' };
 
-    // 插入到 docx
-    const insertResult = await new Promise((resolve) => {
-      const proc = spawn(pythonExe, [
-        insertPy,
-        '--docx-path', docxPath,
+      const insertRun = await runChartHelper('insert-chart-into-docx.py', [
+        '--docx-path', report,
         '--image-path', chartOut,
         '--section', section,
         '--width-cm', String(imageWidth),
-      ], {
-        cwd: __dirname,
-        shell: false,
-        windowsHide: true,
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
-      });
-      let out = '', err = '';
-      proc.stdout.on('data', d => out += d.toString());
-      proc.stderr.on('data', d => err += d.toString());
-      proc.on('close', code => {
+      ]);
+      if (!insertRun.ok) return { ok: false, error: '图表插入失败: ' + insertRun.error };
+
+      // 报告已被改写：把带图表的版本同步到「自定义报告目录」，否则两份报告内容不一致
+      let copiedTo = '';
+      if (reportCopyDir) {
         try {
-          const parsed = JSON.parse(out);
-          parsed.ok ? resolve({ ok: true, section }) : resolve({ ok: false, error: parsed.error || err });
-        } catch (e) { resolve({ ok: false, error: err || out }); }
-      });
-      proc.on('error', e => resolve({ ok: false, error: e.message }));
-    });
-
-    // 清理临时图片
-    try { fs.unlinkSync(chartOut); } catch (e) { /* 忽略 */ }
-
-    return insertResult;
+          const destDir = path.join(customReportDir(reportCopyDir, { create: true }), path.basename(p));
+          const dest = path.join(destDir, path.basename(report));
+          fs.copyFileSync(report, dest);
+          copiedTo = dest;
+        } catch (e) {
+          log(`chart | 自定义目录同步失败（不影响插图）| ${e.message}`);
+        }
+      }
+      chartOutcome = 'ok';
+      return { ok: true, section, copiedTo: copiedTo || undefined };
+    } finally {
+      try { if (fs.existsSync(chartOut)) fs.unlinkSync(chartOut); } catch (e) { /* 忽略 */ }
+    }
   } catch (err) {
+    chartOutcome = 'fail';
     return { ok: false, error: err.message };
+  } finally {
+    log(`chart | 插入报告 | ${chartOutcome || 'fail'} | ${Date.now() - chartT0}ms`);
   }
 });
 
@@ -2460,6 +2443,55 @@ async function cancelGeneration() {
 }
 handle('cancel-generate', cancelGeneration);
 
+// ── 图表辅助脚本：源码在 src/main/（随 asar 打包），用 stdin 注入给 python 执行 ──
+// 打包后 __dirname 指向 app.asar —— 脚本既不是真实文件路径、也不能作为 python 入口，
+// 所以统一「读源码 → python -B -X utf8 - 参数…」的方式（与 src/main/plot-runner.py 同款），
+// cwd 用 userData 下的真实目录，脚本自己往这里写临时产物。
+const CHART_HELPER_TIMEOUT_MS = 60000;
+function runChartHelper(sourceName, args, timeoutMs = CHART_HELPER_TIMEOUT_MS) {
+  return new Promise((resolve) => {
+    let source;
+    try {
+      source = fs.readFileSync(path.join(__dirname, 'src', 'main', sourceName), 'utf-8');
+    } catch (e) {
+      return resolve({ ok: false, error: `缺少图表脚本 ${sourceName}` });
+    }
+    const proc = spawn(resolvePythonExe() || 'python', ['-B', '-X', 'utf8', '-', ...args], {
+      cwd: getChartTempDir(), shell: false, windowsHide: true,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+    });
+    let stdout = '', stderr = '', settled = false, timer = null;
+    const finish = (payload) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(payload);
+    };
+    timer = setTimeout(() => {
+      try { process.kill(proc.pid, 'SIGKILL'); } catch (e) { /* 已退出 */ }
+      finish({ ok: false, error: '图表脚本执行超时（60 秒）' });
+    }, timeoutMs);
+    proc.stdout.on('data', (d) => { stdout += d.toString(); });
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.stdin.on('error', () => { /* 进程早退时忽略 EPIPE */ });
+    proc.stdin.end(source, 'utf-8');
+    proc.on('error', (e) => finish({ ok: false, error: e.message }));
+    proc.on('close', (code) => {
+      // 两个脚本成功时把 JSON 打到 stdout；失败时把 JSON 打到 stderr 并以非 0 退出
+      let parsed = null;
+      for (const text of [stdout, stderr]) {
+        const line = String(text).trim().split('\n').filter(Boolean).pop() || '';
+        try { parsed = JSON.parse(line); break; } catch (e) { /* 换下一个流 */ }
+      }
+      if (parsed && parsed.ok) return finish({ ok: true, data: parsed });
+      const reason = (parsed && parsed.error)
+        || String(stderr).trim().split('\n').filter(Boolean).pop()
+        || `退出码 ${code}`;
+      finish({ ok: false, error: reason });
+    });
+  });
+}
+
 // ── IPC: 生成图表预览 ──
 // 在生成完整报告前调用 Python 脚本生成实验数据图表，返回 base64 PNG
 function getChartTempDir() {
@@ -2473,45 +2505,27 @@ handle('run-chart-preview', async (_, opts) => {
   const { expPath, xField, yField, chartType, title, xlabel, ylabel } = opts || {};
   if (!expPath || !xField || !yField) return { ok: false, error: '缺少必要参数' };
   try {
-    const pythonExe = resolvePythonExe() || 'python';
-    const scriptPath = security.inside(path.join(__dirname, 'scripts/chart_preview.py'), __dirname);
-    const outDir = getChartTempDir();
-    const outName = `chart_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.png`;
-    const outPath = path.join(outDir, outName);
+    // 与报告同源：读 userData 副本里的 data.json，避免预览用的是安装目录的出厂数据
+    const p = ensureUserCopy(expPath);
+    const outPath = path.join(getChartTempDir(), `chart_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.png`);
+    const args = [
+      '--exp-path', p,
+      '--x-field', xField,
+      '--y-field', yField,
+      '--chart-type', chartType || 'scatter',
+      '--output', outPath,
+      '--scripts-root', EXPERIMENTS_DIR,
+    ];
+    if (title) args.push('--title', title);
+    if (xlabel) args.push('--xlabel', xlabel);
+    if (ylabel) args.push('--ylabel', ylabel);
 
-    const result = await new Promise((resolve, reject) => {
-      const args = [
-        scriptPath,
-        '--exp-path', expPath,
-        '--x-field', xField,
-        '--y-field', yField,
-        '--chart-type', chartType || 'scatter',
-        '--output', outPath,
-      ];
-      if (title) { args.push('--title', title); }
-      if (xlabel) { args.push('--xlabel', xlabel); }
-      if (ylabel) { args.push('--ylabel', ylabel); }
+    const run = await runChartHelper('chart-preview.py', args);
+    if (!run.ok) return { ok: false, error: run.error };
+    if (!fs.existsSync(outPath)) return { ok: false, error: '图表文件未生成' };
 
-      const proc = spawn(pythonExe, ['-X', 'utf8', ...args], { windowsHide: true, timeout: 30000 });
-      let stdout = '', stderr = '';
-      proc.stdout.setEncoding('utf8');
-      proc.stderr.setEncoding('utf8');
-      proc.stdout.on('data', (d) => { stdout += d; });
-      proc.stderr.on('data', (d) => { stderr += d; });
-      proc.on('close', (code) => {
-        if (code !== 0) return reject(new Error(stderr || `退出码 ${code}`));
-        try { resolve(JSON.parse(stdout)); } catch (e) { reject(new Error(`Python 输出解析失败: ${stdout.slice(0, 200)}`)); }
-      });
-      proc.on('error', reject);
-    });
-
-    if (!result.ok) throw new Error(result.error || '图表生成失败');
-    if (!fs.existsSync(result.path)) throw new Error('图表文件未生成');
-
-    const pngData = fs.readFileSync(result.path).toString('base64');
-    const dataUrl = `data:image/png;base64,${pngData}`;
-
-    return { ok: true, dataUrl, path: result.path, title: result.title || '' };
+    const pngData = fs.readFileSync(outPath).toString('base64');
+    return { ok: true, dataUrl: `data:image/png;base64,${pngData}`, path: outPath, title: run.data.title || '' };
   } catch (error) {
     return { ok: false, error: error.message };
   }

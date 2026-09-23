@@ -608,6 +608,7 @@ async function pumpQueue() {
       q.elapsed = (Date.now() - q.startedAt) / 1000;
       q.status = r.ok ? 'done' : (r.cancelled ? 'cancelled' : 'failed');
       if (!r.ok) q.error = r.error || ('exit ' + r.exitCode);
+      else await maybeInsertChart(q.exp, r);   // 批量也按「插入图表」开关插图
     } catch (err) {
       q.elapsed = (Date.now() - q.startedAt) / 1000;
       q.status = 'failed'; q.error = err.message;
@@ -2494,6 +2495,28 @@ async function populateChartFields() {
     }
   } catch (e) { /* 配置读取失败忽略 */ }
 }
+// 生成后按需把图表插入报告（单份生成与批量队列共用）。
+// 报告被插图后内容变了，主进程会顺带把带图表的版本同步到「自定义报告目录」，
+// 否则两份报告会不一致（副本是生成时复制的，还没有图表）。
+async function maybeInsertChart(exp, result) {
+  const chk = $('chkInsertChart');
+  if (!chk || !chk.checked || !result || !result.reportFile) return;
+  const logLine = (s) => { const el = $('logContent'); if (el) el.textContent += s + '\n'; };
+  try {
+    const ins = await window.labAPI.insertChartIntoReport(result.reportFile, exp.path, loadSettings().customReportDir || '');
+    if (ins && ins.ok) {
+      logLine(`📊 图表已插入「${ins.section}」`);
+      if (ins.copiedTo) logLine(`📁 已同步到自定义目录：${ins.copiedTo}`);
+      logEvent(`图表插入 | ${exp.id} | ${ins.section}${ins.copiedTo ? ' | 已同步自定义目录' : ''}`);
+    } else {
+      logLine(`⚠️ 图表插入失败：${(ins && ins.error) || '未知错误'}`);
+      logEvent(`图表插入失败 | ${exp.id} | ${String((ins && ins.error) || '').slice(0, 120)}`);
+    }
+  } catch (e) {
+    logLine(`⚠️ 图表插入异常：${e.message}`);
+  }
+}
+
 async function generateChartPreview() {
   const exp = currentExp;
   if (!exp) return;
@@ -2861,7 +2884,7 @@ function bindEvents() {
   refreshAiScopeOptions(false);
   // 图表
   $('btnChartGenerate').onclick = generateChartPreview;
-  $('btnChartRefresh').onclick = () => { populateChartFields(); generateChartPreview(); };
+  $('btnChartRefresh').onclick = async () => { await populateChartFields(); generateChartPreview(); };
 }
 
 function openModal(id) { $(id).classList.add('show'); }
@@ -4111,20 +4134,8 @@ async function runGenerateReport(btn, genExpId) {
     if (result.reportFile) $('logContent').textContent += `📄 ${result.reportFile}\n`;
     if (result.copiedTo) $('logContent').textContent += `📁 已复制到自定义目录：${result.copiedTo}\n`;
 
-    // 插入图表到报告
-    const chkInsert = $('chkInsertChart');
-    if (chkInsert && chkInsert.checked && result.reportFile) {
-      try {
-        const insResult = await window.labAPI.insertChartIntoReport(result.reportFile, genExp.path);
-        if (insResult.ok) {
-          $('logContent').textContent += `📊 图表已插入「${insResult.section}」\n`;
-        } else {
-          $('logContent').textContent += `⚠️ 图表插入失败: ${insResult.error}\n`;
-        }
-      } catch (e) {
-        $('logContent').textContent += `⚠️ 图表插入异常: ${e.message}\n`;
-      }
-    }
+    // 插入图表到报告（按实验保存的图表配置；报告被插图后会同步到自定义目录）
+    await maybeInsertChart(genExp, result);
     showToast('success', '报告生成成功', getDisplayName(genExp));
     // 刷新实验列表
     experiments = await fetchExperiments();

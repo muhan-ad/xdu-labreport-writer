@@ -1,27 +1,23 @@
 # -*- coding: utf-8 -*-
 """将图表图片插入已生成的 docx 报告末尾指定章节。
 
-用法：
-    python scripts/insert_chart_to_docx.py ^
-        --docx-path "xxx.docx" ^
-        --image-path "chart.png" ^
-        --section "实验结果与分析"
+运行方式（由主进程以 stdin 注入源码执行，脚本本身不落在磁盘上）：
+    python -B -X utf8 - --docx-path "xxx.docx" --image-path "chart.png" \
+        --section "实验结果分析" --width-cm 14
 
 输出（stdout）：
-    {"ok": true, "section": "实验结果与分析", "paragraphs_after": 0}
+    {"ok": true, "section": "实验结果分析", "paragraphs_after": 0}
+失败时 JSON 打到 stderr 并以非 0 退出。
+
+注意：不依赖 __file__（stdin 注入下它没有意义），只用到 python-docx。
 """
 import argparse
 import json
 import os
 import sys
-import tempfile
-
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, os.path.join(PROJECT_ROOT, '物理实验/实验脚本'))
 
 from docx import Document
-from docx.shared import Cm, Inches
+from docx.shared import Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 
@@ -73,7 +69,7 @@ def insert_chart(docx_path, image_path, section, width_cm=14.0):
         width_cm: 图片宽度（厘米）
 
     Returns:
-        (paragraphs_after, ok)
+        paragraphs_after
     """
     # 章节名别名映射
     _ALIASES = {
@@ -115,34 +111,44 @@ def insert_chart(docx_path, image_path, section, width_cm=14.0):
             break
 
     # 在末尾位置插入图片段落
-    # python-docx 只能通过 add_paragraph 在文档末尾追加
-    # 要在指定位置插入，用 Oxml 操作
-    target_paragraph = paragraphs[end_idx - 1] if end_idx > target_idx + 1 else paragraphs[target_idx]
-
-    # 在目标段落后插入新段落
+    # python-docx 只能通过 add_paragraph 在文档末尾追加，要在指定位置插入用 Oxml 操作
     new_p = doc.add_paragraph()
     new_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = new_p.add_run()
     run.add_picture(image_path, width=Cm(width_cm))
 
-    # 把新段落移动到目标位置
-    # doc.add_paragraph 加在末尾，需要移到最后一段之前
+    # 把新段落从末尾挪到目标位置
     body = doc.element.body
-    # 新段落现在在 body 末尾，把它挪到正确位置
     new_p_element = new_p._element
     body.remove(new_p_element)
 
-    # 插入到 end_idx 之后（end_idx 是下一节标题的索引）
+    # 插入到 end_idx 之前（end_idx 是下一节标题的索引）
     insert_before = paragraphs[end_idx]._element if end_idx < len(paragraphs) else None
     if insert_before is not None:
         body.insert(body.index(insert_before), new_p_element)
     else:
         body.append(new_p_element)
 
-    # 保存
+    # 保存：写临时文件再原子替换。报告可能正被 Word 打开 —— 那时 os.replace 会
+    # PermissionError，清理临时文件后抛出可读的中文提示（与报告生成器的口径一致）。
     tmp = docx_path + '.~chart.tmp'
-    doc.save(tmp)
-    os.replace(tmp, docx_path)
+    try:
+        doc.save(tmp)
+        os.replace(tmp, docx_path)
+    except PermissionError:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        raise RuntimeError('报告文件正被占用（可能已在 Word 中打开），请关闭后重试')
+    except Exception:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
     paragraphs_after = end_idx - target_idx - 1
     return paragraphs_after

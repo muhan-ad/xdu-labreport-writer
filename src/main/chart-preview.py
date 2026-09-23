@@ -3,18 +3,22 @@
 
 在生成完整报告前，供 UI 预览图表效果、调整参数。
 
-用法：
-    python scripts/chart_preview.py ^
-        --exp-path "物理实验/实验脚本/低电阻的测量" ^
-        --x-field L --y-field R_n_zheng ^
-        --chart-type scatter --title "R-L 关系" ^
-        --xlabel "长度 L/mm" --ylabel "电阻 R/Ω" ^
-        --output temp/chart_preview.png
+运行方式（由主进程以 stdin 注入源码执行，脚本本身不落在磁盘上）：
+    python -B -X utf8 - --exp-path "<实验目录>" --x-field L --y-field R_n \
+        --chart-type scatter --scripts-root "<实验脚本根>" \
+        --output "<userData>/.chart-previews/chart_xxx.png"
+
+参数：
+    --exp-path     实验目录（含 data.json）
+    --scripts-root 实验脚本根目录（含 common/）；缺省时取 --exp-path 的上一级
 
 输出（stdout）：
-    {"ok": true, "path": "temp/chart_preview.png", "title": "R-L 关系"}
+    {"ok": true, "path": "<png>", "title": "<标题>"}
+返回码 0 成功，非 0 失败（失败时 JSON 打到 stderr）。
 
-返回码 0 成功，非 0 失败。
+注意：本脚本会被主进程用 stdin 注入执行（打包后 app.asar 里的文件不是真实路径，
+不能作为 python 入口），因此 **不能依赖 __file__** —— 依赖 common/ 的导入必须
+在按 --scripts-root / --exp-path 设好 sys.path 之后再惰性导入。
 """
 
 import argparse
@@ -23,18 +27,13 @@ import os
 import sys
 import tempfile
 
-# ── 将项目根加入 path，使 `from 物理实验...` 可导入 ──
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
 
-# 导入实验脚本路径
-EXP_SCRIPTS = os.path.join(PROJECT_ROOT, '物理实验/实验脚本')
-if EXP_SCRIPTS not in sys.path:
-    sys.path.insert(0, EXP_SCRIPTS)
-
-from common.plot_utils import plot_xy, plot_fit, plot_bar
-from common.data_io import load_data
+def _setup_paths(exp_path, scripts_root):
+    """把实验脚本根（含 common/）加入 sys.path，返回规范化后的根路径。"""
+    root = scripts_root or os.path.dirname(os.path.abspath(exp_path))
+    if root and root not in sys.path:
+        sys.path.insert(0, root)
+    return root
 
 
 def _detect_arrays(data, exp_path):
@@ -57,7 +56,7 @@ def _detect_arrays(data, exp_path):
 
 
 def generate_chart(exp_path, x_field, y_field, chart_type='scatter',
-                   title='', xlabel='', ylabel='', output_path=None):
+                   title='', xlabel='', ylabel='', output_path=None, scripts_root=''):
     """生成图表预览图。
 
     Args:
@@ -67,10 +66,15 @@ def generate_chart(exp_path, x_field, y_field, chart_type='scatter',
         chart_type: scatter / line / fit / bar
         title, xlabel, ylabel: 图表文本
         output_path: 输出 PNG 路径（None 则自动创建临时文件）
+        scripts_root: 实验脚本根目录（含 common/），用于 sys.path
 
     Returns:
         (output_path, title)
     """
+    _setup_paths(exp_path, scripts_root)
+    from common.plot_utils import plot_xy, plot_fit, plot_bar
+    from common.data_io import load_data
+
     data_path = os.path.join(exp_path, 'data.json')
     if not os.path.exists(data_path):
         raise FileNotFoundError(f'data.json 不存在: {data_path}')
@@ -143,6 +147,7 @@ def main():
     parser.add_argument('--xlabel', default='', help='X 轴标签')
     parser.add_argument('--ylabel', default='', help='Y 轴标签')
     parser.add_argument('--output', default='', help='输出 PNG 路径')
+    parser.add_argument('--scripts-root', default='', help='实验脚本根目录（含 common/）')
     args = parser.parse_args()
 
     try:
@@ -155,6 +160,7 @@ def main():
             xlabel=args.xlabel,
             ylabel=args.ylabel,
             output_path=args.output or None,
+            scripts_root=args.scripts_root,
         )
         result = {'ok': True, 'path': out_path, 'title': title}
         print(json.dumps(result, ensure_ascii=False))
