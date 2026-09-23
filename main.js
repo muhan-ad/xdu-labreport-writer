@@ -271,7 +271,7 @@ app.on('before-quit', event => {
   event.preventDefault();
   quitting = true;
   activeDataReq?.abort();
-  for (const controller of aiAbortControllers.values()) controller.abort();
+  for (const entry of aiAbortControllers.values()) entry.controller.abort();
   for (const controller of activeUploads) controller.abort();
   (async () => {
     await cancelGeneration();
@@ -2381,7 +2381,18 @@ const AI_PROVIDERS = {
 };
 
 // ── IPC: AI 对话（requestId 支持取消：ai-chat-cancel 中止对应请求）──
-const aiAbortControllers = new Map();   // requestId -> AbortController
+// requestId -> { controller, kind }：kind 为 'chat'（润色/思考题/画图）或 'ocr'（识图）。
+// 两类请求的并发额度分开算 —— 识图是用户点一下就走的一次性请求，不该被两路润色挤掉
+// （历史行为是共享 2 个名额，润色跑满时点识图会直接被拒）。
+const aiAbortControllers = new Map();
+const AI_CONCURRENCY = { chat: 2, ocr: 2 };
+// 流式 AI 静默多久提示一次「还在等模型」（不再自动中止；用户可在弹窗里选继续或暂停）
+const AI_STALL_WARN_MS = 90000;
+function aiInFlight(kind) {
+  let n = 0;
+  for (const entry of aiAbortControllers.values()) if (entry.kind === kind) n++;
+  return n;
+}
 function aiEndpoint(params) {
   const preset = AI_PROVIDERS[params.provider] || AI_PROVIDERS.custom;
   const url = network.publicUrl(String(params.apiUrl || preset.baseUrl).replace(/\/+$/, ''));
@@ -2425,13 +2436,16 @@ handle('vision-credential-save', (_, payload) => {
   catch (e) { return { ok: false, error: e.message }; }
 });
 
+// 识图响应体积上限：只防「模型跑飞」把内存吃光，正常识图输出远小于此值（传 0 表示不限制）
+const OCR_MAX_BYTES = 32 * 1024 * 1024;
+
 handle('ocr-recognize', async (_, params) => {
   const requestId = String(params?.requestId || crypto.randomUUID());
   if (!params || typeof params.prompt !== 'string' || Buffer.byteLength(params.prompt) > 128 * 1024)
     return { ok: false, error: '识别字段说明无效或过大' };
-  if (aiAbortControllers.size >= 2 || aiAbortControllers.has(requestId)) return { ok: false, error: 'AI 请求正在处理，请稍后重试' };
+  if (aiInFlight('ocr') >= AI_CONCURRENCY.ocr || aiAbortControllers.has(requestId)) return { ok: false, error: '已有识图请求正在处理，请稍后重试' };
   const controller = new AbortController();
-  aiAbortControllers.set(requestId, controller);
+  aiAbortControllers.set(requestId, { controller, kind: 'ocr' });
   const t0 = Date.now();
   let outcome = '';
   try {
@@ -2450,8 +2464,11 @@ handle('ocr-recognize', async (_, params) => {
         { role: 'user', content: [{ type: 'text', text: params.prompt }, { type: 'image_url', image_url: { url: image.dataUrl } }] },
       ],
     });
+    // 识图不设自动中断：有些实验的大表格识别本身就慢，而识图是非流式请求 —— 模型算完之前
+    // 连接上没有任何数据，空闲超时必然先于总超时触发，用户看到的是「网络连接超时」（线上已出现被拦）。
+    // 中止一律交给用户点「取消」（ocr-cancel），这里只留一个防跑飞的体积上限。
     const payload = await network.json(baseUrl + '/chat/completions', {
-      method: 'POST', signal: controller.signal, timeoutMs: 120000, idleTimeoutMs: 90000, maxBytes: 2 * 1024 * 1024,
+      method: 'POST', signal: controller.signal, timeoutMs: 0, idleTimeoutMs: 0, maxBytes: OCR_MAX_BYTES,
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey }, body,
     });
     const content = ocr.extractContent(payload);
@@ -2502,24 +2519,38 @@ handle('ai-chat', async (event, params) => {
     return { ok: false, error: 'AI 请求内容无效或过大' };
   const { provider, model, messages, temperature = 0.7 } = params;
   const requestId = String(params.requestId || crypto.randomUUID());
-  if (aiAbortControllers.size >= 2 || aiAbortControllers.has(requestId)) return { ok: false, error: 'AI 请求正在处理，请稍后重试' };
+  if (aiInFlight('chat') >= AI_CONCURRENCY.chat || aiAbortControllers.has(requestId)) return { ok: false, error: 'AI 请求正在处理，请稍后重试' };
   const controller = new AbortController();
-  aiAbortControllers.set(requestId, controller);
+  aiAbortControllers.set(requestId, { controller, kind: 'chat' });
   // 排查用计数（放在 try 外，finally 里要写日志）
   const t0 = Date.now();
-  let outcome = '', total = 0, contentChars = 0, reasoningChars = 0, overflowWarned = false;
+  let outcome = '', total = 0, contentChars = 0, reasoningChars = 0, overflowWarned = false, stallWarned = 0;
   const pushChunk = (delta, kind) => {
     try { event.sender.send('ai-chat-chunk', { requestId, delta, kind: kind || 'content' }); } catch (e) { /* 窗口已关闭忽略 */ }
   };
+  // 静默看门狗：长时间收不到任何数据不再自动中止（慢模型/大表格会误伤），
+  // 改为推一条 stall 事件让渲染层弹窗，由用户选「继续等待」或「暂停」（暂停＝取消这次请求）。
+  let stallTimer = null;
+  const armStall = () => {
+    if (stallTimer) clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
+      stallWarned++;
+      try { event.sender.send('ai-chat-chunk', { requestId, delta: '', kind: 'stall', label: params.label || '' }); } catch (e) { /* 忽略 */ }
+      armStall();                       // 用户继续等待后，每 90 秒仍无数据就再提示一次
+    }, AI_STALL_WARN_MS);
+  };
+  const disarmStall = () => { if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; } };
+  armStall();
   try {
     const baseUrl = aiEndpoint(params);
     const apiKey = keyStore.get(baseUrl);
     // 流式请求：增量通过 ai-chat-chunk 推给渲染层（实时显示生成过程），
     // invoke 仍返回完整文本（渲染层 await 后照常使用）
     // 走统一安全网络层（历史缺陷 R15）：仅公网 HTTPS、DNS 解析后固定连接地址、
-    // 非 GET 不允许重定向、响应总量有上限、空闲超时可单独放宽（流式生成首包可能较慢）
+    // 非 GET 不允许重定向、响应总量有上限。空闲超时交给上面的看门狗（不自动中止），
+    // 因此这里显式传 0 关掉 socket 空闲超时。
     const response = await network.response(baseUrl + '/chat/completions', {
-      method: 'POST', signal: controller.signal, idleTimeoutMs: 90000,
+      method: 'POST', signal: controller.signal, idleTimeoutMs: 0,
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey },
       body: JSON.stringify({ model: model || (AI_PROVIDERS[provider] || AI_PROVIDERS.custom).model,
         messages, temperature, stream: true }),
@@ -2545,6 +2576,7 @@ handle('ai-chat', async (event, params) => {
     const OVERFLOW_WARN = 2 * 1024 * 1024;   // 触发告警的字节数
     const OVERFLOW_KEEP = 4 * 1024 * 1024;   // 文本累积上限（超过只丢弃、不再拼接）
     for await (const chunk of response) {
+      armStall();                       // 有数据就重新计时：只有真静默才会触发提示
       total += chunk.length;
       if (!overflowWarned && total > OVERFLOW_WARN) {
         overflowWarned = true;
@@ -2561,17 +2593,18 @@ handle('ai-chat', async (event, params) => {
     outcome = controller.signal.aborted ? '已取消' : '失败: ' + e.message;
     return { ok: false, cancelled: controller.signal.aborted, error: controller.signal.aborted ? '已取消生成' : e.message };
   } finally {
+    disarmStall();
     // 排查用：一次请求一行。之前这条链路完全没有日志，出问题（如响应异常偏大/模型空转）无从查证。
-    log(`ai-chat | ${params?.label || '未标注'} | ${provider}/${model || '默认'} | ${outcome} | 字节=${total} 正文=${contentChars} 思考=${reasoningChars}${overflowWarned ? ' 偏大告警=1' : ''} | ${Date.now() - t0}ms`);
+    log(`ai-chat | ${params?.label || '未标注'} | ${provider}/${model || '默认'} | ${outcome} | 字节=${total} 正文=${contentChars} 思考=${reasoningChars}${overflowWarned ? ' 偏大告警=1' : ''}${stallWarned ? ' 停顿提示=' + stallWarned : ''} | ${Date.now() - t0}ms`);
     aiAbortControllers.delete(requestId);
   }
 });
 
 // 取消一次进行中的 AI 请求
 listen('ai-chat-cancel', (_, requestId) => {
-  const c = aiAbortControllers.get(String(requestId || ''));
-  if (c) {
-    try { c.abort(); } catch (e) { /* 忽略 */ }
+  const entry = aiAbortControllers.get(String(requestId || ''));
+  if (entry) {
+    try { entry.controller.abort(); } catch (e) { /* 忽略 */ }
     aiAbortControllers.delete(String(requestId || ''));
   }
 });
@@ -2579,9 +2612,9 @@ listen('ai-chat-cancel', (_, requestId) => {
 // 取消一次进行中的识图请求：关闭弹窗/换图/换实验时调用，
 // 否则晚到的识别结果会写进已经变化的当前状态（历史缺陷 R13）
 listen('ocr-cancel', (_, requestId) => {
-  const c = aiAbortControllers.get(String(requestId || ''));
-  if (c) {
-    try { c.abort(); } catch (e) { /* 忽略 */ }
+  const entry = aiAbortControllers.get(String(requestId || ''));
+  if (entry) {
+    try { entry.controller.abort(); } catch (e) { /* 忽略 */ }
     aiAbortControllers.delete(String(requestId || ''));
   }
 });

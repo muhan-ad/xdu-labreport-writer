@@ -492,8 +492,8 @@ test('vision contribution upload assembles photo + ai + proofread + manifest wit
   assert.equal(submitted.length, 1, '上传成功后标记已提交');
 });
 
-function mainHarness(t, failUpdateCopy = false, realChild = false) {
-  const root = fixture(t), handlers = new Map(), rawHandlers = new Map(), children = [], kills = [];
+function mainHarness(t, failUpdateCopy = false, realChild = false, fakeNetwork = null, fakeKeyStore = null) {
+  const root = fixture(t), handlers = new Map(), rawHandlers = new Map(), listeners = new Map(), rawListeners = new Map(), children = [], kills = [];
   // main.js installs process-level crash handlers.  Each isolated evaluation needs
   // to remove only the handlers it added so the regression runner stays leak-free.
   const processHandlers = new Map(['uncaughtException', 'unhandledRejection'].map(event => [event, new Set(process.listeners(event))]));
@@ -504,7 +504,8 @@ function mainHarness(t, failUpdateCopy = false, realChild = false) {
   });
   let ready;
   const copied = [];
-  const webContents = { mainFrame: { url: require('node:url').pathToFileURL(path.join(__dirname, '../src/index.html')).href }, on: () => {}, setWindowOpenHandler: () => {}, send: () => {} };
+  const sent = [];                      // 主进程推给渲染层的事件（ai-chat-chunk 等）
+  const webContents = { mainFrame: { url: require('node:url').pathToFileURL(path.join(__dirname, '../src/index.html')).href }, on: () => {}, setWindowOpenHandler: () => {}, send: (channel, payload) => sent.push({ channel, payload }) };
   const testKeys = require('node:crypto').generateKeyPairSync('ed25519');
   const mainFile = path.join(__dirname, '../main.js');
   const nativeRequire = createRequire(mainFile);
@@ -517,7 +518,10 @@ function mainHarness(t, failUpdateCopy = false, realChild = false) {
     protocol: { registerSchemesAsPrivileged: () => {}, handle: () => {} },
     BrowserWindow: function() { this.webContents = webContents; this.on = () => {}; this.loadURL = () => {}; },
     session: { defaultSession: { setPermissionRequestHandler: () => {}, setPermissionCheckHandler: () => {} } },
-    ipcMain: { handle: (name, fn) => { rawHandlers.set(name, fn); handlers.set(name, (event, ...args) => fn({ sender: webContents, senderFrame: webContents.mainFrame }, ...args)); }, on: () => {} },
+    ipcMain: {
+      handle: (name, fn) => { rawHandlers.set(name, fn); handlers.set(name, (event, ...args) => fn({ sender: webContents, senderFrame: webContents.mainFrame }, ...args)); },
+      on: (name, fn) => { rawListeners.set(name, fn); listeners.set(name, (event, ...args) => fn({ sender: webContents, senderFrame: webContents.mainFrame }, ...args)); },
+    },
   };
   const childTools = {
     spawn: realChild ? require('node:child_process').spawn : () => {
@@ -540,7 +544,12 @@ function mainHarness(t, failUpdateCopy = false, realChild = false) {
     if (failUpdateCopy && from.includes('_staging')) throw Error('simulated update copy failure');
     fs.copyFileSync(from, to);
   } };
-  const mockedRequire = name => name === 'electron' ? fakeElectron : name === 'child_process' ? childTools : name === 'fs' ? fileTools : nativeRequire(name);
+  const mockedRequire = name => name === 'electron' ? fakeElectron
+    : name === 'child_process' ? childTools
+      : name === 'fs' ? fileTools
+        : (fakeNetwork && name === './src/main/network') ? fakeNetwork
+          : (fakeKeyStore && name === './src/main/key-store') ? fakeKeyStore
+            : nativeRequire(name);
   const controls = new Function('require', '__dirname', read(mainFile) + '\nreturn { unzipScript: UNZIP_SCRIPT, extractDelta: extractDeltaFromSSELine, extractReasoning: extractReasoningFromSSELine, setPackage: value => { downloadedPackage = value; }, merge: (stage, target, bases) => { const warnings = []; mergeDataTree(stage, target, EXPERIMENTS_DIR, warnings, true, bases); return warnings; } };')(mockedRequire, path.dirname(mainFile));
   ready();
   const authorize = (zip, files, removed, version) => {
@@ -551,7 +560,7 @@ function mainHarness(t, failUpdateCopy = false, realChild = false) {
     manifest.signature = crypto.sign(null, Buffer.from(require('../src/main/update-package').canonical(manifest)), testKeys.privateKey).toString('base64');
     controls.setPackage({ path: zip, manifest });
   };
-  return { root, handlers, rawHandlers, children, kills, authorize, merge: controls.merge, unzipScript: controls.unzipScript, copied, extractDelta: controls.extractDelta, extractReasoning: controls.extractReasoning };
+  return { root, handlers, rawHandlers, listeners, rawListeners, children, kills, authorize, merge: controls.merge, unzipScript: controls.unzipScript, copied, sent, extractDelta: controls.extractDelta, extractReasoning: controls.extractReasoning };
 }
 
 test('main process rejects concurrent generation and cancels by killing the python tree', async t => {
@@ -1147,6 +1156,149 @@ test('custom plot extracts fenced code and blocks out-of-bounds modules only', (
     'fig.savefig(os.path.join(OUT_DIR, "fig1.png"))']) {
     assert.ok(!ui.PLOT_BANNED.test(good), '不该误伤：' + good);
   }
+});
+
+// 假流：连接建立后一直不产出数据；收到 abort 时按真实流的行为抛 AbortError
+function stalledStream(destroyedRef) {
+  return async (url, options = {}) => {
+    const signal = options.signal;
+    return {
+      [Symbol.asyncIterator]: () => ({
+        next: () => new Promise((_, reject) => {
+          if (!signal) return;
+          if (signal.aborted) return reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+        }),
+      }),
+      destroy: () => { if (destroyedRef) destroyedRef.n++; },
+    };
+  };
+}
+
+// AI 请求静默不再自动中止：主进程推 stall 事件让渲染层弹窗（用户选继续/暂停）
+test('ai chat stall pushes a warn event instead of aborting the request', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const destroyed = { n: 0 };
+  const fakeNetwork = {
+    publicUrl: (raw) => new URL(raw),
+    response: stalledStream(destroyed),
+    json: async () => ({}),
+    blocked: () => false, lookup: () => {}, download: async () => {},
+  };
+  const fakeKeyStore = { createKeyStore: () => ({ get: () => 'test-key', status: () => ({ configured: true }), save: () => ({ ok: true }) }) };
+  const h = mainHarness(t, false, false, fakeNetwork, fakeKeyStore);
+  const req = h.handlers.get('ai-chat')({}, {
+    provider: 'custom', apiUrl: 'https://api.example.com/v1', model: 'm',
+    messages: [{ role: 'user', content: 'hi' }], requestId: 'stall-1', label: '结果分析',
+  });
+  let settled = false;
+  req.then(() => { settled = true; });
+
+  t.mock.timers.tick(89000);
+  await Promise.resolve();
+  const early = h.sent.filter((m) => m.payload && m.payload.kind === 'stall');
+  assert.equal(early.length, 0, '不到 90 秒不该提示');
+  assert.equal(settled, false, '请求应仍在等待');
+
+  t.mock.timers.tick(2000);
+  await Promise.resolve();
+  const after = h.sent.filter((m) => m.payload && m.payload.kind === 'stall');
+  assert.equal(after.length, 1, '静默 90 秒要推一条 stall 事件');
+  assert.equal(after[0].channel, 'ai-chat-chunk');
+  assert.equal(after[0].payload.requestId, 'stall-1');
+  assert.equal(after[0].payload.label, '结果分析', '事件要带任务名，弹窗才好写文案');
+  assert.equal(settled, false, '提示不等于中止：请求必须继续等待');
+  assert.equal(destroyed.n, 0, '不得销毁连接');
+
+  t.mock.timers.tick(90000);
+  await Promise.resolve();
+  assert.equal(h.sent.filter((m) => m.payload && m.payload.kind === 'stall').length, 2,
+    '用户选择继续等待后，仍无数据要每 90 秒再提示一次');
+
+  // 用户选「暂停」＝渲染层调 aiChatCancel，请求才真正结束
+  h.listeners.get('ai-chat-cancel')({}, 'stall-1');
+  const res = await req;
+  assert.equal(res.cancelled, true, '暂停后请求应标记为已取消');
+});
+
+// 识图与润色的并发额度分开算：两路润色跑满时，识图仍可发起（历史行为是被直接拒绝）
+test('ocr has its own concurrency quota, separate from chat', async t => {
+  const fakeNetwork = {
+    publicUrl: (raw) => new URL(raw),
+    response: stalledStream(null),                 // 流式请求一直不产出 → 占住额度
+    json: () => new Promise(() => {}),             // 一次性请求也不返回 → 占住识图额度
+    blocked: () => false, lookup: () => {}, download: async () => {},
+  };
+  const fakeKeyStore = { createKeyStore: () => ({ get: () => 'test-key', status: () => ({ configured: true }), save: () => ({ ok: true }) }) };
+  const h = mainHarness(t, false, false, fakeNetwork, fakeKeyStore);
+  const settledFlag = (p) => { const box = { done: false }; p.then(() => { box.done = true; }); return box; };
+  const chatParams = (id) => ({
+    provider: 'custom', apiUrl: 'https://api.example.com/v1', model: 'm',
+    messages: [{ role: 'user', content: 'hi' }], requestId: id, label: '结果分析',
+  });
+  const png1x1 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/AF+7pvvAAAAAElFTkSuQmCC';
+  const ocrParams = (id) => ({
+    prompt: '抄录表格', imageDataUrl: png1x1, provider: 'custom', apiUrl: 'https://api.example.com/v1',
+    model: 'v', visionProvider: 'inherit', requestId: id,
+  });
+
+  const c1 = settledFlag(h.handlers.get('ai-chat')({}, chatParams('c1')));
+  const c2 = settledFlag(h.handlers.get('ai-chat')({}, chatParams('c2')));
+  await Promise.resolve();
+  const third = await h.handlers.get('ai-chat')({}, chatParams('c3'));
+  assert.equal(third.ok, false, '第 3 路润色仍应被拒（chat 额度 2）');
+  assert.match(third.error, /AI 请求正在处理/);
+
+  const o1 = settledFlag(h.handlers.get('ocr-recognize')({}, ocrParams('o1')));
+  await Promise.resolve();
+  assert.equal(o1.done, false, '两路润色跑满时识图必须被受理（历史行为：直接拒绝）');
+  const o2 = settledFlag(h.handlers.get('ocr-recognize')({}, ocrParams('o2')));
+  await Promise.resolve();
+  assert.equal(o2.done, false, '识图第 2 路仍在额度内');
+  const o3 = await h.handlers.get('ocr-recognize')({}, ocrParams('o3'));
+  assert.equal(o3.ok, false, '识图额度 2 用满后第 3 路应被拒');
+  assert.match(o3.error, /识图请求正在处理/);
+
+  // 反方向也要成立：识图占着额度时，润色仍能开新请求（额度互不挤占）
+  h.listeners.get('ai-chat-cancel')({}, 'c1');
+  h.listeners.get('ai-chat-cancel')({}, 'c2');
+  await Promise.resolve();
+  const c4 = settledFlag(h.handlers.get('ai-chat')({}, chatParams('c4')));
+  await Promise.resolve();
+  assert.equal(c4.done, false, '识图在跑不影响润色额度');
+  h.listeners.get('ai-chat-cancel')({}, 'c4');
+});
+
+// 静默提示弹窗：继续等待不动请求，暂停才取消
+test('stall prompt offers continue-or-pause and only pause cancels', async () => {
+  const ui = uiContext();
+  let cancelled = null, asked = null;
+  ui.window = { labAPI: { aiChatCancel: (id) => { cancelled = id; } } };
+  ui.logEvent = () => {};
+  load(ui, 'let aiStallDialogOpen = false;', 'async function runAiPolish(');
+  vm.runInContext('globalThis.aiPausedRequestIds = aiPausedRequestIds;', ui);   // const 声明不挂全局，显式导出
+  ui.appConfirm = async (msg, opts) => { asked = { msg, opts }; return true; };   // 选「继续等待」
+  await ui.promptAiStall('rid-1', '结果分析');
+  assert.match(asked.msg, /结果分析/, '弹窗要写明是哪一类任务');
+  assert.equal(asked.opts.okText, '继续等待');
+  assert.equal(asked.opts.cancelText, '暂停');
+  assert.equal(cancelled, null, '选继续等待时不得取消请求');
+
+  ui.appConfirm = async () => false;                                             // 选「暂停」
+  await ui.promptAiStall('rid-2', '结论');
+  assert.equal(cancelled, 'rid-2', '选暂停时要取消该请求');
+  assert.equal(ui.aiPausedRequestIds.has('rid-2'), true, '暂停的请求要登记，润色流程据此标记失败而不是丢弃');
+  assert.equal(ui.aiPausedRequestIds.has('rid-1'), false, '选继续等待的请求不登记');
+  // 润色流程里的落点：暂停 → 失败卡片（可重新润色），而不是像整轮取消那样静默丢弃
+  assert.match(renderer, /aiPausedRequestIds\.has\(rid\)/, '润色流程要识别"用户暂停"的请求');
+  assert.match(renderer, /已暂停等待模型响应（可点「重新润色」重试）/, '暂停要给可重试的失败提示');
+  assert.match(renderer, /if \(kind === 'stall'\) \{[\s\S]{0,120}promptAiStall/, 'stall 事件要在"只处理润色请求"判断之前处理');
+
+  // 多路同时卡住只弹一个，避免弹窗叠加
+  let dialogs = 0;
+  ui.appConfirm = async () => { dialogs++; return true; };
+  await Promise.all([ui.promptAiStall('a', 'A'), ui.promptAiStall('b', 'B')]);
+  assert.equal(dialogs, 1, '同时只允许一个静默提示弹窗');
 });
 
 test('report pane keeps one action row with pick-directory, no open/clear buttons', () => {

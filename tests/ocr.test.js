@@ -114,7 +114,19 @@ test('OCR recognition is bound to a session and cancellable', () => {
   assert.match(ocrUi, /recogSession\.requestId !== requestId/, '结果回来要校验会话是否过期');
   assert.match(preload, /ocrCancel:/, 'preload 暴露 ocrCancel');
   assert.match(mainSrc, /listen\('ocr-cancel'/, '主进程有 ocr-cancel 监听');
-  assert.match(mainSrc, /idleTimeoutMs:\s*90000/, '识图请求使用放宽的空闲超时');
+  // 识图不再自动中断：有些实验的大表格识别本身就慢，而识图是非流式请求（模型算完前收不到数据），
+  // 空闲超时必然先于总超时触发，线上已出现「网络连接超时」把用户拦下的情况。
+  // 现在中止只由用户点「取消」触发（ocr-cancel），请求本身不设自动超时。
+  const ocrHandler = mainSrc.slice(mainSrc.indexOf("handle('ocr-recognize'"), mainSrc.indexOf("handle('ai-chat'"));
+  assert.match(ocrHandler, /timeoutMs:\s*0,\s*idleTimeoutMs:\s*0/, '识图请求不设自动超时');
+  assert.ok(!/idleTimeoutMs:\s*[1-9]/.test(ocrHandler), '识图链路上不得再出现正数空闲超时');
+  assert.ok(!/timeoutMs:\s*[1-9]/.test(ocrHandler), '识图链路上不得再出现正数总超时');
+  assert.match(ocrHandler, /maxBytes:\s*OCR_MAX_BYTES/, '体积上限收敛为常量（只防模型跑飞）');
+  assert.match(mainSrc, /const OCR_MAX_BYTES = 32 \* 1024 \* 1024/, '识图体积上限为 32MB 的安全阀');
+  const netSrc = fs.readFileSync(path.join(root, 'src', 'main', 'network.js'), 'utf8');
+  assert.match(netSrc, /timeoutMs === undefined \? 30000/, 'network.json 默认总超时仍是 30 秒（其它调用方不受影响）');
+  assert.match(netSrc, /idleRaw > 0 \? idleRaw : 0/, 'network 支持 0 = 不设空闲超时');
+  assert.match(netSrc, /maxBytes > 0 && size > maxBytes/, 'network 支持 0 = 不限体积');
   const startBody = ocrUi.slice(ocrUi.indexOf('async function startRecognition'), ocrUi.indexOf('function collectReviewValues'));
   assert.ok(!/saveTableImage/.test(startBody), '识别开始阶段不再提前保存原图');
   assert.match(ocrUi, /await window\.labAPI\.saveTableImage\(currentExp\.path, recogState\.originalDataUrl\)/, '确认后才保存原图');

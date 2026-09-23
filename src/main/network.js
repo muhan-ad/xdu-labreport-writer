@@ -28,10 +28,15 @@ async function response(raw, options = {}, redirects = 0) {
   const url = publicUrl(raw);
   if (options.allowedHost && url.hostname !== options.allowedHost) throw Error('下载来源不在允许列表');
   // 空闲超时可单独配置：大模型（识图/对话）可能在首字节前安静思考几十秒，
-  // 用固定的 15 秒会给"总期限还有富余"的请求误报网络超时（历史缺陷 R14）
-  const idleMs = Number(options.idleTimeoutMs) > 0 ? Number(options.idleTimeoutMs) : 15000;
+  // 用固定的 15 秒会给"总期限还有富余"的请求误报网络超时（历史缺陷 R14）。
+  // 显式传 0 表示不设空闲超时（识图这类非流式长请求在模型算完前没有任何数据，
+  // 空闲计时必然先于总超时触发，中止交给用户「取消」）。
+  const idleRaw = options.idleTimeoutMs === undefined ? 15000 : Number(options.idleTimeoutMs);
+  const idleMs = idleRaw > 0 ? idleRaw : 0;
+  const reqOptions = { ...options, lookup, headers: { 'User-Agent': 'labreport-writer', ...options.headers } };
+  if (idleMs > 0) reqOptions.timeout = idleMs;
   const res = await new Promise((resolve, reject) => {
-    const req = https.request(url, { ...options, lookup, timeout: idleMs, headers: { 'User-Agent': 'labreport-writer', ...options.headers } }, resolve);
+    const req = https.request(url, reqOptions, resolve);
     req.on('error', reject);
     req.on('timeout', () => req.destroy(Error('网络连接超时')));
     req.end(options.body);
@@ -47,13 +52,18 @@ async function response(raw, options = {}, redirects = 0) {
   return res;
 }
 async function json(url, options = {}) {
-  const timeout = AbortSignal.timeout(options.timeoutMs || 30000);
-  const signal = options.signal ? AbortSignal.any([timeout, options.signal]) : timeout;
+  // timeoutMs：默认 30 秒；显式传 0 表示不设总超时（长任务由调用方用 signal/用户取消来中止）
+  const ms = options.timeoutMs === undefined ? 30000 : Number(options.timeoutMs);
+  const timeout = ms > 0 ? AbortSignal.timeout(ms) : null;
+  const signal = timeout && options.signal ? AbortSignal.any([timeout, options.signal])
+    : (options.signal || timeout || undefined);
   const res = await response(url, { ...options, signal, idleTimeoutMs: options.idleTimeoutMs });
   const chunks = []; let size = 0;
+  // maxBytes：默认 1MB；显式传 0 表示不限制
+  const maxBytes = options.maxBytes === undefined ? 1024 * 1024 : Number(options.maxBytes);
   for await (const chunk of res) {
     size += chunk.length;
-    if (size > (options.maxBytes || 1024 * 1024)) { res.destroy(); throw Error('响应内容过大'); }
+    if (maxBytes > 0 && size > maxBytes) { res.destroy(); throw Error('响应内容过大'); }
     chunks.push(chunk);
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));

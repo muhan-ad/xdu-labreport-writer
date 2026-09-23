@@ -1836,6 +1836,34 @@ async function importCustomVariantsFiles() {
   await refreshAfterCustomVariantChange();
 }
 
+// ── AI 请求静默提示（主进程不再自动中止）────────────────────────────────
+// 流式请求长时间收不到数据时，主进程推一条 stall 事件；这里弹窗让用户决定：
+// 「继续等待」＝什么都不做（仍无数据会每 90 秒再提示一次）；「暂停」＝取消这次请求。
+let aiStallDialogOpen = false;
+// 用户点了「暂停」的请求：润色流程据此把该章节标成失败（可重试），而不是当作整轮取消丢弃
+const aiPausedRequestIds = new Set();
+async function promptAiStall(requestId, label) {
+  if (aiStallDialogOpen) return;              // 多路同时卡住时只弹一个，避免弹窗叠加
+  aiStallDialogOpen = true;
+  const name = label || 'AI 请求';
+  try {
+    const go = await appConfirm(
+      `「${name}」已经 90 秒没有收到任何数据，模型可能还在思考，也可能已经卡住。\n\n`
+      + '「继续等待」＝再等下去（之后仍无响应会每 90 秒提示一次）；\n'
+      + '「暂停」＝停止这次等待（该部分会标记为失败，可稍后重试）。',
+      { title: '等待模型响应中', okText: '继续等待', cancelText: '暂停' });
+    if (!go) {
+      aiPausedRequestIds.add(requestId);
+      try { window.labAPI.aiChatCancel(requestId); } catch (e) { /* 忽略 */ }
+      const el = $('logContent');
+      if (el) el.textContent += `\n⏸ 已暂停「${name}」的等待\n`;
+      logEvent(`AI 请求暂停 | ${name} | 静默 90 秒无数据`);
+    }
+  } finally {
+    aiStallDialogOpen = false;
+  }
+}
+
 async function runAiPolish(onlyScopeVal) {
   if (isAiPolishing || isSwitchingExperiment) return;
   aiPolishCancelled = false;   // 本轮润色未被取消
@@ -2067,7 +2095,15 @@ async function runAiPolish(onlyScopeVal) {
               error: 'AI 修改了思考题题目，已拒绝该结果（题目必须原样保留，可重试）' };
           }
           return { section, displayScope, scopeVal, original: sectionText, polished: content };
-        } else if (result.cancelled) return null;
+        } else if (result.cancelled) {
+          // 用户在静默提示里点了「暂停」：这一路明确标成失败（带「重新润色」），
+          // 不能像整轮取消那样静默丢弃，否则用户会觉得章节凭空消失。
+          if (aiPausedRequestIds.has(rid)) {
+            aiPausedRequestIds.delete(rid);
+            return { section, displayScope, scopeVal, failKind: 'api', error: '已暂停等待模型响应（可点「重新润色」重试）' };
+          }
+          return null;
+        }
         else return { section, displayScope, scopeVal, failKind: 'api', error: result.error || '润色失败' };
       } catch (err) {
         if (aiPolishCancelled) return null;
@@ -2627,7 +2663,13 @@ function bindEvents() {
   };
   // AI 润色流式增量：kind=reasoning 是推理模型的思考内容（驱动「模型思考中」状态条），
   // content 是正文。两路并发时预览与思考文本只跟随最先发起的一路，思考字数两路合计。
-  window.labAPI.onAiChunk(({ requestId, delta, kind }) => {
+  window.labAPI.onAiChunk(({ requestId, delta, kind, label }) => {
+    // 静默看门狗（主进程不再自动中止）：任何一类 AI 请求长时间没数据都弹窗问一次，
+    // 所以这一支必须在「只处理润色请求」的判断之前。
+    if (kind === 'stall') {
+      promptAiStall(requestId, label);
+      return;
+    }
     if (!aiPolishRequestIds.has(requestId)) return;
     // 响应体异常偏大（主进程只告警、不再中止请求）：必须显式分支，否则会落进下面的正文追加
     if (kind === 'warn') {
