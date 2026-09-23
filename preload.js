@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld('labAPI', {
   openFile: (filePath) => ipcRenderer.invoke('open-file', filePath),
   runGenerate: (expPath, studentInfo, variants, polish, embedDataPhoto) => ipcRenderer.invoke('run-generate', expPath, studentInfo, variants, polish, embedDataPhoto),
   cancelGenerate: () => ipcRenderer.invoke('cancel-generate'),
+  chartPreview: (opts) => ipcRenderer.invoke('run-chart-preview', opts),
+  readChartConfig: (expPath) => ipcRenderer.invoke('read-chart-config', expPath),
+  saveChartConfig: (expPath, config) => ipcRenderer.invoke('save-chart-config', expPath, config),
+  insertChartIntoReport: (docxPath, expPath) => ipcRenderer.invoke('insert-chart-into-report', docxPath, expPath),
   onGenerateLog: (callback) => {
     ipcRenderer.on('generate-log', (_, data) => callback(data));
   },

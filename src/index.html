@@ -198,6 +198,7 @@
           <!-- Tab 导航 -->
           <div class="tab-nav" id="tabNav">
             <button class="tab-item active" data-tab="data">数据录入</button>
+            <button class="tab-item" data-tab="chart">图表</button>
             <button class="tab-item" data-tab="generate">生成报告</button>
             <button class="tab-item" data-tab="preview">报告预览</button>
             <button class="tab-item" data-tab="ai">AI 润色</button>
@@ -267,6 +268,87 @@
               </div>
             </div>
 
+            <!-- 图表 -->
+            <div class="tab-pane" id="tab-chart">
+              <div class="card">
+                <div class="card-header">
+                  <h4>图表预览</h4>
+                  <div class="card-header-actions">
+                    <button class="btn btn-sm btn-outline" id="btnChartRefresh">刷新预览</button>
+                  </div>
+                </div>
+                <div class="card-body">
+                  <div class="chart-controls">
+                    <div class="chart-control-row">
+                      <div class="chart-field-group">
+                        <label>X 轴字段</label>
+                        <select id="chartXField" class="chart-select"></select>
+                      </div>
+                      <div class="chart-field-group">
+                        <label>Y 轴字段</label>
+                        <select id="chartYField" class="chart-select"></select>
+                      </div>
+                      <div class="chart-field-group">
+                        <label>图表类型</label>
+                        <select id="chartType" class="chart-select">
+                          <option value="scatter">散点图</option>
+                          <option value="line">折线图</option>
+                          <option value="fit">线性拟合</option>
+                          <option value="bar">柱状图</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="chart-control-row">
+                      <div class="chart-field-group">
+                        <label>标题</label>
+                        <input type="text" id="chartTitle" class="chart-input" placeholder="自动生成" />
+                      </div>
+                      <div class="chart-field-group">
+                        <label>X 轴标签</label>
+                        <input type="text" id="chartXLabel" class="chart-input" placeholder="自动生成" />
+                      </div>
+                      <div class="chart-field-group">
+                        <label>Y 轴标签</label>
+                        <input type="text" id="chartYLabel" class="chart-input" placeholder="自动生成" />
+                      </div>
+                    </div>
+                    <div class="chart-control-row">
+                      <div class="chart-field-group" style="max-width:200px;">
+                        <label>插入报告位置</label>
+                        <select id="chartInsertSection" class="chart-select">
+                          <option value="实验目的">实验目的</option>
+                          <option value="实验原理">实验原理</option>
+                          <option value="实验方法">实验方法</option>
+                          <option value="实验结果分析" selected>实验结果分析</option>
+                          <option value="误差分析">误差分析</option>
+                          <option value="结论">结论</option>
+                          <option value="思考题">思考题</option>
+                        </select>
+                      </div>
+                      <div class="chart-field-group" style="max-width:200px;">
+                        <label>图片宽度 (cm)</label>
+                        <input type="number" id="chartImageWidth" class="chart-input" value="14" min="4" max="20" step="0.5" />
+                      </div>
+                    </div>
+                    <button class="btn btn-primary" id="btnChartGenerate">生成图表</button>
+                  </div>
+                  <div class="chart-preview-wrap" id="chartPreviewWrap">
+                    <div class="chart-preview-empty" id="chartPreviewEmpty">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;margin-bottom:12px;opacity:.4;"><path d="M3 17l6-6 4 4 8-8"/><polyline points="14 7 21 7 21 14"/></svg>
+                      <p>选择字段后点击"生成图表"预览</p>
+                    </div>
+                    <div class="chart-preview-image" id="chartPreviewImage" style="display:none;">
+                      <img id="chartImg" alt="图表预览" />
+                    </div>
+                    <div class="chart-loading" id="chartLoading" style="display:none;">
+                      <div class="recog-spinner"></div>
+                      <p>正在生成图表…</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!-- 生成报告 -->
             <div class="tab-pane" id="tab-generate">
               <div class="card" id="variantsCard" style="display:none;">
@@ -280,6 +362,12 @@
                 <div class="card-body">
                   <div id="variantsList"></div>
                   <div class="variants-tip">每个章节选择一个变体组合成报告；选择"随机"则由应用随机挑选。可用"AI 调整"生成新的变体描述。</div>
+                </div>
+              </div>
+              <div class="card" id="chartInsertCard">
+                <div class="card-header"><h4>图表插入</h4></div>
+                <div class="card-body">
+                  <label class="checkbox-label"><input type="checkbox" id="chkInsertChart" /> 在报告中插入图表（需先在「图表」页配置并生成图表预览）</label>
                 </div>
               </div>
               <div class="card">
