@@ -14,6 +14,8 @@ let isDataModified = false;
 let isSwitchingExperiment = false;
 let isSavingData = false;
 let isAiPolishing = false;
+// 图表预览
+let chartPreviewUrl = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -491,6 +493,8 @@ async function selectExperiment(exp) {
   await loadVariantsUI(exp);
   // 重置预览状态
   previewLoaded = false;
+  // 重置图表预览
+  chartPreviewUrl = null;
   // 更新 AI 状态（润色对象/技能/导入提示）
   updateAiStatus();
   await refreshAiScopeOptions(false);
@@ -787,6 +791,7 @@ async function loadFormData(exp) {
   $('dataIssueBar').style.display = 'none';
   renderForm();
   refreshFormCheck();
+  populateChartFields();
 }
 
 // 清除表单全部可输入数据（置空，便于从头填写；需点"保存修改"才写入 data.json）
@@ -2435,6 +2440,104 @@ async function loadPreview() {
   wrap.replaceChildren(frame);
 }
 
+// ── 图表预览 ──
+async function populateChartFields() {
+  const xSel = $('chartXField');
+  const ySel = $('chartYField');
+  if (!xSel || !ySel) return;
+  // 切换实验后清空旧图表预览（chartPreviewUrl 已被 selectExperiment 置 null）
+  if (!chartPreviewUrl) {
+    $('chartPreviewImage').style.display = 'none';
+    $('chartLoading').style.display = 'none';
+    $('chartPreviewEmpty').style.display = 'flex';
+  }
+  xSel.innerHTML = '<option value="">— 选择字段 —</option>';
+  ySel.innerHTML = '<option value="">— 选择字段 —</option>';
+  if (!currentSchema) return;
+  // 收集所有 array 字段，按 schema 分组
+  const groupArrays = [];
+  for (const group of (currentSchema.groups || [])) {
+    const arrs = group.fields.filter(f => f.type === 'array');
+    for (const fld of arrs) {
+      const label = fld.label || fld.key;
+      const optX = document.createElement('option');
+      optX.value = fld.key; optX.textContent = label;
+      xSel.appendChild(optX);
+      const optY = document.createElement('option');
+      optY.value = fld.key; optY.textContent = label;
+      ySel.appendChild(optY);
+    }
+    if (arrs.length >= 2) groupArrays.push(arrs);
+  }
+  // 默认选中：优先取同一 group 内前两字段
+  if (groupArrays.length > 0) {
+    const pair = groupArrays[0];
+    xSel.value = pair[0].key;
+    ySel.value = pair[1].key;
+  } else if (xSel.options.length > 1) {
+    xSel.selectedIndex = 1;
+    if (ySel.options.length > 2) ySel.selectedIndex = 2;
+  }
+  // 恢复上次保存的图表配置
+  if (!currentExp) return;
+  try {
+    const r = await window.labAPI.readChartConfig(currentExp.path);
+    if (r.ok && r.config) {
+      if (r.config.xField) xSel.value = r.config.xField;
+      if (r.config.yField) ySel.value = r.config.yField;
+      if (r.config.chartType) $('chartType').value = r.config.chartType;
+      if (r.config.title !== undefined) $('chartTitle').value = r.config.title;
+      if (r.config.xlabel !== undefined) $('chartXLabel').value = r.config.xlabel;
+      if (r.config.ylabel !== undefined) $('chartYLabel').value = r.config.ylabel;
+      if (r.config.insertSection) $('chartInsertSection').value = r.config.insertSection;
+      if (r.config.imageWidth) $('chartImageWidth').value = r.config.imageWidth;
+    }
+  } catch (e) { /* 配置读取失败忽略 */ }
+}
+async function generateChartPreview() {
+  const exp = currentExp;
+  if (!exp) return;
+  const xField = $('chartXField').value;
+  const yField = $('chartYField').value;
+  if (!xField || !yField) { showToast('warning', '请选择 X 和 Y 轴字段'); return; }
+  // 检查长度是否匹配
+  const xData = currentData && currentData[xField];
+  const yData = currentData && currentData[yField];
+  if (Array.isArray(xData) && Array.isArray(yData) && xData.length !== yData.length) {
+    showToast('warning', `字段长度不匹配: ${xField}(${xData.length}) vs ${yField}(${yData.length})，请选择同组字段`);
+    return;
+  }
+  const chartType = $('chartType').value;
+  const title = $('chartTitle').value;
+  const xlabel = $('chartXLabel').value;
+  const ylabel = $('chartYLabel').value;
+  $('chartPreviewEmpty').style.display = 'none';
+  $('chartPreviewImage').style.display = 'none';
+  $('chartLoading').style.display = 'flex';
+  try {
+    const result = await window.labAPI.chartPreview({
+      expPath: exp.path,
+      xField,
+      yField,
+      chartType,
+      title,
+      xlabel,
+      ylabel,
+    });
+    if (!result.ok) throw new Error(result.error || '生成失败');
+    $('chartLoading').style.display = 'none';
+    $('chartPreviewImage').style.display = 'flex';
+    $('chartImg').src = result.dataUrl;
+    chartPreviewUrl = result.dataUrl;
+    // 保存图表配置
+    window.labAPI.saveChartConfig(exp.path, { xField, yField, chartType, title, xlabel, ylabel, insertSection: $('chartInsertSection').value, imageWidth: parseFloat($('chartImageWidth').value) || 14 });
+  } catch (err) {
+    $('chartLoading').style.display = 'none';
+    $('chartPreviewEmpty').style.display = 'flex';
+    $('chartPreviewEmpty').querySelector('p').textContent = '生成失败: ' + err.message;
+  }
+}
+
 // ── Tab 切换 ──
 function switchTab(tabId) {
   document.querySelectorAll('.tab-item').forEach(t => {
@@ -2443,6 +2546,7 @@ function switchTab(tabId) {
   document.querySelectorAll('.tab-pane').forEach(p => {
     p.classList.toggle('active', p.id === 'tab-' + tabId);
   });
+  if (tabId === 'chart') populateChartFields();
   if (tabId === 'preview' && !previewLoaded) {
     loadPreview();
   }
@@ -2755,6 +2859,9 @@ function bindEvents() {
   $('chkKbOnly').checked = loadSettings().kbOnly !== false;
   loadSkillList();
   refreshAiScopeOptions(false);
+  // 图表
+  $('btnChartGenerate').onclick = generateChartPreview;
+  $('btnChartRefresh').onclick = () => { populateChartFields(); generateChartPreview(); };
 }
 
 function openModal(id) { $(id).classList.add('show'); }
@@ -4003,6 +4110,21 @@ async function runGenerateReport(btn, genExpId) {
     $('logContent').textContent += '\n✅ 报告生成成功！\n';
     if (result.reportFile) $('logContent').textContent += `📄 ${result.reportFile}\n`;
     if (result.copiedTo) $('logContent').textContent += `📁 已复制到自定义目录：${result.copiedTo}\n`;
+
+    // 插入图表到报告
+    const chkInsert = $('chkInsertChart');
+    if (chkInsert && chkInsert.checked && result.reportFile) {
+      try {
+        const insResult = await window.labAPI.insertChartIntoReport(result.reportFile, genExp.path);
+        if (insResult.ok) {
+          $('logContent').textContent += `📊 图表已插入「${insResult.section}」\n`;
+        } else {
+          $('logContent').textContent += `⚠️ 图表插入失败: ${insResult.error}\n`;
+        }
+      } catch (e) {
+        $('logContent').textContent += `⚠️ 图表插入异常: ${e.message}\n`;
+      }
+    }
     showToast('success', '报告生成成功', getDisplayName(genExp));
     // 刷新实验列表
     experiments = await fetchExperiments();

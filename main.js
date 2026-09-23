@@ -764,6 +764,111 @@ handle('write-data', (_, expPath, data) => {
   }
 });
 
+// ── IPC: 读写图表预览配置（.chart-config.json，用户数据落 userData 副本）──
+handle('read-chart-config', (_, expPath) => {
+  try {
+    const p = ensureUserCopy(expPath);
+    const cfg = atomic.readJson(security.inside(path.join(p, '.chart-config.json'), p), null);
+    return { ok: true, config: cfg };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+handle('save-chart-config', (_, expPath, config) => {
+  try {
+    const p = ensureUserCopy(expPath);
+    atomic.writeFile(security.inside(path.join(p, '.chart-config.json'), p), JSON.stringify(config, null, 2), 'utf-8');
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+// ── IPC: 将图表插入已生成的报告 docx ──
+handle('insert-chart-into-report', async (_, docxPath, expPath) => {
+  try {
+    const p = ensureUserCopy(expPath);
+    // 读图表配置
+    const cfg = atomic.readJson(security.inside(path.join(p, '.chart-config.json'), p), null);
+    if (!cfg || !cfg.xField || !cfg.yField) return { ok: false, error: '未找到图表配置，请先在「图表」页配置并生成预览' };
+
+    const section = (cfg.insertSection || '实验结果分析').replace('实验结果与分析', '实验结果分析');
+    const imageWidth = cfg.imageWidth || 14;
+    const chartType = cfg.chartType || 'scatter';
+    const scriptsDir = path.join(__dirname, 'scripts');
+    const chartPy = path.join(scriptsDir, 'chart_preview.py');
+    const insertPy = path.join(scriptsDir, 'insert_chart_to_docx.py');
+
+    // 生成临时图表图片
+    const chartOut = path.join(p, '.chart_insert_temp.png');
+    const pythonExe = resolvePythonExe() || 'python';
+
+    const chartResult = await new Promise((resolve) => {
+      const args = [
+        chartPy,
+        '--exp-path', p,
+        '--x-field', cfg.xField,
+        '--y-field', cfg.yField,
+        '--chart-type', chartType,
+      ];
+      if (cfg.title) args.push('--title', cfg.title);
+      if (cfg.xlabel) args.push('--xlabel', cfg.xlabel);
+      if (cfg.ylabel) args.push('--ylabel', cfg.ylabel);
+      args.push('--output', chartOut);
+
+      const proc = spawn(pythonExe, args, {
+        cwd: __dirname,
+        shell: false,
+        windowsHide: true,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+      });
+      let out = '', err = '';
+      proc.stdout.on('data', d => out += d.toString());
+      proc.stderr.on('data', d => err += d.toString());
+      proc.on('close', code => {
+        try { resolve({ ok: code === 0, data: JSON.parse(out) }); }
+        catch (e) { resolve({ ok: false, error: err || out }); }
+      });
+      proc.on('error', e => resolve({ ok: false, error: e.message }));
+    });
+    if (!chartResult.ok) return { ok: false, error: '图表生成失败: ' + (chartResult.error || '') };
+    if (!fs.existsSync(chartOut)) return { ok: false, error: '图表图片未生成' };
+
+    // 插入到 docx
+    const insertResult = await new Promise((resolve) => {
+      const proc = spawn(pythonExe, [
+        insertPy,
+        '--docx-path', docxPath,
+        '--image-path', chartOut,
+        '--section', section,
+        '--width-cm', String(imageWidth),
+      ], {
+        cwd: __dirname,
+        shell: false,
+        windowsHide: true,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+      });
+      let out = '', err = '';
+      proc.stdout.on('data', d => out += d.toString());
+      proc.stderr.on('data', d => err += d.toString());
+      proc.on('close', code => {
+        try {
+          const parsed = JSON.parse(out);
+          parsed.ok ? resolve({ ok: true, section }) : resolve({ ok: false, error: parsed.error || err });
+        } catch (e) { resolve({ ok: false, error: err || out }); }
+      });
+      proc.on('error', e => resolve({ ok: false, error: e.message }));
+    });
+
+    // 清理临时图片
+    try { fs.unlinkSync(chartOut); } catch (e) { /* 忽略 */ }
+
+    return insertResult;
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // ── IPC: 读取章节原文缓存（AI 按章节润色的数据源，由 run-generate 落盘）──
 handle('read-sections', (_, expPath) => {
   try {
@@ -2354,6 +2459,63 @@ async function cancelGeneration() {
   return { ok: true };
 }
 handle('cancel-generate', cancelGeneration);
+
+// ── IPC: 生成图表预览 ──
+// 在生成完整报告前调用 Python 脚本生成实验数据图表，返回 base64 PNG
+function getChartTempDir() {
+  const d = path.join(app.getPath('userData'), '.chart-previews');
+  if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
+  // 清理 1 小时前的旧预览图
+  try { for (const f of fs.readdirSync(d)) { const fp = path.join(d, f); if (Date.now() - fs.statSync(fp).mtimeMs > 3600000) fs.unlinkSync(fp); } } catch (e) { /* 清理失败忽略 */ }
+  return d;
+}
+handle('run-chart-preview', async (_, opts) => {
+  const { expPath, xField, yField, chartType, title, xlabel, ylabel } = opts || {};
+  if (!expPath || !xField || !yField) return { ok: false, error: '缺少必要参数' };
+  try {
+    const pythonExe = resolvePythonExe() || 'python';
+    const scriptPath = security.inside(path.join(__dirname, 'scripts/chart_preview.py'), __dirname);
+    const outDir = getChartTempDir();
+    const outName = `chart_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.png`;
+    const outPath = path.join(outDir, outName);
+
+    const result = await new Promise((resolve, reject) => {
+      const args = [
+        scriptPath,
+        '--exp-path', expPath,
+        '--x-field', xField,
+        '--y-field', yField,
+        '--chart-type', chartType || 'scatter',
+        '--output', outPath,
+      ];
+      if (title) { args.push('--title', title); }
+      if (xlabel) { args.push('--xlabel', xlabel); }
+      if (ylabel) { args.push('--ylabel', ylabel); }
+
+      const proc = spawn(pythonExe, ['-X', 'utf8', ...args], { windowsHide: true, timeout: 30000 });
+      let stdout = '', stderr = '';
+      proc.stdout.setEncoding('utf8');
+      proc.stderr.setEncoding('utf8');
+      proc.stdout.on('data', (d) => { stdout += d; });
+      proc.stderr.on('data', (d) => { stderr += d; });
+      proc.on('close', (code) => {
+        if (code !== 0) return reject(new Error(stderr || `退出码 ${code}`));
+        try { resolve(JSON.parse(stdout)); } catch (e) { reject(new Error(`Python 输出解析失败: ${stdout.slice(0, 200)}`)); }
+      });
+      proc.on('error', reject);
+    });
+
+    if (!result.ok) throw new Error(result.error || '图表生成失败');
+    if (!fs.existsSync(result.path)) throw new Error('图表文件未生成');
+
+    const pngData = fs.readFileSync(result.path).toString('base64');
+    const dataUrl = `data:image/png;base64,${pngData}`;
+
+    return { ok: true, dataUrl, path: result.path, title: result.title || '' };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
 
 // ── AI 提供商预设 ──
 const AI_PROVIDERS = {

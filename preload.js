@@ -24,6 +24,11 @@ contextBridge.exposeInMainWorld('labAPI', {
   customPlotInfo: (expPath) => ipcRenderer.invoke('custom-plot-info', expPath),
   runPlot: (expPath, code, runId) => ipcRenderer.invoke('run-plot', expPath, code, runId),
   cancelPlot: (runId) => ipcRenderer.send('cancel-plot', runId),
+  // 图表预览 / 插入报告
+  chartPreview: (opts) => ipcRenderer.invoke('run-chart-preview', opts),
+  readChartConfig: (expPath) => ipcRenderer.invoke('read-chart-config', expPath),
+  saveChartConfig: (expPath, config) => ipcRenderer.invoke('save-chart-config', expPath, config),
+  insertChartIntoReport: (docxPath, expPath) => ipcRenderer.invoke('insert-chart-into-report', docxPath, expPath),
   onGenerateLog: (callback) => {
     ipcRenderer.on('generate-log', (_, data) => callback(data));
   },
