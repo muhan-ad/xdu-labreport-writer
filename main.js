@@ -832,6 +832,7 @@ handle('insert-chart-into-report', async (_, docxPath, expPath, reportCopyDir = 
       if (reportCopyDir) {
         try {
           const destDir = path.join(customReportDir(reportCopyDir, { create: true }), path.basename(p));
+          fs.mkdirSync(destDir, { recursive: true });
           const dest = path.join(destDir, path.basename(report));
           fs.copyFileSync(report, dest);
           copiedTo = dest;

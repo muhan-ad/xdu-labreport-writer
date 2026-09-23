@@ -28,7 +28,7 @@ contextBridge.exposeInMainWorld('labAPI', {
   chartPreview: (opts) => ipcRenderer.invoke('run-chart-preview', opts),
   readChartConfig: (expPath) => ipcRenderer.invoke('read-chart-config', expPath),
   saveChartConfig: (expPath, config) => ipcRenderer.invoke('save-chart-config', expPath, config),
-  insertChartIntoReport: (docxPath, expPath) => ipcRenderer.invoke('insert-chart-into-report', docxPath, expPath),
+  insertChartIntoReport: (docxPath, expPath, reportCopyDir) => ipcRenderer.invoke('insert-chart-into-report', docxPath, expPath, reportCopyDir),
   onGenerateLog: (callback) => {
     ipcRenderer.on('generate-log', (_, data) => callback(data));
   },

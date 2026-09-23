@@ -1301,6 +1301,84 @@ test('stall prompt offers continue-or-pause and only pause cancels', async () =>
   assert.equal(dialogs, 1, '同时只允许一个静默提示弹窗');
 });
 
+// 图表预览 / 插入报告（队友 PR #5 合入）：接线 + 打包安全 + 与自定义目录的同步
+test('chart preview / insert chart are wired and packaged-safe', () => {
+  const mainSrc = read(path.join(__dirname, '../main.js'));
+  const preload = read(path.join(__dirname, '../preload.js'));
+  const html = read(path.join(__dirname, '../src/index.html'));
+  // IPC 与透传
+  for (const ch of ['run-chart-preview', 'read-chart-config', 'save-chart-config', 'insert-chart-into-report']) {
+    assert.match(mainSrc, new RegExp(`handle\\('${ch}'`), '缺少 IPC ' + ch);
+  }
+  for (const api of ['chartPreview', 'readChartConfig', 'saveChartConfig', 'insertChartIntoReport']) {
+    assert.match(preload, new RegExp(`${api}: `), 'preload 缺少 ' + api);
+  }
+  assert.match(preload, /insertChartIntoReport: \(docxPath, expPath, reportCopyDir\)/, '插图要把自定义目录一起传下去');
+  assert.ok(html.includes('id="btnChartGenerate"') && html.includes('id="chkInsertChart"'), '图表页与「插入图表」开关要在');
+  // 打包安全：脚本从 src/main 读、经 stdin 注入、不得再出现 cwd: __dirname
+  assert.match(mainSrc, /runChartHelper\('chart-preview\.py'/, '预览走统一的图表辅助调用');
+  assert.match(mainSrc, /runChartHelper\('insert-chart-into-docx\.py'/, '插图走统一的图表辅助调用');
+  assert.match(mainSrc, /fs\.readFileSync\(path\.join\(__dirname, 'src', 'main', sourceName\)/, '脚本源码从 src/main 读（随 asar 打包）');
+  assert.match(mainSrc, /\['-B', '-X', 'utf8', '-', \.\.\.args\]/, '源码经 stdin 注入执行');
+  assert.ok(!/cwd: __dirname/.test(mainSrc), '不得再用 cwd: __dirname（打包后指向 asar，不是真实目录）');
+  assert.ok(!/path\.join\(__dirname, 'scripts'/.test(mainSrc), '不得再从 scripts/ 找运行时脚本');
+  assert.match(mainSrc, /'--scripts-root', EXPERIMENTS_DIR/, '脚本要拿到实验脚本根（common/ 的 sys.path）');
+  assert.ok(!/chart_insert_temp/.test(mainSrc), '临时图不再写进用户实验目录');
+  // 行为兼容
+  assert.match(mainSrc, /reportPath\(docxPath\)/, '插图前校验报告路径');
+  assert.match(mainSrc, /reportCopyDir = ''/, '插图处理器接收自定义报告目录');
+  assert.match(renderer, /await maybeInsertChart\(genExp, result\)/, '单份生成后插图');
+  assert.match(renderer, /else await maybeInsertChart\(q\.exp, r\)/, '批量生成也插图');
+  assert.match(renderer, /await populateChartFields\(\); generateChartPreview\(\)/, '刷新要先等字段回填');
+  // 两个脚本：不得依赖 __file__（stdin 注入下没有意义），Word 占用要给中文提示
+  const previewPy = read(path.join(__dirname, '../src/main/chart-preview.py'));
+  assert.ok(!/abspath\(__file__\)/.test(previewPy), 'chart-preview.py 不得依赖 __file__');
+  assert.match(previewPy, /--scripts-root/, 'chart-preview.py 要接受实验脚本根');
+  const insertPy = read(path.join(__dirname, '../src/main/insert-chart-into-docx.py'));
+  assert.match(insertPy, /报告文件正被占用/, 'Word 占用要给中文提示');
+  assert.ok(!fs.existsSync(path.join(__dirname, '../scripts/chart_preview.py')), '旧位置脚本应已删除');
+});
+
+test('chart preview and insert run real python and sync the custom report dir', async t => {
+  const h = mainHarness(t, false, true);            // 真 python（走 stdin 注入的辅助脚本）
+  const exp = path.join(__dirname, '../物理实验/实验脚本/长度与体积的测量');
+  // 1) 预览：真实实验数据 → base64 PNG
+  const prev = await h.handlers.get('run-chart-preview')({}, {
+    expPath: exp, xField: 'D', yField: 'd_shi', chartType: 'scatter', title: '端到端测试图',
+  });
+  assert.equal(prev.ok, true, '预览应成功：' + JSON.stringify(prev).slice(0, 300));
+  assert.match(prev.dataUrl, /^data:image\/png;base64,/, '应返回 base64 PNG');
+  assert.ok(fs.existsSync(prev.path), '预览 PNG 应存在');
+
+  // 2) 生成一份真实报告（后续插图用它）
+  const gen = await h.handlers.get('run-generate')({}, exp,
+    { name: '测试同学', id: '2026000001', class: '物理2401', date: '2026-09-23' },
+    {}, {}, false, '', null, null);
+  assert.equal(gen.ok, true, '报告应生成成功：' + JSON.stringify(gen).slice(0, 300));
+
+  // 3) 写入图表配置（与「图表」页保存的同一份），再把图插进报告并同步到自定义目录
+  const expCopy = path.join(h.root, '实验数据', '实验脚本', '长度与体积的测量');
+  const copyDir = path.join(h.root, '自定义报告');
+  put(path.join(expCopy, '.chart-config.json'),
+    JSON.stringify({ xField: 'D', yField: 'd_shi', chartType: 'scatter', insertSection: '实验结果分析', imageWidth: 12 }));
+  const ins = await h.handlers.get('insert-chart-into-report')({}, gen.reportFile, exp, copyDir);
+  assert.equal(ins.ok, true, '插图应成功：' + JSON.stringify(ins).slice(0, 300));
+  assert.equal(ins.section, '实验结果分析', '回报的插入章节');
+  const chartLog = (() => {
+    try {
+      return fs.readFileSync(path.join(h.root, 'logs', 'app.log'), 'utf8').split('\n')
+        .filter(l => l.includes('chart')).slice(-3).join(' | ');
+    } catch (e) { return '(无日志)'; }
+  })();
+  assert.ok(ins.copiedTo && fs.existsSync(ins.copiedTo),
+    '带图表的版本应同步到自定义目录：' + ins.copiedTo + ' | 日志: ' + chartLog);
+  assert.equal(fs.statSync(ins.copiedTo).size, fs.statSync(gen.reportFile).size, '自定义目录副本应与实验目录那份一致');
+
+  // 4) 临时图表图片要清理，不留中间产物
+  const leftovers = fs.readdirSync(path.join(h.root, '.chart-previews')).filter(f => f.startsWith('insert_'));
+  assert.equal(leftovers.length, 0, '临时图表图片应被清理：' + leftovers);
+});
+
 test('report pane keeps one action row with pick-directory, no open/clear buttons', () => {
   const html = read(path.join(__dirname, '../src/index.html'));
   const preload = read(path.join(__dirname, '../preload.js'));
