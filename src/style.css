@@ -1351,6 +1351,14 @@ body {
 .preview-empty p { font-size: 13px; }
 
 /* ── 图表预览 ── */
+/* 图表页：模式按钮（预设 / 自定义）激活态 —— 一眼看出当前用的是哪套 */
+.chart-mode-btn.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: #f0fdf4;
+  font-weight: 600;
+}
+.chart-preview-caption { margin-top: 10px; text-align: center; font-size: 13px; color: var(--text-secondary); }
 .chart-controls {
   display: flex;
   flex-direction: column;

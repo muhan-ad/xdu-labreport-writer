@@ -29,6 +29,13 @@ contextBridge.exposeInMainWorld('labAPI', {
   readChartConfig: (expPath) => ipcRenderer.invoke('read-chart-config', expPath),
   saveChartConfig: (expPath, config) => ipcRenderer.invoke('save-chart-config', expPath, config),
   insertChartIntoReport: (docxPath, expPath, reportCopyDir) => ipcRenderer.invoke('insert-chart-into-report', docxPath, expPath, reportCopyDir),
+  saveCustomChart: (expPath, srcPath) => ipcRenderer.invoke('save-custom-chart', expPath, srcPath),
+  cancelChartHelper: (helperId) => ipcRenderer.send('chart-helper-cancel', helperId),
+  // 长任务等待提示（生成/画图/图表脚本跑得久时，主进程推事件让渲染层弹窗问「继续等待/停止」）
+  onJobWait: (cb) => {
+    ipcRenderer.removeAllListeners('job-wait');
+    ipcRenderer.on('job-wait', (_e, d) => { try { cb(d); } catch (e) { /* 忽略 */ } });
+  },
   onGenerateLog: (callback) => {
     ipcRenderer.on('generate-log', (_, data) => callback(data));
   },

@@ -17,8 +17,9 @@ import os
 import sys
 
 from docx import Document
-from docx.shared import Cm
+from docx.shared import Cm, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 
 
 # 常见章节标题前缀，用于识别章节边界
@@ -59,14 +60,15 @@ def _is_any_section_header(text):
     return False
 
 
-def insert_chart(docx_path, image_path, section, width_cm=14.0):
-    """在 docx 指定章节末尾插入图表图片。
+def insert_chart(docx_path, image_path, section, width_cm=14.0, caption=''):
+    """在 docx 指定章节末尾插入图表图片（可选图注）。
 
     Args:
         docx_path: docx 文件路径
         image_path: 图片文件路径
         section: 章节名（如"实验结果分析"）
         width_cm: 图片宽度（厘米）
+        caption: 可选图注（图片下方居中一行，宋体 10.5pt）
 
     Returns:
         paragraphs_after
@@ -110,24 +112,49 @@ def insert_chart(docx_path, image_path, section, width_cm=14.0):
             end_idx = i
             break
 
-    # 在末尾位置插入图片段落
+    # 在末尾位置插入图片段落（可带图注）
     # python-docx 只能通过 add_paragraph 在文档末尾追加，要在指定位置插入用 Oxml 操作
     new_p = doc.add_paragraph()
     new_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = new_p.add_run()
     run.add_picture(image_path, width=Cm(width_cm))
 
-    # 把新段落从末尾挪到目标位置
+    caption_p = None
+    text = str(caption or '').strip()
+    if text:
+        caption_p = doc.add_paragraph()
+        caption_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        c_run = caption_p.add_run(text)
+        c_run.font.size = Pt(10.5)
+        c_run.font.name = '宋体'
+        # 中文字体要同时写 eastAsia，否则 Word 里会回退成默认字体
+        rPr = c_run._element.get_or_add_rPr()
+        rFonts = rPr.find(qn('w:rFonts'))
+        if rFonts is None:
+            rFonts = rPr.makeelement(qn('w:rFonts'), {})
+            rPr.append(rFonts)
+        for attr in ('w:ascii', 'w:hAnsi', 'w:eastAsia', 'w:cs'):
+            rFonts.set(qn(attr), '宋体')
+
+    # 把新段落从末尾挪到目标位置（图注紧跟图片之后）
     body = doc.element.body
     new_p_element = new_p._element
     body.remove(new_p_element)
+    caption_element = None
+    if caption_p is not None:
+        caption_element = caption_p._element
+        body.remove(caption_element)
 
-    # 插入到 end_idx 之前（end_idx 是下一节标题的索引）
     insert_before = paragraphs[end_idx]._element if end_idx < len(paragraphs) else None
     if insert_before is not None:
-        body.insert(body.index(insert_before), new_p_element)
+        at = body.index(insert_before)
+        body.insert(at, new_p_element)
+        if caption_element is not None:
+            body.insert(at + 1, caption_element)
     else:
         body.append(new_p_element)
+        if caption_element is not None:
+            body.append(caption_element)
 
     # 保存：写临时文件再原子替换。报告可能正被 Word 打开 —— 那时 os.replace 会
     # PermissionError，清理临时文件后抛出可读的中文提示（与报告生成器的口径一致）。
@@ -160,6 +187,7 @@ def main():
     parser.add_argument('--image-path', required=True, help='图表图片路径')
     parser.add_argument('--section', default='实验结果分析', help='目标章节名')
     parser.add_argument('--width-cm', type=float, default=14.0, help='图片宽度（厘米）')
+    parser.add_argument('--caption', default='', help='可选图注（图片下方居中一行）')
     args = parser.parse_args()
 
     try:
@@ -168,8 +196,10 @@ def main():
             image_path=args.image_path,
             section=args.section,
             width_cm=args.width_cm,
+            caption=args.caption,
         )
-        result = {'ok': True, 'section': args.section, 'paragraphs_after': paras_after}
+        result = {'ok': True, 'section': args.section, 'paragraphs_after': paras_after,
+                  'caption': bool(args.caption)}
         print(json.dumps(result, ensure_ascii=False))
     except Exception as e:
         result = {'ok': False, 'error': str(e)}

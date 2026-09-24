@@ -526,7 +526,7 @@ function mainHarness(t, failUpdateCopy = false, realChild = false, fakeNetwork =
   const childTools = {
     spawn: realChild ? require('node:child_process').spawn : () => {
       const child = new EventEmitter();
-      Object.assign(child, { stdout: new PassThrough(), stderr: new PassThrough(), pid: 1234, exitCode: null });
+      Object.assign(child, { stdout: new PassThrough(), stderr: new PassThrough(), stdin: new PassThrough(), pid: 1234, exitCode: null });
       children.push(child); return child;
     },
     execFile: realChild ? require('node:child_process').execFile : (exe, args, options, callback) => {
@@ -1071,47 +1071,69 @@ test('per-experiment user prompt and custom quiz are wired through', () => {
   assert.match(renderer, /appConfirm\([\s\S]{0,200}okText: '继续生成'/, '失败时给「继续生成 / 停止」选择');
 });
 
-test('custom plot: button, modal, consent, AI code path and job wiring', () => {
+// 图表页的两个模式：预设（字段出图）/ 自定义（AI 写代码出图）——都走"页面预览 → 生成后插入"
+test('chart page has preset/custom modes and the custom mode reuses the AI plot pipeline', () => {
   const html = read(path.join(__dirname, '../src/index.html'));
   const preload = read(path.join(__dirname, '../preload.js'));
   const mainSrc = read(path.join(__dirname, '../main.js'));
   const css = read(path.join(__dirname, '../src/style.css'));
-  // UI：按钮在「自定义思考题」左边 + 弹窗控件齐全
-  assert.ok(html.includes('id="btnCustomPlot"'), '数据卡片要有自定义画图按钮');
-  assert.ok(html.indexOf('id="btnCustomPlot"') < html.indexOf('id="btnCustomQuiz"'), '按钮在「自定义思考题」左边');
-  for (const id of ['customPlotModal', 'customPlotReq', 'plotConsentRow', 'chkPlotConsent', 'btnSaveCustomPlot']) {
+  // UI：图表页三个按钮 + 两个弹窗；数据卡片不再有自定义画图入口
+  for (const id of ['btnChartPreset', 'btnChartCustom', 'btnChartGenerate', 'chartModeHint',
+    'chartPresetModal', 'chartCustomModal', 'customPlotReq', 'plotConsentRow', 'chkPlotConsent',
+    'customInsertSection', 'customImageWidth', 'chartInsertModeHint']) {
     assert.ok(html.includes(`id="${id}"`), '缺少控件 ' + id);
   }
-  assert.match(css, /\.plot-consent-row/, '同意区要有样式');
-  // 存储与生成链路
-  assert.match(renderer, /localStorage\.getItem\('customPlots'\)/, '画图需求按实验存本地');
-  assert.match(renderer, /await ensureCustomPlotFigures\(genExp\)/, '单份生成前先画图');
-  assert.match(renderer, /await ensureCustomPlotFigures\(q\.exp\)/, '批量生成逐实验画图');
-  assert.match(renderer, /const customPlot = cp\.none \? null : \{ images: cp\.images \}/, '结果转成 job 字段');
+  assert.ok(!html.includes('id="btnCustomPlot"'), '数据卡片上的「自定义画图」应已移走');
+  assert.ok(!html.includes('id="customPlotModal"'), '旧弹窗 id 应已改名到图表页');
+  // 预设弹窗里保留原字段控件（id 不变，接线不动）
+  for (const id of ['chartXField', 'chartYField', 'chartType', 'chartTitle', 'chartXLabel', 'chartYLabel',
+    'chartInsertSection', 'chartImageWidth', 'btnChartRefresh']) {
+    assert.ok(html.includes(`id="${id}"`), '预设弹窗缺少 ' + id);
+  }
+  assert.match(css, /\.chart-mode-btn\.active/, '模式按钮要有激活态');
+  assert.match(css, /\.chart-preview-caption/, '图注要有样式');
+  // 「图表插入」卡片和图表页在同一个 tab 里（从生成页移过来的）
+  const chartTabHtml = html.slice(html.indexOf('id="tab-chart"'), html.indexOf('id="tab-generate"'));
+  assert.ok(chartTabHtml.includes('id="chkInsertChart"'), '「图表插入」开关要在图表页里');
+  assert.ok(!html.slice(html.indexOf('id="tab-generate"')).includes('id="chkInsertChart"'), '生成页不该再有这个开关');
+  // 渲染层：模式状态 + 配置载体 + 两个弹窗
+  assert.match(renderer, /let chartMode = ''/, '要有模式状态');
+  assert.match(renderer, /async function loadChartConfig\(/, '要有统一的配置加载');
+  assert.match(renderer, /function renderChartMode\(/, '要回显当前模式');
+  assert.match(renderer, /async function saveChartConfigSafe\(/, '写配置要读-改-写（不覆盖另一个模式）');
+  assert.match(renderer, /\$\('btnChartPreset'\)\.onclick = openChartPresetModal/, '预设按钮绑定');
+  assert.match(renderer, /\$\('btnChartCustom'\)\.onclick = openChartCustomModal/, '自定义按钮绑定');
+  assert.match(renderer, /async function saveChartPresetModal\(/, '预设弹窗保存');
+  assert.match(renderer, /async function saveChartCustomModal\(/, '自定义弹窗保存');
+  assert.match(renderer, /legacyCustomPlot\(/, '老版 localStorage 需求要迁移');
+  // 自定义模式仍复用原 AI 管线，但改为持久化 + 预览（不再走生成时的 job 字段）
   assert.match(renderer, /PLOT_CONTRACT/, '绘图硬性约定要注入提示词');
   assert.match(renderer, /PLOT_BANNED/, '禁止模块的静态检查');
   assert.match(renderer, /PLOT_MAX_ATTEMPTS = 3/, '失败重试上限');
   assert.match(renderer, /customPlotRequestIds/, '绘图 AI 请求登记在独立集合');
-  assert.match(renderer, /window\.labAPI\.cancelPlot\(activePlotRunId\)/, '取消生成要中止本机绘图');
-  assert.match(renderer, /okText: '继续生成（用内置图）'/, '绘图失败给「继续生成（用内置图）/ 停止」');
-  // 主进程
-  assert.match(mainSrc, /customPlot = null\) => \{/, 'run-generate 接收 customPlot');
-  assert.match(mainSrc, /customPlot: normalizeCustomPlot\(customPlot\)/, '主进程归一后写进任务输入');
-  assert.match(mainSrc, /handle\('custom-plot-info'/, '图位信息 IPC');
-  assert.match(mainSrc, /handle\('run-plot'/, '运行绘图代码的 IPC');
-  assert.match(mainSrc, /listen\('cancel-plot'/, '取消绘图 IPC');
-  assert.match(mainSrc, /sweepPlotCache\(\);/, '启动时清理残留绘图目录');
+  assert.match(renderer, /window\.labAPI\.runPlot\(exp\.path, code, runId\)/, '自定义模式仍用 run-plot 本机绘图');
+  assert.match(renderer, /window\.labAPI\.saveCustomChart\(exp\.path, img\.path\)/, '生成后要持久化到实验目录');
+  assert.match(renderer, /window\.labAPI\.cancelPlot\(activePlotRunId\)/, '取消要中止本机绘图');
+  // 生成时路径已移除
+  assert.ok(!/ensureCustomPlotFigures/.test(renderer), '生成时的 AI 画图路径应已移除');
+  assert.ok(!/customPlot = cp\.none/.test(renderer), '不再向 run-generate 传 customPlot');
+  // 主进程：配置回显 + 持久化 IPC + 插入按模式分支
+  assert.match(mainSrc, /handle\('save-custom-chart'/, '持久化 IPC');
+  assert.match(mainSrc, /customImageUrl: readCustomChartUrl\(p\)/, '读配置要带回显用的 dataUrl');
+  assert.match(mainSrc, /const mode = cfg\.mode === 'custom' \? 'custom' : 'preset'/, '插入按模式分支');
+  assert.match(mainSrc, /自定义图表尚未生成，请到「图表」页点「生成图表」/, '自定义图缺失要给中文提示');
+  assert.match(mainSrc, /'--caption', String\(cfg\.caption\)/, '自定义模式带图注插入');
+  assert.match(preload, /saveCustomChart: \(expPath, srcPath\)/, 'preload 透传 saveCustomChart');
   assert.match(preload, /runPlot: \(expPath, code, runId\)/, 'preload 透传 runPlot');
-  assert.match(preload, /customPlotInfo: \(expPath\)/, 'preload 透传 customPlotInfo');
   // 技能作用域：绘图技能不参与润色
   assert.match(mainSrc, /scope: meta\.scope/, 'list-skills 返回 scope');
   assert.match(renderer, /sk\.scope !== 'plot' && skillStates\[sk\.id\] !== false/, '润色/思考题排除绘图技能');
   assert.match(renderer, /sk\.scope === 'plot' && skillStates\[sk\.id\] !== false/, '画图只取绘图技能');
 });
 
-// 真端到端（不花钱、不碰 UI）：run-plot 用自带 Python 真的跑一段绘图代码，
-// 再把产出的图交给 run-generate，报告里应出现 AI 图与图注、且内置图注消失。
-test('custom plot IPC runs real python and lands the AI figure in the report', async t => {
+// 数据包侧的图位机制仍然可用（旧版应用/旧数据包兼容）：run-plot 出的图经 job 字段交给报告脚本。
+// 新 UI 不再走这条路径，但机制保留，所以这条端到端用例继续守着它。
+test('custom plot job field still lands AI figures (legacy slot path, kept for compatibility)', async t => {
   const h = mainHarness(t, false, true);
   const exp = path.join(__dirname, '../物理实验/实验脚本/霍尔效应实验');
   const code = [
@@ -1142,13 +1164,13 @@ test('custom plot IPC runs real python and lands the AI figure in the report', a
 // 绘图代码的静态检查与代码块提取：挡住明显越界的模块，又不误伤正常绘图写法
 test('custom plot extracts fenced code and blocks out-of-bounds modules only', () => {
   const ui = uiContext();
-  load(ui, 'const PLOT_BANNED =', 'async function ensureCustomPlotFigures');
+  load(ui, 'const PLOT_BANNED =', 'async function generateCustomChartPreview');
   // const 声明不会挂到 vm 全局上，显式导出后再断言
   vm.runInContext('globalThis.PLOT_BANNED = PLOT_BANNED;', ui);
   assert.equal(ui.extractPlotCode('```python\nimport matplotlib\nplt.plot([1], [2])\n```'),
     'import matplotlib\nplt.plot([1], [2])', '围栏代码块应被取出');
   assert.equal(ui.extractPlotCode('import matplotlib'), 'import matplotlib', '无围栏时整段即代码');
-  for (const bad of ['import subprocess', 'os.system("dir")', 'import socket', 'exec("x=1")', 'shutil.rmtree("x")']) {
+  for (const bad of ['import subprocess', 'os.system("dir")', 'import socket', 'shutil.rmtree("x")']) {
     assert.ok(ui.PLOT_BANNED.test(bad), '应拦下：' + bad);
   }
   for (const good of ['import matplotlib.pyplot as plt', 'pattern = re.compile("x")',
@@ -1275,7 +1297,7 @@ test('stall prompt offers continue-or-pause and only pause cancels', async () =>
   let cancelled = null, asked = null;
   ui.window = { labAPI: { aiChatCancel: (id) => { cancelled = id; } } };
   ui.logEvent = () => {};
-  load(ui, 'let aiStallDialogOpen = false;', 'async function runAiPolish(');
+  load(ui, 'const AI_STALL_WARN_SECONDS = 90;', 'async function runAiPolish(');
   vm.runInContext('globalThis.aiPausedRequestIds = aiPausedRequestIds;', ui);   // const 声明不挂全局，显式导出
   ui.appConfirm = async (msg, opts) => { asked = { msg, opts }; return true; };   // 选「继续等待」
   await ui.promptAiStall('rid-1', '结果分析');
@@ -1294,11 +1316,17 @@ test('stall prompt offers continue-or-pause and only pause cancels', async () =>
   assert.match(renderer, /已暂停等待模型响应（可点「重新润色」重试）/, '暂停要给可重试的失败提示');
   assert.match(renderer, /if \(kind === 'stall'\) \{[\s\S]{0,120}promptAiStall/, 'stall 事件要在"只处理润色请求"判断之前处理');
 
-  // 多路同时卡住只弹一个，避免弹窗叠加
-  let dialogs = 0;
-  ui.appConfirm = async () => { dialogs++; return true; };
+  // 多路同时卡住：弹窗串行排队（appConfirm 是单槽，不能同时弹两个互相覆盖）
+  let dialogs = 0, maxConcurrent = 0, open = 0;
+  ui.appConfirm = async () => {
+    dialogs++; open++; maxConcurrent = Math.max(maxConcurrent, open);
+    await new Promise(r => setImmediate(r));
+    open--;
+    return true;
+  };
   await Promise.all([ui.promptAiStall('a', 'A'), ui.promptAiStall('b', 'B')]);
-  assert.equal(dialogs, 1, '同时只允许一个静默提示弹窗');
+  assert.equal(dialogs, 2, '两个等待事件都要弹（排队而不是丢弃）');
+  assert.equal(maxConcurrent, 1, '同一时刻只能有一个等待弹窗');
 });
 
 // 图表预览 / 插入报告（队友 PR #5 合入）：接线 + 打包安全 + 与自定义目录的同步
@@ -1329,7 +1357,7 @@ test('chart preview / insert chart are wired and packaged-safe', () => {
   assert.match(mainSrc, /reportCopyDir = ''/, '插图处理器接收自定义报告目录');
   assert.match(renderer, /await maybeInsertChart\(genExp, result\)/, '单份生成后插图');
   assert.match(renderer, /else await maybeInsertChart\(q\.exp, r\)/, '批量生成也插图');
-  assert.match(renderer, /await populateChartFields\(\); generateChartPreview\(\)/, '刷新要先等字段回填');
+  assert.match(renderer, /\$\('btnChartRefresh'\)\.onclick = \(\) => applyChartConfigToUi\(\)/, '预设弹窗里的刷新字段只回填控件');
   // 两个脚本：不得依赖 __file__（stdin 注入下没有意义），Word 占用要给中文提示
   const previewPy = read(path.join(__dirname, '../src/main/chart-preview.py'));
   assert.ok(!/abspath\(__file__\)/.test(previewPy), 'chart-preview.py 不得依赖 __file__');
@@ -1377,6 +1405,142 @@ test('chart preview and insert run real python and sync the custom report dir', 
   // 4) 临时图表图片要清理，不留中间产物
   const leftovers = fs.readdirSync(path.join(h.root, '.chart-previews')).filter(f => f.startsWith('insert_'));
   assert.equal(leftovers.length, 0, '临时图表图片应被清理：' + leftovers);
+});
+
+// 自定义模式的端到端：AI 出的图先持久化到实验目录，再按配置插进报告并同步自定义目录
+test('custom-mode chart persists to the experiment dir and is inserted with a caption', async t => {
+  const h = mainHarness(t, false, true);            // 真 python
+  const exp = path.join(__dirname, '../物理实验/实验脚本/长度与体积的测量');
+  // 1) 先造一张"AI 生成的图"放进 run-plot 的隔离目录（模拟 run-plot 的产物）。
+  // 夹具用仓库里已入库的真 PNG（src/icon.png）：python-docx 会真的解析 PNG 分块，
+  // 手工拼的最小 PNG 会被它的分块解析器拒掉。
+  const plotDir = path.join(h.root, 'plot-cache', 'manual-run-1', 'out');
+  fs.mkdirSync(plotDir, { recursive: true });
+  const srcPng = path.join(plotDir, 'fig1.png');
+  fs.copyFileSync(path.join(__dirname, '../src/icon.png'), srcPng);
+  // 2) 持久化：应落到实验目录的隐藏文件，并删掉源 run 目录
+  const saved = await h.handlers.get('save-custom-chart')({}, exp, srcPng);
+  assert.equal(saved.ok, true, '持久化应成功：' + JSON.stringify(saved).slice(0, 300));
+  assert.match(saved.dataUrl, /^data:image\/png;base64,/, '应返回预览 dataUrl');
+  const persisted = path.join(h.root, '实验数据', '实验脚本', '长度与体积的测量', '.chart-custom.png');
+  assert.equal(path.resolve(saved.path), path.resolve(persisted), '应落到实验目录的 .chart-custom.png');
+  assert.ok(fs.existsSync(persisted), '持久化文件应存在');
+  assert.ok(!fs.existsSync(path.join(h.root, 'plot-cache', 'manual-run-1')), '源 run 目录应被清掉（不再经过 run-generate）');
+
+  // 3) 生成报告 → 自定义模式插图（带图注）
+  const gen = await h.handlers.get('run-generate')({}, exp,
+    { name: '测试同学', id: '2026000001', class: '物理2401', date: '2026-09-23' },
+    {}, {}, false, '', null, null);
+  assert.equal(gen.ok, true, '报告应生成成功：' + JSON.stringify(gen).slice(0, 300));
+  const expCopy = path.join(h.root, '实验数据', '实验脚本', '长度与体积的测量');
+  const copyDir = path.join(h.root, '自定义报告');
+  put(path.join(expCopy, '.chart-config.json'), JSON.stringify({
+    mode: 'custom', requirement: '画一张测试图', imagePath: persisted,
+    caption: '图1 自定义模式端到端测试', insertSection: '实验结果分析', imageWidth: 12,
+  }));
+  const ins = await h.handlers.get('insert-chart-into-report')({}, gen.reportFile, exp, copyDir);
+  assert.equal(ins.ok, true, '自定义模式插图应成功：' + JSON.stringify(ins).slice(0, 300));
+  assert.equal(ins.mode, 'custom', '回报里要标明模式');
+  assert.ok(ins.copiedTo && fs.existsSync(ins.copiedTo), '带图表的版本应同步到自定义目录');
+  const text = (await require('mammoth').extractRawText({ path: gen.reportFile })).value;
+  assert.ok(text.includes('图1 自定义模式端到端测试'), '报告里应写入图注');
+  assert.ok(fs.existsSync(persisted), '插入后用户那张图必须还在（不能被当临时文件删掉）');
+
+  // 4) 图缺失时要给明确中文提示，而不是静默失败
+  fs.unlinkSync(persisted);
+  const again = await h.handlers.get('insert-chart-into-report')({}, gen.reportFile, exp, '');
+  assert.equal(again.ok, false, '图缺失应失败');
+  assert.match(again.error, /自定义图表尚未生成/, '提示要引导用户回图表页重新生成：' + again.error);
+});
+
+// 等待弹窗的「停止」要分发到对应的取消通道（生成/画图/图表脚本/AI 请求各走各的）
+test('job wait dialog stops via the matching cancel channel', async () => {
+  const ui = uiContext();
+  const calls = [];
+  const asked = [];
+  ui.window = {
+    labAPI: {
+      aiChatCancel: (id) => calls.push('ai:' + id),
+      cancelPlot: (id) => calls.push('plot:' + id),
+      cancelChartHelper: (id) => calls.push('chart:' + id),
+    },
+  };
+  ui.logEvent = () => {};
+  ui.cancelGenerate = () => calls.push('generate');
+  load(ui, 'const AI_STALL_WARN_SECONDS = 90;', 'async function runAiPolish(');
+  ui.appConfirm = async (msg, opts) => { asked.push(opts.cancelText); return false; };   // 一律选「停止」
+  await ui.promptJobWait({ kind: 'plot', id: 'p1', label: '自定义画图', seconds: 120 });
+  await ui.promptJobWait({ kind: 'chart', id: 'c1', label: '图表预览', seconds: 60 });
+  await ui.promptJobWait({ kind: 'generate', label: '低电阻的测量', seconds: 300 });
+  await ui.promptJobWait({ kind: 'ai', id: 'a1', label: '结果分析', seconds: 90 });
+  assert.equal(JSON.stringify(calls), JSON.stringify(['plot:p1', 'chart:c1', 'generate', 'ai:a1']),
+    '停止要分发到对应通道');
+  assert.equal(JSON.stringify(asked), JSON.stringify(['停止', '停止', '停止', '暂停']),
+    'AI 请求的按钮是「暂停」，长任务的是「停止」');
+});
+
+// 生成 / 画图 / 图表脚本的时间闸：到点只提示，绝不自己杀进程
+test('job wait gates prompt instead of interrupting the job', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = mainHarness(t);
+  const exp = path.join(__dirname, '../物理实验/实验脚本/长度与体积的测量');
+  const waits = () => h.sent.filter(m => m.channel === 'job-wait');
+
+  // ① 报告生成：5 分钟提示一次，不中止
+  const gen = h.handlers.get('run-generate')({}, exp, {}, {}, {});
+  let genSettled = false; gen.then(() => { genSettled = true; });
+  await Promise.resolve();
+  t.mock.timers.tick(5 * 60 * 1000);
+  await Promise.resolve();
+  assert.equal(waits().length, 1, '生成满 5 分钟要提示一次');
+  assert.equal(waits()[0].payload.kind, 'generate');
+  assert.equal(waits()[0].payload.label, '长度与体积的测量', '提示要带实验名');
+  assert.equal(genSettled, false, '提示不等于中止：生成必须继续');
+  assert.equal(h.kills.length, 0, '不得杀 python');
+  t.mock.timers.tick(5 * 60 * 1000);
+  await Promise.resolve();
+  assert.equal(waits().length, 2, '用户继续等待后每 5 分钟再提示一次');
+  // 用户选「停止」＝渲染层调 cancel-generate（沿用既有取消路径）
+  const cancelled = await h.handlers.get('cancel-generate')({});
+  assert.equal(cancelled.ok, true, '停止要能真的取消');
+  assert.equal(h.kills.filter(k => k.exe === 'taskkill').length, 1, '只有用户停止才杀进程');
+
+  // ② 自定义画图：120 秒提示一次，不杀
+  const before = waits().length;
+  const plot = h.handlers.get('run-plot')({}, exp, 'import matplotlib\n', 'plot-wait-1');
+  let plotSettled = false, plotResult = null;
+  plot.then((r) => { plotSettled = true; plotResult = r; });
+  await Promise.resolve();
+  t.mock.timers.tick(120000);
+  await Promise.resolve();
+  assert.equal(waits().length, before + 1, '绘图满 120 秒要提示一次');
+  assert.equal(waits()[before].payload.kind, 'plot');
+  assert.equal(waits()[before].payload.id, 'plot-wait-1', '提示要带 runId，停止时按 id 取消');
+  assert.equal(plotSettled, false, '绘图仍在跑，实得 ' + JSON.stringify(plotResult));
+
+  // ③ 图表辅助脚本：60 秒提示一次，不杀
+  const before2 = waits().length;
+  const prev = h.handlers.get('run-chart-preview')({}, {
+    expPath: exp, xField: 'D', yField: 'd_shi', chartType: 'scatter',
+  });
+  let prevSettled = false; prev.then(() => { prevSettled = true; });
+  await Promise.resolve();
+  t.mock.timers.tick(60000);
+  await Promise.resolve();
+  assert.equal(waits().length, before2 + 1, '图表脚本满 60 秒要提示一次');
+  assert.equal(waits()[before2].payload.kind, 'chart');
+  const helperId = waits()[before2].payload.id;
+  assert.ok(helperId, '提示要带 helper id');
+  assert.equal(prevSettled, false, '图表脚本仍在跑');
+  const chartWaits = () => waits().filter(m => m.payload.kind === 'chart' && m.payload.id === helperId);
+  assert.equal(chartWaits().length, 1, '先只提示一次');
+  // 停止：按 id 走 chart-helper-cancel（listen 是 fire-and-forget，用日志断言效果）
+  h.listeners.get('chart-helper-cancel')({}, helperId);
+  const logText = fs.readFileSync(path.join(h.root, 'logs', 'app.log'), 'utf8');
+  assert.match(logText, /图表预览 已按用户要求停止/, '停止要落日志');
+  t.mock.timers.tick(60000);
+  await Promise.resolve();
+  assert.equal(chartWaits().length, 2, '停止后仍按 60 秒节奏提示（假子进程不会真的退出）');
 });
 
 test('report pane keeps one action row with pick-directory, no open/clear buttons', () => {

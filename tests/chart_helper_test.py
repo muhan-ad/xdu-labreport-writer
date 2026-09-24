@@ -155,6 +155,29 @@ def main():
     elif '未找到章节' not in (payload.get('error') or ''):
         problems.append('插图：错误信息应说明未找到章节，实得 %s' % payload.get('error'))
 
+    # ── 3) 图注（自定义模式会带一行 AI 给的图注）──
+    docx3 = os.path.join(work, '报告3.docx')
+    make_docx(docx3)
+    proc, payload = run_helper(INSERT_PY, [
+        '--docx-path', docx3, '--image-path', out_png,
+        '--section', '实验结果分析', '--width-cm', '12',
+        '--caption', '图1 板厚与孔径关系（自定义）',
+    ])
+    if not payload or not payload.get('ok'):
+        problems.append('图注：应成功，实得 %s（stderr 尾部：%s）' % (payload, (proc.stderr or '')[-200:]))
+    else:
+        paras = [p.text.strip() for p in Document(docx3).paragraphs]
+        img_idx = image_paragraph_indexes(docx3)
+        if '图1 板厚与孔径关系（自定义）' not in paras:
+            problems.append('图注：图注文字没写进文档')
+        elif not img_idx or paras.index('图1 板厚与孔径关系（自定义）') != img_idx[0] + 1:
+            problems.append('图注：图注应紧跟在图片段落之后（图片 %s，图注下标 %s）'
+                            % (img_idx, paras.index('图1 板厚与孔径关系（自定义）')))
+        elif not payload.get('caption'):
+            problems.append('图注：回报里应标明带了图注')
+        else:
+            print('   ✔ 图注：紧跟在图片之后写入指定章节')
+
     if problems:
         print('\n验证失败：')
         for p in problems:

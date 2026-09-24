@@ -213,7 +213,6 @@
                 <div class="card-header">
                   <h4>测量数据</h4>
                   <div class="card-header-actions">
-                    <button class="btn btn-sm btn-outline" id="btnCustomPlot">自定义画图</button>
                     <button class="btn btn-sm btn-outline" id="btnCustomQuiz">自定义思考题</button>
                     <button class="btn btn-sm btn-outline" id="btnRecognize">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;vertical-align:-2px;margin-right:4px;"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
@@ -274,79 +273,37 @@
             <div class="tab-pane" id="tab-chart">
               <div class="card">
                 <div class="card-header">
-                  <h4>图表预览</h4>
+                  <h4>图表</h4>
                   <div class="card-header-actions">
-                    <button class="btn btn-sm btn-outline" id="btnChartRefresh">刷新预览</button>
+                    <button class="btn btn-sm btn-outline" id="btnChartPreset">预设</button>
+                    <button class="btn btn-sm btn-outline" id="btnChartCustom">自定义</button>
+                    <button class="btn btn-sm btn-primary" id="btnChartGenerate">生成图表</button>
                   </div>
                 </div>
                 <div class="card-body">
-                  <div class="chart-controls">
-                    <div class="chart-control-row">
-                      <div class="chart-field-group">
-                        <label>X 轴字段</label>
-                        <select id="chartXField" class="chart-select"></select>
-                      </div>
-                      <div class="chart-field-group">
-                        <label>Y 轴字段</label>
-                        <select id="chartYField" class="chart-select"></select>
-                      </div>
-                      <div class="chart-field-group">
-                        <label>图表类型</label>
-                        <select id="chartType" class="chart-select">
-                          <option value="scatter">散点图</option>
-                          <option value="line">折线图</option>
-                          <option value="fit">线性拟合</option>
-                          <option value="bar">柱状图</option>
-                        </select>
-                      </div>
-                    </div>
-                    <div class="chart-control-row">
-                      <div class="chart-field-group">
-                        <label>标题</label>
-                        <input type="text" id="chartTitle" class="chart-input" placeholder="自动生成" />
-                      </div>
-                      <div class="chart-field-group">
-                        <label>X 轴标签</label>
-                        <input type="text" id="chartXLabel" class="chart-input" placeholder="自动生成" />
-                      </div>
-                      <div class="chart-field-group">
-                        <label>Y 轴标签</label>
-                        <input type="text" id="chartYLabel" class="chart-input" placeholder="自动生成" />
-                      </div>
-                    </div>
-                    <div class="chart-control-row">
-                      <div class="chart-field-group" style="max-width:200px;">
-                        <label>插入报告位置</label>
-                        <select id="chartInsertSection" class="chart-select">
-                          <option value="实验目的">实验目的</option>
-                          <option value="实验原理">实验原理</option>
-                          <option value="实验方法">实验方法</option>
-                          <option value="实验结果分析" selected>实验结果分析</option>
-                          <option value="误差分析">误差分析</option>
-                          <option value="结论">结论</option>
-                          <option value="思考题">思考题</option>
-                        </select>
-                      </div>
-                      <div class="chart-field-group" style="max-width:200px;">
-                        <label>图片宽度 (cm)</label>
-                        <input type="number" id="chartImageWidth" class="chart-input" value="14" min="4" max="20" step="0.5" />
-                      </div>
-                    </div>
-                    <button class="btn btn-primary" id="btnChartGenerate">生成图表</button>
-                  </div>
+                  <div class="form-hint" id="chartModeHint">未选择模式 —— 点「预设」按字段快速出图，或点「自定义」用一句话让 AI 画图。</div>
                   <div class="chart-preview-wrap" id="chartPreviewWrap">
                     <div class="chart-preview-empty" id="chartPreviewEmpty">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;margin-bottom:12px;opacity:.4;"><path d="M3 17l6-6 4 4 8-8"/><polyline points="14 7 21 7 21 14"/></svg>
-                      <p>选择字段后点击"生成图表"预览</p>
+                      <p>选好模式后点击"生成图表"预览</p>
                     </div>
                     <div class="chart-preview-image" id="chartPreviewImage" style="display:none;">
                       <img id="chartImg" alt="图表预览" />
                     </div>
                     <div class="chart-loading" id="chartLoading" style="display:none;">
                       <div class="recog-spinner"></div>
-                      <p>正在生成图表…</p>
+                      <p id="chartLoadingText">正在生成图表…</p>
                     </div>
                   </div>
+                  <div class="chart-preview-caption" id="chartPreviewCaption" style="display:none;"></div>
+                </div>
+              </div>
+
+              <div class="card" id="chartInsertCard">
+                <div class="card-header"><h4>图表插入</h4></div>
+                <div class="card-body">
+                  <label class="checkbox-label"><input type="checkbox" id="chkInsertChart" /> 生成报告后插入当前模式的图表（<span id="chartInsertModeHint">未选择</span>）</label>
+                  <div class="form-hint">插入的是当前模式（预设 / 自定义）生成的那张图，位置由该模式里的「插入报告位置」决定；重新生成报告后图会丢，需要再勾选一次插入。</div>
                 </div>
               </div>
             </div>
@@ -364,12 +321,6 @@
                 <div class="card-body">
                   <div id="variantsList"></div>
                   <div class="variants-tip">每个章节选择一个变体组合成报告；选择"随机"则由应用随机挑选。可用"AI 调整"生成新的变体描述。</div>
-                </div>
-              </div>
-              <div class="card" id="chartInsertCard">
-                <div class="card-header"><h4>图表插入</h4></div>
-                <div class="card-body">
-                  <label class="checkbox-label"><input type="checkbox" id="chkInsertChart" /> 在报告中插入图表（需先在「图表」页配置并生成图表预览）</label>
                 </div>
               </div>
               <div class="card">
@@ -527,18 +478,109 @@
     </div>
   </div>
 
-  <!-- 自定义画图弹窗 -->
-  <div class="modal-overlay" id="customPlotModal">
-    <div class="modal modal-wide">
+  <!-- 图表 · 预设模式配置弹窗（原「图表」页的字段配置搬进来） -->
+  <div class="modal-overlay" id="chartPresetModal">
+    <div class="modal modal-xl">
       <div class="modal-header">
-        <h3>自定义画图</h3>
+        <h3>预设图表</h3>
+        <button class="modal-close" id="btnCloseChartPreset">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-hint">按字段快速出图：选好 X/Y 字段与图表类型，点保存后在图表页点「生成图表」预览。</div>
+        <div class="chart-controls">
+          <div class="chart-control-row">
+            <div class="chart-field-group">
+              <label>X 轴字段</label>
+              <select id="chartXField" class="chart-select"></select>
+            </div>
+            <div class="chart-field-group">
+              <label>Y 轴字段</label>
+              <select id="chartYField" class="chart-select"></select>
+            </div>
+            <div class="chart-field-group">
+              <label>图表类型</label>
+              <select id="chartType" class="chart-select">
+                <option value="scatter">散点图</option>
+                <option value="line">折线图</option>
+                <option value="fit">线性拟合</option>
+                <option value="bar">柱状图</option>
+              </select>
+            </div>
+          </div>
+          <div class="chart-control-row">
+            <div class="chart-field-group">
+              <label>标题</label>
+              <input type="text" id="chartTitle" class="chart-input" placeholder="自动生成" />
+            </div>
+            <div class="chart-field-group">
+              <label>X 轴标签</label>
+              <input type="text" id="chartXLabel" class="chart-input" placeholder="自动生成" />
+            </div>
+            <div class="chart-field-group">
+              <label>Y 轴标签</label>
+              <input type="text" id="chartYLabel" class="chart-input" placeholder="自动生成" />
+            </div>
+          </div>
+          <div class="chart-control-row">
+            <div class="chart-field-group" style="max-width:200px;">
+              <label>插入报告位置</label>
+              <select id="chartInsertSection" class="chart-select">
+                <option value="实验目的">实验目的</option>
+                <option value="实验原理">实验原理</option>
+                <option value="实验方法">实验方法</option>
+                <option value="实验结果分析" selected>实验结果分析</option>
+                <option value="误差分析">误差分析</option>
+                <option value="结论">结论</option>
+                <option value="思考题">思考题</option>
+              </select>
+            </div>
+            <div class="chart-field-group" style="max-width:200px;">
+              <label>图片宽度 (cm)</label>
+              <input type="number" id="chartImageWidth" class="chart-input" value="14" min="4" max="20" step="0.5" />
+            </div>
+            <div class="chart-field-group" style="max-width:200px;justify-content:flex-end;">
+              <button class="btn btn-sm btn-outline" id="btnChartRefresh" type="button">刷新字段</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="btnCancelChartPreset">取消</button>
+        <button class="btn btn-primary" id="btnSaveChartPreset">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 图表 · 自定义模式（AI 写绘图代码）弹窗 -->
+  <div class="modal-overlay" id="chartCustomModal">
+    <div class="modal modal-xl">
+      <div class="modal-header">
+        <h3>自定义图表</h3>
         <button class="modal-close" id="btnCloseCustomPlot">×</button>
       </div>
       <div class="modal-body">
-        <div class="form-hint">写清你要的图（画什么、横纵轴、要不要拟合线或误差棒……）。启用后报告里不再使用内置插图，改由 AI 生成 Python 绘图代码、在你本机绘制并按顺序替换原有插图位置；图注也由 AI 一并给出。清空内容即为关闭自定义、恢复内置插图。</div>
+        <div class="form-hint">写清你要的图（画什么、横纵轴、要不要拟合线或误差棒……）。点保存后回图表页点「生成图表」，AI 会写 Python 绘图代码并在你本机绘制；生成报告时按下面的「插入报告位置」把这张图插进报告。清空内容即为关闭自定义模式。</div>
         <textarea id="customPlotReq" rows="6" placeholder="例如：把表1 的三组数据画在同一张图里，横轴 U_dx / V、纵轴 D / mm，数据点用不同标记，每组各画一条最小二乘拟合直线，图例标出 U₂=1000V/900V/800V。"></textarea>
+        <div class="chart-control-row" style="margin-top:10px;">
+          <div class="chart-field-group" style="max-width:200px;">
+            <label>插入报告位置</label>
+            <select id="customInsertSection" class="chart-select">
+              <option value="实验目的">实验目的</option>
+              <option value="实验原理">实验原理</option>
+              <option value="实验方法">实验方法</option>
+              <option value="实验结果分析" selected>实验结果分析</option>
+              <option value="误差分析">误差分析</option>
+              <option value="结论">结论</option>
+              <option value="思考题">思考题</option>
+            </select>
+          </div>
+          <div class="chart-field-group" style="max-width:200px;">
+            <label>图片宽度 (cm)</label>
+            <input type="number" id="customImageWidth" class="chart-input" value="14" min="4" max="20" step="0.5" />
+          </div>
+        </div>
         <div id="plotConsentRow" class="plot-consent-row" style="display:none;">
-          <label class="ai-check"><input type="checkbox" id="chkPlotConsent"> 我已知晓并同意：AI 生成的 Python 绘图代码会在本机运行（隔离目录、120 秒超时、禁止联网与系统调用）</label>
+          <label class="ai-check"><input type="checkbox" id="chkPlotConsent"> 我已知晓并同意：AI 生成的 Python 绘图代码会在本机运行（隔离目录、禁止联网与系统调用；跑得久会弹窗询问，不会自动中断）</label>
         </div>
       </div>
       <div class="modal-footer">
@@ -547,6 +589,7 @@
       </div>
     </div>
   </div>
+
 
   <!-- 学生信息弹窗 -->
   <div class="modal-overlay" id="studentModal">

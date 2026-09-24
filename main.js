@@ -764,12 +764,26 @@ handle('write-data', (_, expPath, data) => {
   }
 });
 
-// ── IPC: 读写图表预览配置（.chart-config.json，用户数据落 userData 副本）──
+// ── IPC: 读写图表配置（.chart-config.json，用户数据落 userData 副本）──
+// 配置里同时承载两种模式：mode='preset'（字段出图）/ 'custom'（AI 写代码出图）。
+// 自定义模式生成的图片持久化为实验目录下的隐藏文件 .chart-custom.png（不进数据包、不被报告扫描看到）。
+const CUSTOM_CHART_NAME = '.chart-custom.png';
+const CUSTOM_CHART_MAX_BYTES = 8 * 1024 * 1024;
+function customChartPath(expDir) {
+  return security.inside(path.join(expDir, CUSTOM_CHART_NAME), expDir);
+}
+function readCustomChartUrl(expDir) {
+  try {
+    const p = customChartPath(expDir);
+    if (!fs.existsSync(p)) return '';
+    return 'data:image/png;base64,' + fs.readFileSync(p).toString('base64');
+  } catch (e) { return ''; }
+}
 handle('read-chart-config', (_, expPath) => {
   try {
     const p = ensureUserCopy(expPath);
     const cfg = atomic.readJson(security.inside(path.join(p, '.chart-config.json'), p), null);
-    return { ok: true, config: cfg };
+    return { ok: true, config: cfg, customImageUrl: readCustomChartUrl(p) };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -784,47 +798,96 @@ handle('save-chart-config', (_, expPath, config) => {
   }
 });
 
+// ── IPC: 把自定义模式生成的图持久化到实验目录（供生成报告后插入）──
+// 图来自 run-plot 的隔离目录（plot-cache/<runId>/out/*.png）：拷进实验目录后
+// 顺手把源 run 目录删掉 —— 这条路径不再经过 run-generate，没人会替它清理。
+handle('save-custom-chart', (_, expPath, srcPath) => {
+  try {
+    const src = String(srcPath || '');
+    const root = path.resolve(plotCacheRoot());
+    const abs = path.resolve(src);
+    if (!abs.startsWith(root + path.sep) || !/\.png$/i.test(abs)) throw Error('图片来源无效');
+    if (!fs.existsSync(abs)) throw Error('生成的图片不存在');
+    const st = fs.statSync(abs);
+    if (!st.isFile() || st.size === 0 || st.size > CUSTOM_CHART_MAX_BYTES) throw Error('生成的图片大小异常');
+    const head = fs.readFileSync(abs).subarray(0, 8);
+    if (head.length < 8 || head[0] !== 0x89 || head.toString('latin1', 1, 4) !== 'PNG') throw Error('生成的图片不是 PNG');
+    const dir = ensureUserCopy(experimentPath(expPath));
+    const dest = customChartPath(dir);
+    fs.copyFileSync(abs, dest);
+    // 清掉整个 run 目录（<runDir>/out/<name>.png → <runDir>），里面还有 AI 代码与数据副本
+    const runDir = path.dirname(path.dirname(abs));
+    if (runDir.startsWith(root + path.sep)) {
+      try { fs.rmSync(runDir, { recursive: true, force: true }); } catch (e) { /* 清理失败不影响结果 */ }
+    }
+    log(`chart | 自定义图已持久化 | ${path.basename(dir)} | ${st.size} 字节`);
+    return { ok: true, path: dest, dataUrl: 'data:image/png;base64,' + fs.readFileSync(dest).toString('base64') };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 // ── IPC: 将图表插入已生成的报告 docx ──
-handle('insert-chart-into-report', async (_, docxPath, expPath, reportCopyDir = '') => {
+handle('insert-chart-into-report', async (event, docxPath, expPath, reportCopyDir = '') => {
   const chartT0 = Date.now();
   let chartOutcome = '';
   try {
     const p = ensureUserCopy(expPath);
     // 报告路径校验：只允许实验目录内的 docx（与报告管理/预览同一套规则）
     const report = reportPath(docxPath);
-    // 读图表配置
+    // 读图表配置（两种模式的字段要求不同，具体校验放在下面的分支里）
     const cfg = atomic.readJson(security.inside(path.join(p, '.chart-config.json'), p), null);
-    if (!cfg || !cfg.xField || !cfg.yField) return { ok: false, error: '未找到图表配置，请先在「图表」页配置并生成预览' };
+    if (!cfg) return { ok: false, error: '未找到图表配置，请先在「图表」页配置并生成预览' };
 
     const section = (cfg.insertSection || '实验结果分析').replace('实验结果与分析', '实验结果分析');
     const imageWidth = cfg.imageWidth || 14;
-    const chartType = cfg.chartType || 'scatter';
+    const mode = cfg.mode === 'custom' ? 'custom' : 'preset';
 
-    // 临时图表图片放在 userData 的图表目录（不往用户的实验目录里塞中间产物）
-    const chartOut = path.join(getChartTempDir(), `insert_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.png`);
-    try {
+    // 图片来源：预设模式现场按字段出图（临时图，插完即删）；
+    // 自定义模式用「图表」页已生成并持久化的那张（缺了就让用户回去重新生成，不静默失败）。
+    let tempChartOut = '';
+    let imagePath = '';
+    if (mode === 'custom') {
+      imagePath = String(cfg.imagePath || '') || customChartPath(p);
+      const absImg = path.resolve(imagePath);
+      if (!absImg.startsWith(path.resolve(p) + path.sep) || !/\.png$/i.test(absImg)) {
+        return { ok: false, error: '自定义图表路径无效，请到「图表」页重新生成' };
+      }
+      if (!fs.existsSync(absImg)) {
+        return { ok: false, error: '自定义图表尚未生成，请到「图表」页点「生成图表」' };
+      }
+      imagePath = absImg;
+    } else {
+      if (!cfg.xField || !cfg.yField) return { ok: false, error: '未配置图表字段，请先在「图表」页用「预设」模式配置' };
+      tempChartOut = path.join(getChartTempDir(), `insert_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.png`);
+      imagePath = tempChartOut;
       const chartArgs = [
         '--exp-path', p,
         '--x-field', cfg.xField,
         '--y-field', cfg.yField,
-        '--chart-type', chartType,
-        '--output', chartOut,
+        '--chart-type', cfg.chartType || 'scatter',
+        '--output', tempChartOut,
         '--scripts-root', EXPERIMENTS_DIR,
       ];
       if (cfg.title) chartArgs.push('--title', cfg.title);
       if (cfg.xlabel) chartArgs.push('--xlabel', cfg.xlabel);
       if (cfg.ylabel) chartArgs.push('--ylabel', cfg.ylabel);
 
-      const chartRun = await runChartHelper('chart-preview.py', chartArgs);
+      const chartRun = await runChartHelper('chart-preview.py', chartArgs, { event, label: '图表生成' });
       if (!chartRun.ok) return { ok: false, error: '图表生成失败: ' + chartRun.error };
-      if (!fs.existsSync(chartOut)) return { ok: false, error: '图表图片未生成' };
+      if (!fs.existsSync(tempChartOut)) return { ok: false, error: '图表图片未生成' };
+    }
 
-      const insertRun = await runChartHelper('insert-chart-into-docx.py', [
+    try {
+      const insertArgs = [
         '--docx-path', report,
-        '--image-path', chartOut,
+        '--image-path', imagePath,
         '--section', section,
         '--width-cm', String(imageWidth),
-      ]);
+      ];
+      // 自定义模式带图注（AI 一并给出）；预设模式沿用原有排版
+      if (mode === 'custom' && cfg.caption) insertArgs.push('--caption', String(cfg.caption));
+      const insertRun = await runChartHelper('insert-chart-into-docx.py', insertArgs, { event, label: '图表插入' });
       if (!insertRun.ok) return { ok: false, error: '图表插入失败: ' + insertRun.error };
 
       // 报告已被改写：把带图表的版本同步到「自定义报告目录」，否则两份报告内容不一致
@@ -841,9 +904,12 @@ handle('insert-chart-into-report', async (_, docxPath, expPath, reportCopyDir = 
         }
       }
       chartOutcome = 'ok';
-      return { ok: true, section, copiedTo: copiedTo || undefined };
+      return { ok: true, section, mode, copiedTo: copiedTo || undefined };
     } finally {
-      try { if (fs.existsSync(chartOut)) fs.unlinkSync(chartOut); } catch (e) { /* 忽略 */ }
+      // 只清临时图；自定义模式那张是用户的资产，绝不能删
+      if (tempChartOut) {
+        try { if (fs.existsSync(tempChartOut)) fs.unlinkSync(tempChartOut); } catch (e) { /* 忽略 */ }
+      }
     }
   } catch (err) {
     chartOutcome = 'fail';
@@ -2046,7 +2112,7 @@ handle('export-diagnostics', async (_, payload) => {
 // ── IPC: 运行 generate.py 生成报告 ──
 // variants.compose 向 stdout 打印的章节原文标记（供应用侧按章节润色/导入重生成）
 const SECTIONS_MARKER = '.LAB_SECTIONS_JSON:';
-handle('run-generate', async (_, expPath, studentInfo, variants, polish, embedDataPhoto = true, reportCopyDir = '', customQuiz = null, customPlot = null) => {
+handle('run-generate', async (event, expPath, studentInfo, variants, polish, embedDataPhoto = true, reportCopyDir = '', customQuiz = null, customPlot = null) => {
   if (generationBusy || resourceUpdating) return { ok: false, error: '已有任务正在运行，请稍后重试' };
   syncInstalledResources();
   generationBusy = true;
@@ -2117,9 +2183,21 @@ handle('run-generate', async (_, expPath, studentInfo, variants, polish, embedDa
     });
     activePython = python;
     python.job = job;
-    const deadline = setTimeout(() => { log('生成超时，正在清理'); cancelGeneration(); }, 5 * 60 * 1000);
-    python.once('close', () => clearTimeout(deadline));
-    python.once('error', () => clearTimeout(deadline));
+    // 生成时长提醒：到点**不再中止**，只推事件让渲染层弹窗（「继续等待」＝自动续期，「停止」＝走 cancel-generate）。
+    // 阈值同时是提醒节奏：用户一直不处理就每 5 分钟再提示一次。
+    job.waitWarned = 0;
+    const armGenerateWait = () => {
+      if (job.deadline) clearTimeout(job.deadline);
+      job.deadline = setTimeout(() => {
+        job.waitWarned++;
+        log(`generate | 运行超过 ${GENERATE_WAIT_WARN_MS / 60000} 分钟，已提示用户（第 ${job.waitWarned} 次）`);
+        notifyJobWait(event, { kind: 'generate', label: genExpName, seconds: GENERATE_WAIT_WARN_MS / 1000 });
+        armGenerateWait();
+      }, GENERATE_WAIT_WARN_MS);
+    };
+    armGenerateWait();
+    python.once('close', () => { if (job.deadline) clearTimeout(job.deadline); });
+    python.once('error', () => { if (job.deadline) clearTimeout(job.deadline); });
     python.stdout.setEncoding('utf8');
     python.stderr.setEncoding('utf8');
 
@@ -2343,7 +2421,7 @@ handle('custom-plot-info', (_, expPath) => {
   }
 });
 
-handle('run-plot', async (_, expPath, code, runId) => {
+handle('run-plot', async (event, expPath, code, runId) => {
   const t0 = Date.now();
   let outcome = 'fail';
   try {
@@ -2366,7 +2444,7 @@ handle('run-plot', async (_, expPath, code, runId) => {
         cwd: dir, shell: false, windowsHide: true,
         env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
       });
-      const job = { proc, runId: String(runId || ''), cancelled: false, timedOut: false, timer: null };
+      const job = { proc, runId: String(runId || ''), cancelled: false, waitWarned: 0, timer: null };
       activePlot = job;
       let stdout = '', stderr = '';
       const finish = (payload) => {
@@ -2374,10 +2452,16 @@ handle('run-plot', async (_, expPath, code, runId) => {
         if (activePlot === job) activePlot = null;
         resolve(payload);
       };
-      job.timer = setTimeout(() => {
-        job.timedOut = true;
-        killPlotTree(proc);
-      }, PLOT_TIMEOUT_MS);
+      // 运行时长提醒：到点不杀进程，只弹窗问用户（继续等待＝续期；停止＝cancel-plot）
+      const armPlotWait = () => {
+        job.timer = setTimeout(() => {
+          job.waitWarned++;
+          log(`plot | 运行超过 ${PLOT_TIMEOUT_MS / 1000} 秒，已提示用户（第 ${job.waitWarned} 次）`);
+          notifyJobWait(event, { kind: 'plot', id: job.runId, label: '自定义画图', seconds: PLOT_TIMEOUT_MS / 1000 });
+          armPlotWait();
+        }, PLOT_TIMEOUT_MS);
+      };
+      armPlotWait();
       proc.stdout.on('data', (d) => { stdout += d.toString(); if (stdout.length > 512 * 1024) stdout = stdout.slice(-256 * 1024); });
       proc.stderr.on('data', (d) => { stderr += d.toString(); if (stderr.length > 256 * 1024) stderr = stderr.slice(-128 * 1024); });
       proc.stdin.on('error', () => { /* 进程早退时忽略 EPIPE */ });
@@ -2385,7 +2469,6 @@ handle('run-plot', async (_, expPath, code, runId) => {
       proc.on('error', (err) => finish({ ok: false, error: err.message }));
       proc.on('close', () => {
         if (job.cancelled) return finish({ ok: false, cancelled: true, error: '已取消' });
-        if (job.timedOut) return finish({ ok: false, error: '绘图超时（超过 120 秒）', stderr: stderr.slice(-2000) });
         const marker = parsePlotResult(stdout);
         if (!marker) {
           const tail = (stderr.trim().split('\n').pop() || '').trim();
@@ -2449,7 +2532,8 @@ handle('cancel-generate', cancelGeneration);
 // 所以统一「读源码 → python -B -X utf8 - 参数…」的方式（与 src/main/plot-runner.py 同款），
 // cwd 用 userData 下的真实目录，脚本自己往这里写临时产物。
 const CHART_HELPER_TIMEOUT_MS = 60000;
-function runChartHelper(sourceName, args, timeoutMs = CHART_HELPER_TIMEOUT_MS) {
+const chartHelpers = new Map();     // helperId -> { proc, finish }：供超时弹窗「停止」按 id 杀
+function runChartHelper(sourceName, args, { event = null, label = '图表' } = {}) {
   return new Promise((resolve) => {
     let source;
     try {
@@ -2461,17 +2545,27 @@ function runChartHelper(sourceName, args, timeoutMs = CHART_HELPER_TIMEOUT_MS) {
       cwd: getChartTempDir(), shell: false, windowsHide: true,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
     });
-    let stdout = '', stderr = '', settled = false, timer = null;
+    const helperId = crypto.randomUUID();
+    let stdout = '', stderr = '', settled = false, timer = null, waitWarned = 0;
     const finish = (payload) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (chartHelpers.get(helperId) === job) chartHelpers.delete(helperId);
       resolve(payload);
     };
-    timer = setTimeout(() => {
-      try { process.kill(proc.pid, 'SIGKILL'); } catch (e) { /* 已退出 */ }
-      finish({ ok: false, error: '图表脚本执行超时（60 秒）' });
-    }, timeoutMs);
+    const job = { proc, finish, label };
+    chartHelpers.set(helperId, job);
+    // 运行时长提醒：到点不杀进程，只弹窗（继续等待＝续期；停止＝chart-helper-cancel）
+    const armHelperWait = () => {
+      timer = setTimeout(() => {
+        waitWarned++;
+        log(`chart | ${label} 运行超过 ${CHART_HELPER_TIMEOUT_MS / 1000} 秒，已提示用户（第 ${waitWarned} 次）`);
+        notifyJobWait(event, { kind: 'chart', id: helperId, label, seconds: CHART_HELPER_TIMEOUT_MS / 1000 });
+        armHelperWait();
+      }, CHART_HELPER_TIMEOUT_MS);
+    };
+    armHelperWait();
     proc.stdout.on('data', (d) => { stdout += d.toString(); });
     proc.stderr.on('data', (d) => { stderr += d.toString(); });
     proc.stdin.on('error', () => { /* 进程早退时忽略 EPIPE */ });
@@ -2493,6 +2587,15 @@ function runChartHelper(sourceName, args, timeoutMs = CHART_HELPER_TIMEOUT_MS) {
   });
 }
 
+// 停止一个还在跑的图表辅助脚本（超时弹窗里用户选「停止」时调用）
+listen('chart-helper-cancel', (_, helperId) => {
+  const job = chartHelpers.get(String(helperId || ''));
+  if (!job) return { ok: false, reason: 'no-active' };
+  try { process.kill(job.proc.pid, 'SIGKILL'); } catch (e) { /* 已退出 */ }
+  log(`chart | ${job.label} 已按用户要求停止`);
+  return { ok: true };
+});
+
 // ── IPC: 生成图表预览 ──
 // 在生成完整报告前调用 Python 脚本生成实验数据图表，返回 base64 PNG
 function getChartTempDir() {
@@ -2502,7 +2605,7 @@ function getChartTempDir() {
   try { for (const f of fs.readdirSync(d)) { const fp = path.join(d, f); if (Date.now() - fs.statSync(fp).mtimeMs > 3600000) fs.unlinkSync(fp); } } catch (e) { /* 清理失败忽略 */ }
   return d;
 }
-handle('run-chart-preview', async (_, opts) => {
+handle('run-chart-preview', async (event, opts) => {
   const { expPath, xField, yField, chartType, title, xlabel, ylabel } = opts || {};
   if (!expPath || !xField || !yField) return { ok: false, error: '缺少必要参数' };
   try {
@@ -2521,7 +2624,7 @@ handle('run-chart-preview', async (_, opts) => {
     if (xlabel) args.push('--xlabel', xlabel);
     if (ylabel) args.push('--ylabel', ylabel);
 
-    const run = await runChartHelper('chart-preview.py', args);
+    const run = await runChartHelper('chart-preview.py', args, { event, label: '图表预览' });
     if (!run.ok) return { ok: false, error: run.error };
     if (!fs.existsSync(outPath)) return { ok: false, error: '图表文件未生成' };
 
@@ -2556,6 +2659,15 @@ const AI_PROVIDERS = {
     model: 'gpt-4o',
   },
 };
+
+// ── 长任务等待提示 ──────────────────────────────────────────────────────────
+// 到点不杀进程：推一条 job-wait 事件让渲染层弹窗，用户选「继续等待」就自动续期、
+// 选「停止」才走对应的取消通道。这样"时间"永远不会悄悄中断生成。
+const JOB_WAIT_CHANNEL = 'job-wait';
+const GENERATE_WAIT_WARN_MS = 5 * 60 * 1000;
+function notifyJobWait(event, payload) {
+  try { event?.sender?.send(JOB_WAIT_CHANNEL, payload); } catch (e) { /* 窗口已关闭忽略 */ }
+}
 
 // ── IPC: AI 对话（requestId 支持取消：ai-chat-cancel 中止对应请求）──
 // requestId -> { controller, kind }：kind 为 'chat'（润色/思考题/画图）或 'ocr'（识图）。

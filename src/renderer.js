@@ -14,8 +14,7 @@ let isDataModified = false;
 let isSwitchingExperiment = false;
 let isSavingData = false;
 let isAiPolishing = false;
-// 图表预览
-let chartPreviewUrl = null;
+// 图表页状态（chartMode/chartConfig/chartPreviewUrl/chartPreviewCaption）在图表模块里声明
 
 const $ = (id) => document.getElementById(id);
 
@@ -594,17 +593,7 @@ async function pumpQueue() {
         break;
       }
       const customQuiz = cq.none ? null : { questions: cq.questions, answers: cq.answers };
-      // 自定义画图：生成前让 AI 写绘图代码并本机绘制；用户选择停止则中止整个队列
-      const cp = await ensureCustomPlotFigures(q.exp);
-      if (cp.stop) {
-        q.status = 'failed'; q.error = '已停止（自定义画图未完成）';
-        $('batchLog').textContent += '  ⏹ 已停止队列\n';
-        queueState = 'cancelled';
-        renderQueue(); updateQueueProgress();
-        break;
-      }
-      const customPlot = cp.none ? null : { images: cp.images };
-      const r = await window.labAPI.runGenerate(q.exp.path, studentInfo, null, expOverrides(q.exp.id), loadSettings().embedDataPhoto !== false, loadSettings().customReportDir || '', customQuiz, customPlot);
+      const r = await window.labAPI.runGenerate(q.exp.path, studentInfo, null, expOverrides(q.exp.id), loadSettings().embedDataPhoto !== false, loadSettings().customReportDir || '', customQuiz);
       q.elapsed = (Date.now() - q.startedAt) / 1000;
       q.status = r.ok ? 'done' : (r.cancelled ? 'cancelled' : 'failed');
       if (!r.ok) q.error = r.error || ('exit ' + r.exitCode);
@@ -792,7 +781,7 @@ async function loadFormData(exp) {
   $('dataIssueBar').style.display = 'none';
   renderForm();
   refreshFormCheck();
-  populateChartFields();
+  await loadChartConfig(exp);
 }
 
 // 清除表单全部可输入数据（置空，便于从头填写；需点"保存修改"才写入 data.json）
@@ -1300,34 +1289,34 @@ async function ensureCustomQuizAnswers(exp) {
   return { questions, answers };
 }
 
-// ── 自定义画图：按实验保存画图需求；生成报告前让 AI 写 matplotlib 代码并在本机绘制 ──
-// 启用后报告里不再插入内置图，AI 生成的图按顺序填入原有插图位置（图注也由 AI 给出）。
-function loadAllCustomPlots() { try { return JSON.parse(localStorage.getItem('customPlots') || '{}'); } catch { return {}; } }
-function saveAllCustomPlots(all) { localStorage.setItem('customPlots', JSON.stringify(all)); }
-function expCustomPlot(expId) { return loadAllCustomPlots()[expId] || ''; }
-function setCustomPlot(expId, text) {
-  const all = loadAllCustomPlots();
-  const t = String(text || '').trim();
-  if (t) all[expId] = t; else delete all[expId];
-  saveAllCustomPlots(all);
-  updateCustomPlotBtn();
+// ── 自定义画图（图表页的「自定义」模式）──
+// 需求存到实验的 .chart-config.json（与预设模式同一份配置载体，按实验保存）；
+// 老版本把它存在 localStorage.customPlots 里，首次加载时迁移一次。
+function legacyCustomPlot(expId) {
+  try { return (JSON.parse(localStorage.getItem('customPlots') || '{}')[expId]) || ''; } catch (e) { return ''; }
 }
-function updateCustomPlotBtn() {
-  const btn = $('btnCustomPlot');
-  if (!btn) return;
-  btn.textContent = (currentExp && expCustomPlot(currentExp.id)) ? '自定义画图 ✓' : '自定义画图';
+function clearLegacyCustomPlot(expId) {
+  try {
+    const all = JSON.parse(localStorage.getItem('customPlots') || '{}');
+    if (all[expId]) { delete all[expId]; localStorage.setItem('customPlots', JSON.stringify(all)); }
+  } catch (e) { /* 忽略 */ }
 }
-function openCustomPlotModal() {
+function openChartCustomModal() {
+  const cfg = chartConfig || {};
   const ta = $('customPlotReq');
-  if (ta) ta.value = currentExp ? expCustomPlot(currentExp.id) : '';
+  if (ta) ta.value = cfg.requirement || '';
+  const sec = $('customInsertSection');
+  if (sec) sec.value = cfg.insertSection || '实验结果分析';
+  const w = $('customImageWidth');
+  if (w) w.value = cfg.imageWidth || 14;
   const agreed = !!loadSettings().plotConsent;
   const row = $('plotConsentRow');
   if (row) row.style.display = agreed ? 'none' : '';
   const chk = $('chkPlotConsent');
   if (chk) chk.checked = agreed;
-  openModal('customPlotModal');
+  openModal('chartCustomModal');
 }
-function saveCustomPlotModal() {
+async function saveChartCustomModal() {
   if (!currentExp) return;
   const ta = $('customPlotReq');
   const text = ta ? ta.value.trim() : '';
@@ -1340,10 +1329,22 @@ function saveCustomPlotModal() {
     }
     saveSettings({ ...settings, plotConsent: true });
   }
-  setCustomPlot(currentExp.id, text);
-  closeModal('customPlotModal');
-  showToast('success', text ? '已保存画图需求' : '已关闭自定义画图',
-    text ? '生成报告时由 AI 按需求画图，内置插图不再使用' : '恢复使用内置插图');
+  const patch = {
+    requirement: text,
+    insertSection: ($('customInsertSection') && $('customInsertSection').value) || '实验结果分析',
+    imageWidth: parseFloat($('customImageWidth') && $('customImageWidth').value) || 14,
+  };
+  // 需求为空 = 关闭自定义模式（保留预设模式的配置字段，互不干扰）
+  if (text) {
+    patch.mode = 'custom';
+  } else if ((chartConfig || {}).mode === 'custom') {
+    patch.mode = '';
+  }
+  await saveChartConfigSafe(currentExp.path, patch);
+  closeModal('chartCustomModal');
+  renderChartMode();
+  showToast('success', text ? '已保存画图需求' : '已关闭自定义模式',
+    text ? '回图表页点「生成图表」让 AI 画出来' : '可在图表页切回「预设」');
 }
 
 // 绘图契约：AI 必须按这套约定产出代码（与内置 skill「科研绘图规范」一致）
@@ -1352,8 +1353,8 @@ const PLOT_CONTRACT = [
   '1. 只允许使用 matplotlib、numpy、scipy、pandas、PIL 与 Python 标准库；禁止联网、禁止系统命令与进程接口。',
   '2. 开头写 import matplotlib 并 matplotlib.use("Agg")（本机无显示环境），禁止调用 plt.show()。',
   '3. 测量数据从全局变量 DATA（dict，本实验数据）或 DATA_FILE（同一份数据的 JSON 文件路径）读取，不要臆造数据。',
-  '4. 每张图保存到全局变量 OUT_DIR 指向的目录：save(fig, "fig1.png")、save(fig, "fig2.png")…（顺序即报告插图顺序，最多 4 张）。',
-  '5. 每张图配一行图注：caption("fig1.png", "图1 ……")；图注里可用 $...$ 写公式。',
+  '4. 只画一张图并保存到全局变量 OUT_DIR：save(fig, "fig1.png")（这张图会被插进报告）。',
+  '5. 配一行图注：caption("fig1.png", "图1 ……")；图注里可用 $...$ 写公式。',
   '6. 只往 OUT_DIR 里写文件；figsize 不超过 (10, 7)，dpi 用默认 150 即可。',
   '7. 中文标签要能正常显示（中文字体已内置）；物理量与单位用 $...$ 数学写法，如 $U$ / V。',
   '8. 只输出一个 ```python 代码块，不要输出解释文字。',
@@ -1373,34 +1374,34 @@ function extractPlotCode(text) {
   return (m ? m[1] : s).trim();
 }
 
-// 生成前用 AI 写绘图代码并本机跑出来；返回 {none:true}（未启用/失败后改用内置图）/
-// {stop:true}（用户选择停止）/ {images:[{path,caption}]}
-async function ensureCustomPlotFigures(exp) {
-  const requirement = exp ? expCustomPlot(exp.id) : '';
-  if (!requirement) return { none: true };
+// 自定义模式：让 AI 写绘图代码 → 本机跑出图 → 持久化到实验目录 → 回图表页预览。
+// （与预设模式同一套落地方式：都是"页面上先生成预览，生成报告后再按章节插入"）
+async function generateCustomChartPreview(exp) {
+  const cfg = chartConfig || {};
+  const requirement = String(cfg.requirement || '').trim();
   const logLine = (s) => { const el = $('logContent'); if (el) el.textContent += s + '\n'; };
+  const fail = (msg) => {
+    const empty = $('chartPreviewEmpty');
+    if (empty && empty.querySelector('p')) empty.querySelector('p').textContent = '生成失败: ' + msg;
+  };
+  if (!requirement) {
+    showToast('warning', '还没有画图需求', '请点「自定义」填写需求并保存', 5000);
+    return false;
+  }
   const settings = loadSettings();
   if (!settings.hasApiKey) {
-    await appConfirm('已启用「自定义画图」，但还没有配置 API Key，无法生成绘图代码。\n\n请到「设置 → AI 服务」配置密钥后重试。本次生成已停止。',
+    await appConfirm('还没有配置 API Key，无法让 AI 写绘图代码。\n\n请到「设置 → AI 服务」配置密钥后重试。',
       { title: '无法生成绘图代码', okText: '知道了', danger: true });
-    return { stop: true };
+    return false;
   }
   if (!settings.plotConsent) {
-    const agree = await appConfirm('「自定义画图」会让 AI 生成 Python 绘图代码并在你的电脑上运行'
-      + '（隔离目录、120 秒超时、禁止联网与系统调用）。\n\n是否同意继续？',
-      { title: '需要你的确认', okText: '同意并继续', cancelText: '停止生成', danger: true });
-    if (!agree) return { stop: true };
+    const agree = await appConfirm('「自定义」模式会让 AI 生成 Python 绘图代码并在你的电脑上运行'
+      + '（隔离目录、禁止联网与系统调用；跑得久会弹窗询问，不会自动中断）。\n\n是否同意继续？',
+      { title: '需要你的确认', okText: '同意并继续', cancelText: '取消', danger: true });
+    if (!agree) return false;
     saveSettings({ ...settings, plotConsent: true });
   }
-  let slots = 0;
-  try {
-    const info = await window.labAPI.customPlotInfo(exp.path);
-    if (info && info.ok) slots = info.slots || 0;
-  } catch (e) { /* 取不到按无图位处理 */ }
-  if (!slots) {
-    logLine('⚠ 本实验报告没有插图位置，已跳过自定义画图');
-    return { none: true };
-  }
+
   let dataText = '';
   try {
     const dr = await window.labAPI.readData(exp.path);
@@ -1430,16 +1431,15 @@ async function ensureCustomPlotFigures(exp) {
   const messages = [
     {
       role: 'system',
-      content: `你是一个用 Python 为大学物理实验报告绘图的助手。${getAiStylePrompt(style)}${skillBlock}${userPrompt ? `\n\n【用户自定义要求（优先遵循，但不得违反下方绘图硬性约定）】\n${userPrompt}` : ''}请按用户给出的画图需求写一段完整的 matplotlib 绘图代码。${kbBlock}\n\n${PLOT_CONTRACT}`,
+      content: `你是一个用 Python 为大学物理实验报告绘图的助手。${getAiStylePrompt(style)}${skillBlock}${userPrompt ? `\n\n【用户自定义要求（优先遵循，但不得违反下方绘图硬性约定）】\n${userPrompt}` : ''}请按用户给出的画图需求写一段完整的 matplotlib 绘图代码，只画一张图。${kbBlock}\n\n${PLOT_CONTRACT}`,
     },
     {
       role: 'user',
-      content: `实验名称：${exp.name || ''}\n报告里共有 ${slots} 处插图位置，你最多生成 ${Math.min(slots, 4)} 张图（第 i 张放在第 i 个位置）。\n\n画图需求：\n${requirement}\n\n本实验测量数据（JSON）：\n${dataText.slice(0, 6000)}`,
+      content: `实验名称：${exp.name || ''}\n\n画图需求：\n${requirement}\n\n本实验测量数据（JSON）：\n${dataText.slice(0, 6000)}`,
     },
   ];
 
   logLine('正在让 AI 生成绘图代码…');
-  let images = null;
   let lastError = '';
   let attempt = 0;
   for (attempt = 1; attempt <= PLOT_MAX_ATTEMPTS; attempt++) {
@@ -1482,10 +1482,17 @@ async function ensureCustomPlotFigures(exp) {
     } finally {
       activePlotRunId = '';
     }
-    if (run && run.cancelled) return { stop: true };
+    if (run && run.cancelled) return false;                    // 用户取消，不算失败
     if (run && run.ok && Array.isArray(run.images) && run.images.length) {
-      images = run.images;
-      break;
+      const img = run.images[0];
+      const saved = await window.labAPI.saveCustomChart(exp.path, img.path);
+      if (!saved || !saved.ok) { lastError = (saved && saved.error) || '图片保存失败'; break; }
+      // 预览 + 落配置：生成报告时按章节插入这张图
+      showChartPreview(saved.dataUrl, img.caption || '');
+      await saveChartConfigSafe(exp.path, { mode: 'custom', imagePath: saved.path, caption: img.caption || '' });
+      logLine(`✔ 已生成自定义图表（尝试 ${attempt} 次）`);
+      logEvent(`自定义图表 | ${exp.id} | 尝试 ${attempt} 次 | ${saved.path}`);
+      return true;
     }
     lastError = (run && run.ok) ? '代码运行成功但没有产出图片（可能没有调用 save 或保存路径不对）'
       : ((run && run.error) || '绘图失败');
@@ -1494,16 +1501,11 @@ async function ensureCustomPlotFigures(exp) {
     messages.push({ role: 'user', content: `你的代码运行失败了，报错如下：\n\n${detail}\n\n请修正后重新输出完整代码（只输出一个 python 代码块）。` });
   }
 
-  if (!images) {
-    logEvent(`自定义画图失败 | ${exp.id} | 尝试 ${attempt} 次 | ${String(lastError).slice(0, 120)}`);
-    const go = await appConfirm(`自定义画图没有成功：\n\n${lastError}\n\n「继续生成」＝本次改用报告内置插图；\n「停止」＝中止本次生成。`,
-      { title: '绘图失败', okText: '继续生成（用内置图）', cancelText: '停止', danger: true });
-    return go ? { none: true } : { stop: true };
-  }
-  const picked = images.slice(0, slots);
-  logLine(`✔ 已绘制 ${picked.length} 张图（报告里将不再使用内置插图）`);
-  logEvent(`自定义画图 | ${exp.id} | 图 ${picked.length} 张 | 尝试 ${attempt} 次`);
-  return { images: picked };
+  logLine(`⚠ 自定义图表生成失败：${lastError}`);
+  logEvent(`自定义图表失败 | ${exp.id} | 尝试 ${attempt} 次 | ${String(lastError).slice(0, 120)}`);
+  fail(lastError);
+  showToast('error', '生成失败', lastError, 6000);
+  return false;
 }
 
 function updateOverrideBar() {
@@ -1519,7 +1521,6 @@ async function refreshAiScopeOptions(keepValue) {
   const sourceExp = currentExp;
   fillUserPromptPanel();      // 提示词输入按实验回填（与润色范围一起刷新）
   updateCustomQuizBtn();      // 自定义思考题按钮的计数随实验刷新
-  updateCustomPlotBtn();      // 自定义画图按钮的标记随实验刷新
   currentSections = null;
   try {
     if (sourceExp) {
@@ -1842,32 +1843,58 @@ async function importCustomVariantsFiles() {
   await refreshAfterCustomVariantChange();
 }
 
-// ── AI 请求静默提示（主进程不再自动中止）────────────────────────────────
-// 流式请求长时间收不到数据时，主进程推一条 stall 事件；这里弹窗让用户决定：
-// 「继续等待」＝什么都不做（仍无数据会每 90 秒再提示一次）；「暂停」＝取消这次请求。
-let aiStallDialogOpen = false;
+// ── 长任务等待提示（静默 / 超时统一走这里）────────────────────────────────
+// 主进程不再因时间中止任务，而是推 job-wait 事件；这里弹窗让用户决定：
+// 「继续等待」＝什么都不做（主进程已自动续期）；「停止」＝走对应取消通道。
+// appConfirm 是单槽，多个等待事件同时来会互相覆盖 → 用 Promise 链串行化。
+const AI_STALL_WARN_SECONDS = 90;           // 与主进程 AI_STALL_WARN_MS 对应，仅用于文案
 // 用户点了「暂停」的请求：润色流程据此把该章节标成失败（可重试），而不是当作整轮取消丢弃
 const aiPausedRequestIds = new Set();
-async function promptAiStall(requestId, label) {
-  if (aiStallDialogOpen) return;              // 多路同时卡住时只弹一个，避免弹窗叠加
-  aiStallDialogOpen = true;
-  const name = label || 'AI 请求';
+let waitDialogChain = Promise.resolve();
+function promptJobWait(payload) {
+  const run = () => showJobWaitDialog(payload || {});
+  waitDialogChain = waitDialogChain.then(run, run);
+  return waitDialogChain;
+}
+function jobWaitText(payload) {
+  const name = payload.label || '任务';
+  const secs = Number(payload.seconds) > 0 ? Math.round(Number(payload.seconds)) : 0;
+  const waited = secs ? (secs >= 60 ? `${Math.round(secs / 60)} 分钟` : `${secs} 秒`) : '一段时间';
+  const head = payload.kind === 'ai'
+    ? `「${name}」已经 ${waited}没有收到任何数据，模型可能还在思考，也可能已经卡住。`
+    : `「${name}」已经运行超过 ${waited}，还在继续跑（没有中止）。`;
+  return `${head}\n\n「继续等待」＝再等下去（之后仍无进展会再提示一次）；\n「停止」＝停止这次任务。`;
+}
+async function showJobWaitDialog(payload) {
+  const name = payload.label || '任务';
+  const isAi = payload.kind === 'ai';
+  const go = await appConfirm(jobWaitText(payload), {
+    title: '等待任务完成中',
+    okText: '继续等待',
+    cancelText: isAi ? '暂停' : '停止',
+  });
+  if (go) return;
+  const logLine = (s) => { const el = $('logContent'); if (el) el.textContent += s + '\n'; };
   try {
-    const go = await appConfirm(
-      `「${name}」已经 90 秒没有收到任何数据，模型可能还在思考，也可能已经卡住。\n\n`
-      + '「继续等待」＝再等下去（之后仍无响应会每 90 秒提示一次）；\n'
-      + '「暂停」＝停止这次等待（该部分会标记为失败，可稍后重试）。',
-      { title: '等待模型响应中', okText: '继续等待', cancelText: '暂停' });
-    if (!go) {
-      aiPausedRequestIds.add(requestId);
-      try { window.labAPI.aiChatCancel(requestId); } catch (e) { /* 忽略 */ }
-      const el = $('logContent');
-      if (el) el.textContent += `\n⏸ 已暂停「${name}」的等待\n`;
-      logEvent(`AI 请求暂停 | ${name} | 静默 90 秒无数据`);
+    if (isAi) {
+      aiPausedRequestIds.add(payload.id);
+      window.labAPI.aiChatCancel(payload.id);
+      logLine(`⏸ 已暂停「${name}」的等待`);
+    } else if (payload.kind === 'plot') {
+      window.labAPI.cancelPlot(payload.id);
+      logLine(`⏹ 已停止「${name}」`);
+    } else if (payload.kind === 'chart') {
+      window.labAPI.cancelChartHelper(payload.id);
+      logLine(`⏹ 已停止「${name}」`);
+    } else if (payload.kind === 'generate') {
+      cancelGenerate();                       // 与点「取消生成」同一条路径
+      logLine(`⏹ 已停止「${name}」`);
     }
-  } finally {
-    aiStallDialogOpen = false;
-  }
+  } catch (e) { /* 忽略 */ }
+  logEvent(`任务等待被停止 | ${name} | ${payload.kind || ''}`);
+}
+function promptAiStall(requestId, label) {
+  return promptJobWait({ kind: 'ai', id: requestId, label, seconds: AI_STALL_WARN_SECONDS });
 }
 
 async function runAiPolish(onlyScopeVal) {
@@ -2441,21 +2468,88 @@ async function loadPreview() {
   wrap.replaceChildren(frame);
 }
 
-// ── 图表预览 ──
-async function populateChartFields() {
+// ── 图表页：预设 / 自定义两个模式 ──
+// 两个模式共用一份按实验保存的配置（.chart-config.json）：mode 决定用哪套生成与插图方式。
+let chartMode = '';              // 'preset' | 'custom' | ''
+let chartConfig = null;          // 配置对象（.chart-config.json 的内容）
+let chartPreviewUrl = null;      // 预览 dataUrl（同时是"已有预览"的标记）
+let chartPreviewCaption = '';    // 自定义模式的图注
+
+function chartPreviewNodes() {
+  return {
+    empty: $('chartPreviewEmpty'), image: $('chartPreviewImage'),
+    loading: $('chartLoading'), img: $('chartImg'), caption: $('chartPreviewCaption'),
+  };
+}
+function showChartPreview(dataUrl, caption) {
+  const n = chartPreviewNodes();
+  if (n.loading) n.loading.style.display = 'none';
+  if (n.empty) n.empty.style.display = 'none';
+  if (n.image) n.image.style.display = 'flex';
+  if (n.img) n.img.src = dataUrl;
+  chartPreviewUrl = dataUrl;
+  chartPreviewCaption = caption || '';
+  if (n.caption) {
+    n.caption.textContent = chartPreviewCaption;
+    n.caption.style.display = chartPreviewCaption ? 'block' : 'none';
+  }
+}
+function clearChartPreview() {
+  const n = chartPreviewNodes();
+  chartPreviewUrl = null; chartPreviewCaption = '';
+  if (n.image) n.image.style.display = 'none';
+  if (n.loading) n.loading.style.display = 'none';
+  if (n.caption) { n.caption.style.display = 'none'; n.caption.textContent = ''; }
+  if (n.empty) {
+    n.empty.style.display = 'flex';
+    const p = n.empty.querySelector('p');
+    if (p) p.textContent = '选好模式后点击"生成图表"预览';
+  }
+}
+function renderChartMode() {
+  const presetBtn = $('btnChartPreset');
+  const customBtn = $('btnChartCustom');
+  for (const [btn, mode] of [[presetBtn, 'preset'], [customBtn, 'custom']]) {
+    if (!btn) continue;
+    btn.classList.toggle('active', chartMode === mode);
+    btn.classList.toggle('chart-mode-btn', true);
+  }
+  const cfg = chartConfig || {};
+  const name = chartMode === 'preset' ? '预设' : (chartMode === 'custom' ? '自定义' : '');
+  const hint = $('chartModeHint');
+  if (hint) {
+    hint.textContent = chartMode === 'preset'
+      ? `当前模式：预设 —— ${cfg.xField || '?'} / ${cfg.yField || '?'}（点「预设」可改字段与插入位置）`
+      : (chartMode === 'custom'
+        ? `当前模式：自定义 —— ${String(cfg.requirement || '').slice(0, 40) || '（还没写需求）'}（点「自定义」可改需求）`
+        : '未选择模式 —— 点「预设」按字段快速出图，或点「自定义」用一句话让 AI 画图。');
+  }
+  const insertHint = $('chartInsertModeHint');
+  if (insertHint) insertHint.textContent = name ? `当前模式：${name}` : '未选择';
+}
+// 写配置：读-改-写，避免覆盖另一个模式的字段；失败给出提示而不是静默吞掉
+async function saveChartConfigSafe(expPath, patch) {
+  try {
+    const r = await window.labAPI.readChartConfig(expPath);
+    const merged = { ...((r && r.ok && r.config) || {}), ...patch };
+    const w = await window.labAPI.saveChartConfig(expPath, merged);
+    if (!w || !w.ok) throw new Error((w && w.error) || '保存失败');
+    chartConfig = merged;
+    if (patch.mode !== undefined) chartMode = patch.mode;
+    return true;
+  } catch (e) {
+    showToast('error', '图表配置保存失败', e.message, 6000);
+    return false;
+  }
+}
+// 只填字段下拉（保留当前选中），不碰配置
+function fillChartFieldOptions() {
   const xSel = $('chartXField');
   const ySel = $('chartYField');
   if (!xSel || !ySel) return;
-  // 切换实验后清空旧图表预览（chartPreviewUrl 已被 selectExperiment 置 null）
-  if (!chartPreviewUrl) {
-    $('chartPreviewImage').style.display = 'none';
-    $('chartLoading').style.display = 'none';
-    $('chartPreviewEmpty').style.display = 'flex';
-  }
   xSel.innerHTML = '<option value="">— 选择字段 —</option>';
   ySel.innerHTML = '<option value="">— 选择字段 —</option>';
   if (!currentSchema) return;
-  // 收集所有 array 字段，按 schema 分组
   const groupArrays = [];
   for (const group of (currentSchema.groups || [])) {
     const arrs = group.fields.filter(f => f.type === 'array');
@@ -2470,7 +2564,6 @@ async function populateChartFields() {
     }
     if (arrs.length >= 2) groupArrays.push(arrs);
   }
-  // 默认选中：优先取同一 group 内前两字段
   if (groupArrays.length > 0) {
     const pair = groupArrays[0];
     xSel.value = pair[0].key;
@@ -2479,21 +2572,72 @@ async function populateChartFields() {
     xSel.selectedIndex = 1;
     if (ySel.options.length > 2) ySel.selectedIndex = 2;
   }
-  // 恢复上次保存的图表配置
-  if (!currentExp) return;
+}
+// 用配置回填两个弹窗的控件
+function applyChartConfigToUi() {
+  const cfg = chartConfig || {};
+  fillChartFieldOptions();
+  if (cfg.xField && $('chartXField')) $('chartXField').value = cfg.xField;
+  if (cfg.yField && $('chartYField')) $('chartYField').value = cfg.yField;
+  if (cfg.chartType && $('chartType')) $('chartType').value = cfg.chartType;
+  if ($('chartTitle')) $('chartTitle').value = cfg.title || '';
+  if ($('chartXLabel')) $('chartXLabel').value = cfg.xlabel || '';
+  if ($('chartYLabel')) $('chartYLabel').value = cfg.ylabel || '';
+  if ($('chartInsertSection')) $('chartInsertSection').value = cfg.insertSection || '实验结果分析';
+  if ($('chartImageWidth')) $('chartImageWidth').value = cfg.imageWidth || 14;
+  if ($('customInsertSection')) $('customInsertSection').value = cfg.insertSection || '实验结果分析';
+  if ($('customImageWidth')) $('customImageWidth').value = cfg.imageWidth || 14;
+}
+// 切实验 / 进图表页时调用：读配置 + 迁移老数据 + 回显上次生成的图
+async function loadChartConfig(exp) {
+  const target = exp || currentExp;
+  chartConfig = null; chartMode = '';
+  if (!target) { clearChartPreview(); renderChartMode(); return; }
+  let customImageUrl = '';
   try {
-    const r = await window.labAPI.readChartConfig(currentExp.path);
-    if (r.ok && r.config) {
-      if (r.config.xField) xSel.value = r.config.xField;
-      if (r.config.yField) ySel.value = r.config.yField;
-      if (r.config.chartType) $('chartType').value = r.config.chartType;
-      if (r.config.title !== undefined) $('chartTitle').value = r.config.title;
-      if (r.config.xlabel !== undefined) $('chartXLabel').value = r.config.xlabel;
-      if (r.config.ylabel !== undefined) $('chartYLabel').value = r.config.ylabel;
-      if (r.config.insertSection) $('chartInsertSection').value = r.config.insertSection;
-      if (r.config.imageWidth) $('chartImageWidth').value = r.config.imageWidth;
+    const r = await window.labAPI.readChartConfig(target.path);
+    if (r && r.ok) { chartConfig = r.config || null; customImageUrl = r.customImageUrl || ''; }
+  } catch (e) { /* 读不到按未配置处理 */ }
+  if (currentExp !== target) return;                     // 中途切了实验
+  // 老版本把需求存在 localStorage.customPlots：迁到配置里，不丢用户已填的内容
+  if (!(chartConfig || {}).requirement) {
+    const legacy = legacyCustomPlot(target.id);
+    if (legacy) {
+      chartConfig = { ...(chartConfig || {}), requirement: legacy, mode: 'custom' };
+      await saveChartConfigSafe(target.path, { requirement: legacy, mode: 'custom' });
+      clearLegacyCustomPlot(target.id);
     }
-  } catch (e) { /* 配置读取失败忽略 */ }
+  }
+  const cfg = chartConfig || {};
+  chartMode = cfg.mode || (cfg.requirement ? 'custom' : (cfg.xField ? 'preset' : ''));
+  applyChartConfigToUi();
+  if (chartMode === 'custom' && customImageUrl) showChartPreview(customImageUrl, cfg.caption || '');
+  else clearChartPreview();
+  renderChartMode();
+}
+function openChartPresetModal() {
+  applyChartConfigToUi();
+  openModal('chartPresetModal');
+}
+async function saveChartPresetModal() {
+  if (!currentExp) return;
+  const xField = $('chartXField') ? $('chartXField').value : '';
+  const yField = $('chartYField') ? $('chartYField').value : '';
+  if (!xField || !yField) { showToast('warning', '请选择 X 和 Y 轴字段'); return; }
+  const ok = await saveChartConfigSafe(currentExp.path, {
+    mode: 'preset', xField, yField,
+    chartType: ($('chartType') && $('chartType').value) || 'scatter',
+    title: ($('chartTitle') && $('chartTitle').value) || '',
+    xlabel: ($('chartXLabel') && $('chartXLabel').value) || '',
+    ylabel: ($('chartYLabel') && $('chartYLabel').value) || '',
+    insertSection: ($('chartInsertSection') && $('chartInsertSection').value) || '实验结果分析',
+    imageWidth: parseFloat($('chartImageWidth') && $('chartImageWidth').value) || 14,
+  });
+  if (!ok) return;
+  closeModal('chartPresetModal');
+  clearChartPreview();
+  renderChartMode();
+  showToast('success', '已切换为预设模式', '回图表页点「生成图表」预览');
 }
 // 生成后按需把图表插入报告（单份生成与批量队列共用）。
 // 报告被插图后内容变了，主进程会顺带把带图表的版本同步到「自定义报告目录」，
@@ -2505,9 +2649,9 @@ async function maybeInsertChart(exp, result) {
   try {
     const ins = await window.labAPI.insertChartIntoReport(result.reportFile, exp.path, loadSettings().customReportDir || '');
     if (ins && ins.ok) {
-      logLine(`📊 图表已插入「${ins.section}」`);
+      logLine(`📊 图表已插入「${ins.section}」（${ins.mode === 'custom' ? '自定义' : '预设'}模式）`);
       if (ins.copiedTo) logLine(`📁 已同步到自定义目录：${ins.copiedTo}`);
-      logEvent(`图表插入 | ${exp.id} | ${ins.section}${ins.copiedTo ? ' | 已同步自定义目录' : ''}`);
+      logEvent(`图表插入 | ${exp.id} | ${ins.section} | ${ins.mode || 'preset'}${ins.copiedTo ? ' | 已同步自定义目录' : ''}`);
     } else {
       logLine(`⚠️ 图表插入失败：${(ins && ins.error) || '未知错误'}`);
       logEvent(`图表插入失败 | ${exp.id} | ${String((ins && ins.error) || '').slice(0, 120)}`);
@@ -2517,47 +2661,70 @@ async function maybeInsertChart(exp, result) {
   }
 }
 
+// 按当前模式生成预览：预设 = 字段出图；自定义 = AI 写代码出图并持久化
 async function generateChartPreview() {
   const exp = currentExp;
   if (!exp) return;
-  const xField = $('chartXField').value;
-  const yField = $('chartYField').value;
-  if (!xField || !yField) { showToast('warning', '请选择 X 和 Y 轴字段'); return; }
-  // 检查长度是否匹配
+  const n = chartPreviewNodes();
+  if (!chartMode) {
+    showToast('warning', '还没有选模式', '先点「预设」或「自定义」配置一下', 5000);
+    return;
+  }
+  if (n.empty) n.empty.style.display = 'none';
+  if (n.image) n.image.style.display = 'none';
+  if (n.caption) n.caption.style.display = 'none';
+  if (n.loading) {
+    n.loading.style.display = 'flex';
+    const t = $('chartLoadingText');
+    if (t) t.textContent = chartMode === 'custom' ? '正在让 AI 写绘图代码并本机绘制…（可能要几十秒）' : '正在生成图表…';
+  }
+  if (chartMode === 'custom') {
+    const ok = await generateCustomChartPreview(exp);
+    if (!ok) {
+      if (n.loading) n.loading.style.display = 'none';
+      if (n.empty) n.empty.style.display = 'flex';
+    }
+    return;
+  }
+  // 预设模式：按字段出图
+  const cfg = chartConfig || {};
+  const xField = ($('chartXField') && $('chartXField').value) || cfg.xField || '';
+  const yField = ($('chartYField') && $('chartYField').value) || cfg.yField || '';
+  if (!xField || !yField) {
+    if (n.loading) n.loading.style.display = 'none';
+    if (n.empty) n.empty.style.display = 'flex';
+    showToast('warning', '请先点「预设」选择 X 和 Y 轴字段');
+    return;
+  }
   const xData = currentData && currentData[xField];
   const yData = currentData && currentData[yField];
   if (Array.isArray(xData) && Array.isArray(yData) && xData.length !== yData.length) {
+    if (n.loading) n.loading.style.display = 'none';
+    if (n.empty) n.empty.style.display = 'flex';
     showToast('warning', `字段长度不匹配: ${xField}(${xData.length}) vs ${yField}(${yData.length})，请选择同组字段`);
     return;
   }
-  const chartType = $('chartType').value;
-  const title = $('chartTitle').value;
-  const xlabel = $('chartXLabel').value;
-  const ylabel = $('chartYLabel').value;
-  $('chartPreviewEmpty').style.display = 'none';
-  $('chartPreviewImage').style.display = 'none';
-  $('chartLoading').style.display = 'flex';
   try {
     const result = await window.labAPI.chartPreview({
       expPath: exp.path,
       xField,
       yField,
-      chartType,
-      title,
-      xlabel,
-      ylabel,
+      chartType: cfg.chartType || 'scatter',
+      title: cfg.title || '',
+      xlabel: cfg.xlabel || '',
+      ylabel: cfg.ylabel || '',
     });
     if (!result.ok) throw new Error(result.error || '生成失败');
-    $('chartLoading').style.display = 'none';
-    $('chartPreviewImage').style.display = 'flex';
-    $('chartImg').src = result.dataUrl;
-    chartPreviewUrl = result.dataUrl;
-    // 保存图表配置
-    window.labAPI.saveChartConfig(exp.path, { xField, yField, chartType, title, xlabel, ylabel, insertSection: $('chartInsertSection').value, imageWidth: parseFloat($('chartImageWidth').value) || 14 });
+    showChartPreview(result.dataUrl, result.title || '');
+    if (n.loading) n.loading.style.display = 'none';
   } catch (err) {
-    $('chartLoading').style.display = 'none';
-    $('chartPreviewEmpty').style.display = 'flex';
-    $('chartPreviewEmpty').querySelector('p').textContent = '生成失败: ' + err.message;
+    if (n.loading) n.loading.style.display = 'none';
+    if (n.empty) {
+      n.empty.style.display = 'flex';
+      const p = n.empty.querySelector('p');
+      if (p) p.textContent = '生成失败: ' + err.message;
+    }
+    showToast('error', '生成失败', err.message, 6000);
   }
 }
 
@@ -2569,7 +2736,7 @@ function switchTab(tabId) {
   document.querySelectorAll('.tab-pane').forEach(p => {
     p.classList.toggle('active', p.id === 'tab-' + tabId);
   });
-  if (tabId === 'chart') populateChartFields();
+  if (tabId === 'chart') loadChartConfig(currentExp);
   if (tabId === 'preview' && !previewLoaded) {
     loadPreview();
   }
@@ -2790,6 +2957,8 @@ function bindEvents() {
   };
   // AI 润色流式增量：kind=reasoning 是推理模型的思考内容（驱动「模型思考中」状态条），
   // content 是正文。两路并发时预览与思考文本只跟随最先发起的一路，思考字数两路合计。
+  // 生成 / 画图 / 图表脚本跑得久：主进程推 job-wait，这里弹窗问「继续等待 / 停止」
+  window.labAPI.onJobWait((payload) => { promptJobWait(payload); });
   window.labAPI.onAiChunk(({ requestId, delta, kind, label }) => {
     // 静默看门狗（主进程不再自动中止）：任何一类 AI 请求长时间没数据都弹窗问一次，
     // 所以这一支必须在「只处理润色请求」的判断之前。
@@ -2841,11 +3010,10 @@ function bindEvents() {
   };
   // 自定义思考题：弹窗增删题目、保存到当前实验
   $('btnCustomQuiz').onclick = openCustomQuizModal;
-  // 自定义画图：弹窗填写画图需求（首次需勾选同意在本机运行 AI 生成的绘图代码）
-  $('btnCustomPlot').onclick = openCustomPlotModal;
-  $('btnSaveCustomPlot').onclick = saveCustomPlotModal;
-  $('btnCancelCustomPlot').onclick = () => closeModal('customPlotModal');
-  $('btnCloseCustomPlot').onclick = () => closeModal('customPlotModal');
+  // 自定义图表：弹窗填写画图需求（首次需勾选同意在本机运行 AI 生成的绘图代码）
+  $('btnSaveCustomPlot').onclick = saveChartCustomModal;
+  $('btnCancelCustomPlot').onclick = () => closeModal('chartCustomModal');
+  $('btnCloseCustomPlot').onclick = () => closeModal('chartCustomModal');
   $('btnAddCustomQuiz').onclick = () => {
     const cur = collectCustomQuizRows(true);
     cur.push('');
@@ -2883,8 +3051,13 @@ function bindEvents() {
   loadSkillList();
   refreshAiScopeOptions(false);
   // 图表
+  $('btnChartPreset').onclick = openChartPresetModal;
+  $('btnChartCustom').onclick = openChartCustomModal;
   $('btnChartGenerate').onclick = generateChartPreview;
-  $('btnChartRefresh').onclick = async () => { await populateChartFields(); generateChartPreview(); };
+  $('btnSaveChartPreset').onclick = saveChartPresetModal;
+  $('btnCancelChartPreset').onclick = () => closeModal('chartPresetModal');
+  $('btnCloseChartPreset').onclick = () => closeModal('chartPresetModal');
+  $('btnChartRefresh').onclick = () => applyChartConfigToUi();
 }
 
 function openModal(id) { $(id).classList.add('show'); }
@@ -4116,14 +4289,7 @@ async function runGenerateReport(btn, genExpId) {
     return false;
   }
   const customQuiz = cq.none ? null : { questions: cq.questions, answers: cq.answers };
-  // 自定义画图：生成前让 AI 写绘图代码并本机绘制（每次重新请求，不缓存）
-  const cp = await ensureCustomPlotFigures(genExp);
-  if (cp.stop) {
-    $('logContent').textContent += '\n⏹ 已按你的选择停止生成（自定义画图未完成）\n';
-    return false;
-  }
-  const customPlot = cp.none ? null : { images: cp.images };
-  const result = await window.labAPI.runGenerate(genExp.path, studentInfo, variantChoices, expOverrides(genExp.id), loadSettings().embedDataPhoto !== false, loadSettings().customReportDir || '', customQuiz, customPlot);
+  const result = await window.labAPI.runGenerate(genExp.path, studentInfo, variantChoices, expOverrides(genExp.id), loadSettings().embedDataPhoto !== false, loadSettings().customReportDir || '', customQuiz);
   if (result.cancelled) {
     $('logContent').textContent += '\n⏹ 生成已取消\n';
     showToast('info', '生成已取消', getDisplayName(genExp));
