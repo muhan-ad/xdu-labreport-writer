@@ -133,14 +133,14 @@ def _plot_setup():
 
 
 def _plot_boyle(inv_p, v_vals, slope, intercept, output_path: str):
-    """绘制 V′~1/p 图：数据点 + 最小二乘拟合直线。"""
+    """绘制 V′~1/p 图：数据点 + 首末两点连线（两点法，照范例做法）。"""
     plt = _plot_setup()
 
     fig, ax = plt.subplots(figsize=(8, 5.5))
     ax.scatter(inv_p, v_vals, color="steelblue", s=60, zorder=5, label="实验数据")
     x0, x1 = min(inv_p), max(inv_p)
     ax.plot([x0, x1], [slope * x0 + intercept, slope * x1 + intercept],
-            color="red", linewidth=1.5, label="线性拟合")
+            color="red", linewidth=1.5, label="两点法直线")
 
     ax.set_xlabel(r"$1/p$ / kPa$^{-1}$", fontsize=13)
     ax.set_ylabel(r"$V'$ / mL", fontsize=13)
@@ -154,7 +154,7 @@ def _plot_boyle(inv_p, v_vals, slope, intercept, output_path: str):
 
 
 def _plot_charles(t_up, p_up, slope, intercept, cooling_tp, output_path: str):
-    """绘制 p~T 图：升温数据点 + 拟合直线；有降温数据则叠加（不参与拟合）。"""
+    """绘制 p~T 图：升温数据点 + 首末两点连线（两点法）；有降温数据则叠加（不参与计算）。"""
     plt = _plot_setup()
 
     fig, ax = plt.subplots(figsize=(8, 5.5))
@@ -162,7 +162,7 @@ def _plot_charles(t_up, p_up, slope, intercept, cooling_tp, output_path: str):
     ax.scatter(t_up, p_up, color="steelblue", s=60, zorder=5, label=up_label)
     x0, x1 = min(t_up), max(t_up)
     ax.plot([x0, x1], [slope * x0 + intercept, slope * x1 + intercept],
-            color="red", linewidth=1.5, label="线性拟合")
+            color="red", linewidth=1.5, label="两点法直线")
 
     if cooling_tp:
         t_dn, p_dn = zip(*cooling_tp)
@@ -199,21 +199,26 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     # ---------- 2. 计算 ----------
     # 下游计算均使用舍入后的显示值，保证文档内数值自洽（与范例做法一致）
     # 1) 波义耳—马略特定律：p(V′+V₀) = nRT = k → V′ = k·(1/p) − V₀
-    #    以 1/p 为横轴、V′ 为纵轴拟合：斜率 = k，截距 = −V₀
+    #    以 1/p 为横轴、V′ 为纵轴作图：斜率 = k，截距 = −V₀
+    #    **两点法（首末两点，照范例做法）**取斜率与截距；最小二乘只作 r² 对照（见控制台）
     T_iso = round(t_iso + 273.15, 2)
     ta_p = [round(p0 + dp, 2) for dp in data["ta_dp"]]
     inv_p = [1.0 / p for p in ta_p]
-    fit1 = linear_regression(inv_p, data["ta_v"])
-    k1 = round(fit1.slope)             # kPa·mL（1 kPa·mL = 10⁻³ J）
-    V0 = round(-fit1.intercept, 2)     # mL
+    v_vals = data["ta_v"]
+    fit1 = linear_regression(inv_p, v_vals)              # 仅用于 r² 对照
+    k1_raw = (v_vals[-1] - v_vals[0]) / (inv_p[-1] - inv_p[0])
+    b1_raw = v_vals[0] - k1_raw * inv_p[0]
+    k1 = round(k1_raw)                 # kPa·mL（1 kPa·mL = 10⁻³ J）
+    V0 = round(-b1_raw, 2)             # mL
     # n = k/(R·T)，k 换算 10⁻³ J 后结果即为 10⁻³ mol
     n_mmol = round(k1 / (R_THEORY * T_iso), 2)
 
     # 2) 查理定律：p = k₂·T，k₂ = nR/(V′+V₀) → R = k₂(V′+V₀)/n
     tb_p = [round(p0 + dp, 2) for dp in data["tb_dp"]]
     tb_T = [round(t + 273.15, 2) for t in data["tb_t"]]
-    fit2 = linear_regression(tb_T, tb_p)
-    k2 = round(fit2.slope, 2)          # kPa/K
+    fit2 = linear_regression(tb_T, tb_p)                 # 仅用于 r² 对照
+    k2_raw = (tb_p[-1] - tb_p[0]) / (tb_T[-1] - tb_T[0])
+    k2 = round(k2_raw, 2)              # kPa/K
     R_exp = round(k2 * (vp + V0) / n_mmol, 2)   # kPa·mL/K / 10⁻³ mol = J/(mol·K)
     E = round(abs(R_exp - R_THEORY) / R_THEORY * 100, 1)
 
@@ -223,20 +228,22 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     # ---------- 3. 控制台输出 ----------
     print(f"\n{'=' * 50}")
     print(f"表1 压强值 p/kPa: {ta_p}")
-    print(f"波义耳拟合: k = {k1} kPa*mL, V0 = {V0} mL (r^2 = {fit1.r_squared:.4f})")
+    print(f"波义耳两点法: k = {k1} kPa*mL, V0 = {V0} mL"
+          f"（对照：最小二乘斜率 {fit1.slope:.1f}, r^2 = {fit1.r_squared:.4f}）")
     print(f"n = {n_mmol} x 10^-3 mol")
     print(f"表2 压强值 p/kPa: {tb_p}")
-    print(f"查理拟合: k = {k2} kPa/K (r^2 = {fit2.r_squared:.4f})")
+    print(f"查理两点法: k = {k2} kPa/K"
+          f"（对照：最小二乘斜率 {fit2.slope:.4f}, r^2 = {fit2.r_squared:.4f}）")
     print(f"R = {R_exp} J/(mol*K), 相对误差 E = {E} %")
     if cooling_tp:
-        print(f"降温过程数据点: {len(cooling_tp)} 个（叠加绘图，不参与拟合）")
+        print(f"降温过程数据点: {len(cooling_tp)} 个（叠加绘图，不参与计算）")
     print(f"{'=' * 50}\n")
 
     # ---------- 4. 绘制图表 ----------
     boyle_plot = os.path.join(SCRIPT_DIR, "波义耳定律图.png")
     charles_plot = os.path.join(SCRIPT_DIR, "查理定律图.png")
-    _plot_boyle(inv_p, data["ta_v"], fit1.slope, fit1.intercept, boyle_plot)
-    _plot_charles(tb_T, tb_p, fit2.slope, fit2.intercept, cooling_tp, charles_plot)
+    _plot_boyle(inv_p, v_vals, k1_raw, b1_raw, boyle_plot)
+    _plot_charles(tb_T, tb_p, k2_raw, tb_p[0] - k2_raw * tb_T[0], cooling_tp, charles_plot)
     print(f"图已保存: {boyle_plot}")
     print(f"图已保存: {charles_plot}")
 
@@ -280,7 +287,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
         ],
         col_widths=[2.8] + [1.12] * N_POINTS,
     )
-    doc.add_paragraph("以 1/p 为横轴、可视体积 V′ 为纵轴作图并作线性拟合，"
+    doc.add_paragraph("以 1/p 为横轴、可视体积 V′ 为纵轴作图，取首末两点作直线（两点法），"
                       "得同一温度下测量气体压强与体积的关系图：")
     if not render_custom_plot(doc, 1, width_cm=14):
         doc.add_image(boyle_plot, width_cm=14)
@@ -288,13 +295,13 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     doc.add_math(r"k = nRT,\ T = " + f"{T_iso:.2f}"
                  + r"\ \mathrm{K},\ R = 8.31\ \mathrm{J/(mol·K)}")
     doc.add_paragraph("")
-    doc.add_run("由拟合直线斜率可得 ")
+    doc.add_run("由两点法直线斜率可得 ")
     doc.add_inline_math(r"k = " + f"{k1}" + r"\ \mathrm{kPa·mL}")
     doc.add_run("，所以")
     doc.add_math(r"n = \frac{k}{RT} \approx " + f"{n_mmol:.2f}"
                  + r"\times 10^{-3}\ \mathrm{mol}")
     doc.add_paragraph("")
-    doc.add_run("由拟合直线截距可得 ")
+    doc.add_run("由两点法直线截距可得 ")
     doc.add_inline_math(r"V_{0} = " + f"{V0:.2f}" + r"\ \mathrm{mL}")
     doc.add_run("。")
 
@@ -312,18 +319,18 @@ def _generate_docx(data: dict, output_path: str) -> bool:
         ],
         col_widths=[2.8] + [1.12] * N_POINTS,
     )
-    charles_intro = ("以绝对温度 T 为横轴、压强值 p 为纵轴作图并作线性拟合，"
+    charles_intro = ("以绝对温度 T 为横轴、压强值 p 为纵轴作图，取首末两点作直线（两点法），"
                      "得同一体积下测量气体压强与温度的关系图：")
     if cooling_tp:
         charles_intro = (charles_intro[:-1]
-                         + "，图中同时绘出降温过程的测量数据以作对比（不参与拟合）：")
+                         + "，图中同时绘出降温过程的测量数据以作对比（不参与计算）：")
     doc.add_paragraph(charles_intro)
     if not render_custom_plot(doc, 2, width_cm=14):
         doc.add_image(charles_plot, width_cm=14)
     doc.add_paragraph("由查理定律，p–T 直线的斜率为：")
     doc.add_math(r"k = \frac{nR}{V' + V_{0}}")
     doc.add_paragraph("")
-    doc.add_run("由拟合直线可得 ")
+    doc.add_run("由两点法直线可得 ")
     doc.add_inline_math(r"k \approx " + f"{k2:.2f}" + r"\ \mathrm{kPa/K}")
     doc.add_run("，经计算得：")
     doc.add_math(r"R = \frac{k(V' + V_{0})}{n} \approx " + f"{R_exp:.2f}"
