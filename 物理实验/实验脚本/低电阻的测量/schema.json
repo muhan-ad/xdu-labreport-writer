@@ -11,7 +11,8 @@
     {
       "name": "金属丝直径（螺旋测微计，6 次）",
       "fields": [
-        {"key": "d", "label": "金属丝直径 d", "type": "array", "length": 6, "unit": "mm", "required": true, "default": [3.958, 3.955, 3.956, 3.951, 3.953, 3.952]}
+        {"key": "d", "label": "金属丝直径 d", "type": "array", "length": 6, "unit": "mm", "required": true, "default": [3.958, 3.955, 3.956, 3.951, 3.953, 3.952]},
+        {"key": "d_inst", "label": "螺旋测微计仪器误差 Δ仪", "type": "number", "unit": "mm", "default": 0.001, "required": true, "minimum": 0}
       ]
     },
     {

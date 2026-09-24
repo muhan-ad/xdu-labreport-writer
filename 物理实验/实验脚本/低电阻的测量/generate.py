@@ -44,7 +44,9 @@ D_DEFAULT = [3.958, 3.955, 3.956, 3.951, 3.953, 3.952]  # mm
 L_DEFAULT = [100, 140, 180, 220, 260, 300, 340, 380]     # mm
 R_N_ZHENG_DEFAULT = [0.00558, 0.00775, 0.01, 0.01224, 0.01446, 0.0167, 0.01891, 0.02127]
 R_N_FAN_DEFAULT = [0.00565, 0.00787, 0.0115, 0.01236, 0.01466, 0.01686, 0.01916, 0.02139]
-D_INST_ERR = 0.001  # mm（螺旋测微计仪器误差）
+# 螺旋测微计仪器误差的默认值（0.001 mm，螺旋测微计允差）；实际取值由用户在数据表单里填，
+# 对应 schema 字段 d_inst，这里只作为来源说明保留。
+D_INST_ERR_DEFAULT = 0.001  # mm
 
 
 # （方式三：_create_template 已移除，数据真相为 data.json）
@@ -54,6 +56,8 @@ def _compute(data: dict) -> dict:
     # 读参数
     r1 = float(data["R_1"])
     r3 = float(data["R_3"])
+    # 仪器误差（用户填；缺省时退回默认值，见文件头说明）
+    d_inst = float(data["d_inst"]) if data.get("d_inst") is not None else D_INST_ERR_DEFAULT
     # 读直径（6 次，过滤未填项）
     d = [float(v) for v in data.get("d", []) if v is not None]
     # 读电阻测量（8 个长度点，L 与正反向读数配对，过滤未填项）
@@ -79,8 +83,8 @@ def _compute(data: dict) -> dict:
     d_std = std_dev(d_kept)
     d_sigma = d_std * d_t
     d_ua = smartlab_ua(d_kept)
-    d_ub = type_b(D_INST_ERR, "uniform")
-    d_u = smartlab_u(d_kept, D_INST_ERR)
+    d_ub = type_b(d_inst, "uniform")
+    d_u = smartlab_u(d_kept, d_inst)
 
     # 电桥读数平均
     rn_a = [(z + f) / 2 for z, f in zip(rn_zheng, rn_fan)]
@@ -100,7 +104,7 @@ def _compute(data: dict) -> dict:
     rho_u = math.sqrt(4 * (d_u / d_a) ** 2 + (R_x_ua / R_x_a) ** 2) * rho_a
 
     return {
-        "r1": r1, "r3": r3,
+        "r1": r1, "r3": r3, "d_inst": d_inst,
         "d": d, "d_a": d_a, "d_ua": d_ua, "d_u": d_u,
         "d_std": d_std, "d_sumsq": d_sumsq, "d_sigma": d_sigma,
         "d_ub": d_ub, "d_t": d_t, "ot": _ot,
@@ -143,7 +147,7 @@ def _generate_docx(data: dict, output_path: str):
         return v if isinstance(v, list) else [v]
 
     missing = []
-    for k in ("R_1", "R_3", "d", "L", "R_n_zheng", "R_n_fan"):
+    for k in ("R_1", "R_3", "d", "d_inst", "L", "R_n_zheng", "R_n_fan"):
         v = data.get(k)
         if v is None:
             missing.append(k)
@@ -179,7 +183,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_heading("1. 金属丝直径测量", level=2)
     doc.add_paragraph("")
     doc.add_run("用螺旋测微计在金属丝不同位置测量直径 6 次，仪器允差 ")
-    doc.add_inline_math(r"\Delta_{\text{仪}} = 0.001\,\text{mm}")
+    doc.add_inline_math(r"\Delta_{\text{仪}} = " + f"{r['d_inst']:g}" + r"\,\text{mm}")
     doc.add_run("。")
     d_str = "，".join(f"{x:.3f}" for x in r["d"])
     doc.add_paragraph(f"测量值（mm）：{d_str}")
@@ -224,7 +228,7 @@ def _generate_docx(data: dict, output_path: str):
     )
     doc.add_paragraph("B类不确定度：")
     doc.add_math(
-        r"\Delta d_{B} = \frac{\Delta_{\text{仪}}}{\sqrt{3}} = \frac{0.001}{\sqrt{3}}"
+        r"\Delta d_{B} = \frac{\Delta_{\text{仪}}}{\sqrt{3}} = \frac{" + f"{r['d_inst']:g}" + r"}{\sqrt{3}}"
         r" \approx " + format_number(r["d_ub"], sig_figs=3) + r"\,\text{mm}"
     )
     doc.add_paragraph("合成不确定度：")
