@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 const ocr = require('../src/main/ocr');
 
 const root = path.resolve(__dirname, '..');
@@ -48,6 +49,42 @@ test('OCR number parsing is strict about the whole string', () => {
   assert.equal(coerceNum(' -1.5 '), -1.5);
   assert.equal(coerceNum('2.7×10^-9'), 2.7e-9);
   assert.equal(coerceNum('1.5e-3'), 0.0015);
+});
+
+test('gravity photo average is recognized and the 8-by-9 photo table is transposed without dropping hole 9', () => {
+  const schema = JSON.parse(fs.readFileSync(path.join(root, '物理实验', '实验脚本', '重力加速度的测量', 'schema.json'), 'utf8'));
+  const fields = schema.groups.flatMap(group => group.fields);
+  assert.equal(fields.find(field => field.key === 'delta_instr').default, 0.01);
+  assert.equal(fields.find(field => field.key === 'T_avg').length, 9);
+  assert.ok(!fields.some(field => ['T0', 'h1', 'h2'].includes(field.key)), '交点是生成时计算值，不应在表单或识图核对页显示');
+
+  const source = fs.readFileSync(path.join(root, 'src', 'ocr.js'), 'utf8');
+  const context = vm.createContext({
+    window: { ocrNumber: require('../src/shared/ocr-number') },
+    coerceNum: require('../src/shared/ocr-number').coerceNum,
+    RECOG_SCALAR_DEFAULT_TOL: 0.2,
+  });
+  vm.runInContext(source.slice(source.indexOf('function buildRecogPrompt('), source.indexOf('// 补全被截断的结尾')), context);
+  vm.runInContext(source.slice(source.indexOf('function deriveArrayPattern('), source.indexOf('// ── 判断表单里某个字段当前是否为空')), context);
+  const prompt = context.buildRecogPrompt(schema, false);
+  assert.match(prompt, /单周期平均/);
+  assert.match(prompt, /第9孔整列必须保留/);
+  assert.doesNotMatch(prompt, /key="(?:T0|h1|h2)"/);
+
+  const photoRows = Array.from({ length: 8 }, (_, repeat) =>
+    Array.from({ length: 9 }, (_, hole) => 10 + hole + repeat / 100));
+  const recognized = context.validateRecog({ fields: {
+    delta_instr: { value: 5.45 },
+    trials: { value: photoRows },
+    T_avg: { value: Array.from({ length: 9 }, (_, hole) => 1 + hole / 10) },
+  } }, schema);
+  const trials = recognized.find(field => field.key === 'trials');
+  const averages = recognized.find(field => field.key === 'T_avg');
+  assert.equal(trials.value.length, 9);
+  assert.deepEqual(JSON.parse(JSON.stringify(trials.value[8])), photoRows.map(row => row[8]));
+  assert.equal(averages.value.length, 9);
+  assert.equal(recognized.find(field => field.key === 'delta_instr').value, null,
+    '照片上的质心位置不得误识别为秒表精度并覆盖 0.01 默认值');
 });
 
 test('AI 服务页：两个配置入口就地展开，小米默认模型为 mimo-v2.5', () => {
@@ -102,6 +139,28 @@ test('识别弹窗样式：JS 用到的类在 ocr.css 里都有，且不再落�
     'recog-badge.ok', 'recog-badge.warn', 'recog-badge.fail']) {
     assert.ok(css.includes(cls), 'ocr.css 缺少 ' + cls);
   }
+});
+
+test('核对页不会重叠：告警原因独占一行 + 原图面板不超出分栏槽位', () => {
+  // 用户报「识图结果严重重叠」。两个根因都在 ocr.css，且都是静默的（不报错、只是难看）：
+  // 1) .review-field 少了 flex-wrap —— .recog-field-reason 是 flex:1 0 100%，在 nowrap 行里
+  //    会把同行的 .form-field 压成 0 宽（数组格子竖着重叠、数值输入框直接消失）；
+  // 2) .recog-image-pane 曾是 max-height:none —— 竖拍照片高出 .recog-split，
+  //    溢出部分盖住字段列表下部和提示条。
+  const raw = fs.readFileSync(path.join(root, 'src', 'ocr.css'), 'utf8');
+  const css = raw.replace(/\/\*[\s\S]*?\*\//g, '');   // 剥注释：说明文字里也提到这些关键字
+  const flexBlocks = [...css.matchAll(/\.review-field\s*\{([^}]*)\}/g)].map(m => m[1]);
+  const rowBlock = flexBlocks.find(b => /display:\s*flex/.test(b));
+  assert.ok(rowBlock, '.review-field 必须是 flex 行（勾选框 + 数据格）');
+  assert.match(rowBlock, /flex-wrap:\s*wrap/, 'review-field 要能换行：否则 100% 宽的原因文字会把输入框压成 0 宽');
+  const reasonBlock = [...css.matchAll(/\.recog-field-reason\s*\{([^}]*)\}/g)].map(m => m[1])[0] || '';
+  assert.match(reasonBlock, /flex:\s*1 0 100%/, '原因文字保持独占一整行');
+  // 原图面板：不允许再回到 max-height:none，必须与 .recog-split 同高并让图片缩放
+  assert.ok(!/\.recog-image-pane\s*\{[^}]*max-height:\s*none/.test(css), '原图面板不得 max-height:none（会溢出盖住核对结果）');
+  const paneBlock = [...css.matchAll(/\.recog-image-pane\s*\{([^}]*)\}/g)].map(m => m[1]).join(' ');
+  assert.match(paneBlock, /align-self:\s*stretch/, '原图面板与字段栏同高，不高出分栏');
+  const imgBlock = [...css.matchAll(/\.recog-image-pane img\s*\{([^}]*)\}/g)].map(m => m[1])[0] || '';
+  assert.match(imgBlock, /object-fit:\s*contain/, '原图按 contain 缩放进面板，不把面板撑高');
 });
 
 test('OCR recognition is bound to a session and cancellable', () => {

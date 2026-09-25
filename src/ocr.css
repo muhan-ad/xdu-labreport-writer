@@ -131,7 +131,7 @@
   max-height: min(420px, calc(100vh - 300px));
   box-shadow: var(--shadow-sm);
 }
-.recog-image-pane img { display: block; width: 100%; }
+.recog-image-pane img { display: block; width: 100%; flex: 1 1 auto; min-height: 0; object-fit: contain; }
 .recog-fields { flex: 1 1 auto; min-width: 0; }
 
 .recog-group { margin-bottom: 16px; }
@@ -190,12 +190,6 @@
 }
 .recog-only-empty input { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
 
-/* 识别核对行：告警原因换行显示 */
-
-/* 数组/矩阵：值单独占满一整行（行内宽度放不下 10+ 项） */
-
-/* 宽块行（数组/矩阵）：标签占满剩余宽度，宽块必须能收缩，否则会撑破弹窗 */
-
 /* 原图面板：核对时固定在左侧（sticky），字段列表再长、滚动时原图也不会滚走；
    点击可全屏放大（核对时要能看清手写数字）。
    注意：滚动容器是 #recognizeModal .modal-body（overflow:auto），
@@ -204,7 +198,6 @@
   cursor: zoom-in;
   position: sticky;
   top: 0;
-  align-self: flex-start;
 }
 .recog-image-hint {
   position: sticky;
@@ -278,7 +271,18 @@
 #recogPick, #recogLoading { overflow-y: auto; }
 #recogResult { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .recog-split { flex: 1 1 auto; min-height: 0; }
-.recog-image-pane { flex: 0 0 40%; max-width: 40%; max-height: none; }
+/* 原图面板必须与字段栏同高：align-self: stretch + 图片 object-fit 缩放。
+   面板一旦高出 .recog-split，溢出部分会盖住字段列表下部与提示条（历史缺陷：
+   此处曾是 max-height: none，竖拍照片直接把核对结果压住）。 */
+.recog-image-pane {
+  flex: 0 0 40%;
+  max-width: 40%;
+  max-height: 100%;
+  min-height: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+}
 .recog-fields { max-height: 100%; overflow-y: auto; padding-right: 6px; }
 
 /* 每字段：勾选框 + 主表单同款数据格；状态用左边框与标签后缀色标 */
@@ -286,12 +290,17 @@
   display: flex;
   gap: 10px;
   align-items: flex-start;
+  /* 告警原因（.recog-field-reason，flex-basis 100%）必须独占下一行。
+     缺了 wrap，它会和输入框挤在同一行：输入框被压成 0 宽、数组格子竖着重叠、
+     整行还被撑出横向滚动条 —— 即「识图结果严重重叠」（历史缺陷）。 */
+  flex-wrap: wrap;
   padding: 8px 10px 8px 6px;
   margin-bottom: 8px;
   border-left: 3px solid transparent;
   border-radius: var(--radius-sm);
   transition: background var(--transition-fast);
 }
+/* 宽块（数组/矩阵）必须能收缩，否则撑破弹窗；标签随之占满剩余宽度 */
 .review-field > .form-field { flex: 1 1 auto; min-width: 0; }
 .review-field:hover { background: var(--card-hover); }
 .review-field[data-status="ok"] { border-left-color: #38a169; }

@@ -24,6 +24,15 @@ function lookup(host, options, callback) {
     else callback(null, addresses[0].address, addresses[0].family);
   });
 }
+// 自建连接池：Node 默认的全局 Agent 自带 5 秒 socket 空闲超时
+// （http.globalAgent.options.timeout === 5000，且 createSocket 里
+// `req.timeout || this.options.timeout` 会无条件套到每个连接上）。
+// 非流式长请求（识图：模型算完之前连接上零字节）会被它静默掐断，
+// 用户看到「网络连接超时」——这不是调用方传的超时，改idleTimeoutMs 没用。
+// 这里显式把 Agent 的 socket 超时关成 0，让超时只由调用方显式传入的
+// options.timeout（默认 15 秒空闲）决定；传 0 的连接才真正永不被时间打断。
+const agent = new https.Agent({ keepAlive: true, scheduling: 'lifo', timeout: 0, noDelay: true });
+
 async function response(raw, options = {}, redirects = 0) {
   const url = publicUrl(raw);
   if (options.allowedHost && url.hostname !== options.allowedHost) throw Error('下载来源不在允许列表');
@@ -33,7 +42,7 @@ async function response(raw, options = {}, redirects = 0) {
   // 空闲计时必然先于总超时触发，中止交给用户「取消」）。
   const idleRaw = options.idleTimeoutMs === undefined ? 15000 : Number(options.idleTimeoutMs);
   const idleMs = idleRaw > 0 ? idleRaw : 0;
-  const reqOptions = { ...options, lookup, headers: { 'User-Agent': 'labreport-writer', ...options.headers } };
+  const reqOptions = { ...options, agent, lookup, headers: { 'User-Agent': 'labreport-writer', ...options.headers } };
   if (idleMs > 0) reqOptions.timeout = idleMs;
   const res = await new Promise((resolve, reject) => {
     const req = https.request(url, reqOptions, resolve);
@@ -81,4 +90,4 @@ async function download(url, dest, { signal, maxBytes, expectedSize, allowedHost
     if (size !== expectedSize) throw Error('更新包大小与清单不一致');
   } catch (e) { if (fs.existsSync(dest)) fs.unlinkSync(dest); throw e; }
 }
-module.exports = { blocked, publicUrl, lookup, response, json, download };
+module.exports = { blocked, publicUrl, lookup, response, json, download, agent };

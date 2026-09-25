@@ -2,10 +2,42 @@
   "实验": "静电场的模拟",
   "groups": [
     {
-      "name": "等势线半径测量（同轴电缆，7 个等势点）",
+      "name": "同轴电缆模型参数",
       "fields": [
-        {"key": "u_r", "label": "等势线电压 U_r", "type": "array", "length": 7, "unit": "V", "required": true, "default": [7, 6, 5, 4, 3, 2, 1]},
-        {"key": "r", "label": "等势线半径 r", "type": "array", "length": 7, "unit": "cm", "required": true, "default": [1.65, 2.11, 2.65, 3.28, 3.95, 4.71, 5.52]}
+        {"key": "u_a", "label": "电源电压 U_a", "type": "number", "unit": "V", "default": 10, "required": true},
+        {"key": "r_a", "label": "内电极半径 r_a", "type": "number", "unit": "cm", "default": 1, "required": true},
+        {"key": "r_b", "label": "外电极半径 r_b", "type": "number", "unit": "cm", "default": 6.5, "required": true}
+      ]
+    },
+    {
+      "name": "表1：同轴电缆等位点半径（1～7 V，每30°一测）",
+      "fields": [
+        {
+          "key": "coax_radii", "label": "各角度实测半径", "type": "matrix", "rows": 7, "cols": 12,
+          "rowLabels": ["1 V", "2 V", "3 V", "4 V", "5 V", "6 V", "7 V"],
+          "colLabels": ["0°", "30°", "60°", "90°", "120°", "150°", "180°", "210°", "240°", "270°", "300°", "330°"],
+          "unit": "cm", "required": true,
+          "ocrHint": "仅抄录表1中1V到7V、每级12个角度的半径行；角度行不作为数据。表2的平均半径及ln r由程序计算，不要填到本矩阵。"
+        }
+      ]
+    },
+    {
+      "name": "表3：平行线电极等位点坐标（3～8 V，每级10点）",
+      "fields": [
+        {
+          "key": "parallel_x", "label": "各等势线 x 坐标", "type": "matrix", "rows": 6, "cols": 10,
+          "rowLabels": ["3 V", "4 V", "5 V", "6 V", "7 V", "8 V"],
+          "colLabels": ["点1", "点2", "点3", "点4", "点5", "点6", "点7", "点8", "点9", "点10"],
+          "unit": "cm", "required": true,
+          "ocrHint": "按表3的3V至8V顺序，只抄录每一级的x行；每行必须10个坐标，不能混入y行。"
+        },
+        {
+          "key": "parallel_y", "label": "各等势线 y 坐标", "type": "matrix", "rows": 6, "cols": 10,
+          "rowLabels": ["3 V", "4 V", "5 V", "6 V", "7 V", "8 V"],
+          "colLabels": ["点1", "点2", "点3", "点4", "点5", "点6", "点7", "点8", "点9", "点10"],
+          "unit": "cm", "required": true,
+          "ocrHint": "按表3的3V至8V顺序，只抄录每一级的y行；每行必须10个坐标，不能混入x行。"
+        }
       ]
     }
   ]

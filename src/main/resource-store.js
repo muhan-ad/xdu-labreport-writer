@@ -122,16 +122,25 @@ function resourceVersion(root) {
 function syncBuiltin(builtin, target, fingerprint, appVersion) {
   const state = readState(target);
   if (state.builtinFingerprint === fingerprint) return false;
+  const hasDataPackage = Boolean(state.manifest?.dataVersion);
   replaceTree(target, candidate => {
     const variantBases = {};
     for (const file of resourceFiles(builtin)) {
       const source = path.join(builtin, file);
       const dest = path.join(candidate, file);
       const parts = file.split(path.sep);
-      if (path.basename(file) === 'variants.json') variantBases[file] = fs.readFileSync(source, 'utf8');
+      const isVariants = path.basename(file) === 'variants.json';
+      if (isVariants) {
+        // 数据包的变体基线属于数据包，安装升级不能改写其所有权记录。
+        variantBases[file] = hasDataPackage && state.variantBases?.[file] !== undefined
+          ? state.variantBases[file] : fs.readFileSync(source, 'utf8');
+      }
       // Only migrate existing user experiments. New ones are copied on first write.
       if (parts[0] !== 'common' && !fs.existsSync(path.join(candidate, parts[0]))) continue;
-      if (path.basename(file) === 'variants.json') {
+      // 已应用数据包时，现有资源可能来自热更新；旧状态没有逐文件来源信息，
+      // 因此保守保留现有文件，只补齐安装包新增而本地缺失的资源。
+      if (hasDataPackage && fs.existsSync(dest)) continue;
+      if (isVariants) {
         const text = fs.readFileSync(source, 'utf8');
         const previous = state.variantBases?.[file];
         if (fs.existsSync(dest)) {

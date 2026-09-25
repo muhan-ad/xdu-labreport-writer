@@ -1,376 +1,302 @@
 # -*- coding: utf-8 -*-
-"""静电场的模拟 — 数据处理脚本（从公众号"对策府库"物理实验计算器提取）。
+"""电流场模拟静电场：按「电流场模拟静电场-慕寒」的两种电极模型生成报告。
 
-参考源：
-  - 数据录入结构：XDU物理实验小助手 实验定义 JSON（变量 U_r / r / U_r_U_a / ln_r）
-  - 文件范式：模仿 物理实验/实验脚本/<实验名>/generate.py
-实验原理：
-  同轴电缆静电场 U(r) = U_a * ln(b/r) / ln(b/a)，即 ln(r) 与 U 呈线性关系。
-  测量各等势线半径 r，作 ln(r) ~ U/U_a 图，线性拟合验证分布规律。
+数据以表1的7×12半径和表3的6×10坐标为准；表2均值与拟合系数每次重算。
+源文档正文的实验拟合系数与其表2不一致，不能作为固定常数写入报告。
 """
 
 import math
 import os
 import sys
 
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
-from common import *
-from common.docx_report import DocxReportWriter
-from common.variants import compose, render_custom_quiz
-from common.custom_plot import render_custom_plot
-from common.plot_utils import plot_fit
+from common import linear_regression
 from common.data_io import load_data
+from common.docx_report import DocxReportWriter
+from common.custom_plot import render_custom_plot
+from common.variants import compose, render_custom_quiz
 
-# ── 实验参数 ──
-# 等势线电压（V），常量数组，对应 7V~1V
-U_R_LIST = [7, 6, 5, 4, 3, 2, 1]
-# 示例数据：对应等势线半径（cm）
-R_DEFAULT = [1.65, 2.11, 2.65, 3.28, 3.95, 4.71, 5.52]
+COAX_LEVELS = tuple(range(1, 8))
+PARALLEL_LEVELS = tuple(range(3, 9))
+ANGLES = tuple(range(0, 360, 30))
+COLORS = ("#0072B2", "#E69F00", "#009E73", "#CC79A7",
+          "#56B4E9", "#D55E00", "#000000")
+
+plt.rcParams.update({
+    "font.sans-serif": ["Microsoft YaHei", "SimHei", "DejaVu Sans"],
+    "axes.unicode_minus": False,
+    "font.size": 9,
+    "axes.labelsize": 9,
+    "xtick.labelsize": 8,
+    "ytick.labelsize": 8,
+    "savefig.dpi": 300,
+})
 
 
-# （方式三：_create_template 已移除，数据真相为 data.json）
+def _number(value, label):
+    if value is None:
+        raise ValueError(f"{label}未填写")
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label}不是有效数字") from exc
+    if not math.isfinite(result):
+        raise ValueError(f"{label}必须是有限数字")
+    return result
 
 
-def _compute(data: dict) -> dict:
-    """读取 data.json 数据并计算全部结果。"""
-    # 读 U_r 和 r（长度 7 的数组，过滤未填，保持旧 read_column 行为）
-    u_r = [float(v) for v in data["u_r"] if v is not None]
-    r = [float(v) for v in data["r"] if v is not None]
+def _matrix(data, key, rows, cols, positive=False):
+    raw = data.get(key)
+    if not isinstance(raw, list) or len(raw) != rows:
+        raise ValueError(f"{key}应有{rows}行；旧版仅有半径汇总值的数据请重新核对表1、表3")
+    result = []
+    for i, row in enumerate(raw, 1):
+        if not isinstance(row, list) or len(row) != cols:
+            raise ValueError(f"{key}第{i}行应有{cols}个点")
+        values = [_number(v, f"{key}第{i}行第{j}点") for j, v in enumerate(row, 1)]
+        if positive and any(v <= 0 for v in values):
+            raise ValueError(f"{key}第{i}行半径必须大于0")
+        result.append(values)
+    return result
 
-    n = len(r)
-    bad_r = [i + 1 for i, v in enumerate(r) if v <= 0]
-    if bad_r:
-        print(f"[错误] 等势线半径 r 第 {bad_r} 组非正，ln(r) 无定义，请检查数据。")
-        return None
-    u_a = 10.0  # 外加电压 U_a = 10 V（与计算器一致：U_r_U_a = U_r / 10）
-    u_r_ua = [u / u_a for u in u_r]  # U_r / U_a
-    ln_r = [math.log(ri) for ri in r]  # ln(r)
 
-    # 线性拟合：ln(r) = intercept + slope * (U_r / U_a)
-    fit = linear_regression(u_r_ua, ln_r)
-
-    # A 类不确定度的计算过程量：残差标准差 s 与自变量离差平方和 S_xx
-    # （口径与 linear_regression 内部完全一致，故由它们还原的 σ_b、σ_a 即拟合输出值）
-    x_bar = mean(u_r_ua)
-    S_xx = sum((x - x_bar) ** 2 for x in u_r_ua)
-    residuals = [ln_r[i] - (fit.intercept + fit.slope * u_r_ua[i]) for i in range(n)]
-    s_res = math.sqrt(sum(rv ** 2 for rv in residuals) / (n - 2))
-
+def _compute(data):
+    u_a = _number(data.get("u_a"), "电源电压 U_a")
+    r_a = _number(data.get("r_a"), "内电极半径 r_a")
+    r_b = _number(data.get("r_b"), "外电极半径 r_b")
+    if not (u_a >= 8 and 0 < r_a < r_b):
+        raise ValueError("需满足 U_a≥8 V 且 0<r_a<r_b，才能覆盖模板中的全部等势线")
+    coax = _matrix(data, "coax_radii", 7, 12, positive=True)
+    px = _matrix(data, "parallel_x", 6, 10)
+    py = _matrix(data, "parallel_y", 6, 10)
+    avg_r = [sum(row) / len(row) for row in coax]
+    ln_r = [math.log(v) for v in avg_r]
+    ratio = [u / u_a for u in COAX_LEVELS]
+    fit = linear_regression(ln_r, ratio)  # 与慕寒模板图2一致：x=ln r，y=U_r/U_a
+    theory_slope = -1 / math.log(r_b / r_a)
     return {
-        "u_r": u_r, "r": r, "u_a": u_a,
-        "u_r_ua": u_r_ua, "ln_r": ln_r,
-        "slope": fit.slope, "slope_u": fit.slope_uncertainty,
-        "intercept": fit.intercept, "intercept_u": fit.intercept_uncertainty,
-        "r_squared": fit.r_squared, "r_corr": fit.r,
-        "n": n, "x_bar": x_bar, "S_xx": S_xx, "s_res": s_res,
+        "u_a": u_a, "r_a": r_a, "r_b": r_b,
+        "coax_radii": coax, "parallel_x": px, "parallel_y": py,
+        "r": avg_r, "ln_r": ln_r,
+        "u_r": COAX_LEVELS, "u_r_ua": ratio, "n": len(COAX_LEVELS),
+        "slope": fit.slope, "intercept": fit.intercept,
+        "slope_u": fit.slope_uncertainty, "intercept_u": fit.intercept_uncertainty,
+        "r_corr": fit.r, "r_squared": fit.r_squared,
+        "theory_slope": theory_slope, "theory_intercept": 1.0,
+        "slope_error": abs((fit.slope - theory_slope) / theory_slope) * 100,
+        "intercept_error": abs(fit.intercept - 1.0) * 100,
     }
 
 
-def _print_results(r: dict):
-    """控制台打印计算结果。"""
-    print("=" * 56)
-    print("静电场的模拟 — 计算结果")
-    print("=" * 56)
-    print(f"U_a = {r['u_a']} V")
-    print(f"{'U_r/V':>8} {'r/cm':>8} {'ln(r)':>10} {'U_r/U_a':>10}")
-    for i in range(r["n"]):
-        print(f"{r['u_r'][i]:8.1f} {r['r'][i]:8.2f} {r['ln_r'][i]:10.4f} {r['u_r_ua'][i]:10.3f}")
-    print()
-    print("线性拟合: ln(r) = a + b * (U_r/U_a)")
-    print(f"  斜率 b = {r['slope']:.4f} ± {r['slope_u']:.4f}")
-    print(f"  截距 a = {r['intercept']:.4f} ± {r['intercept_u']:.4f}")
-    print(f"  相关系数 r = {r['r_corr']:.6f}")
-    print(f"  决定系数 R² = {r['r_squared']:.6f}")
-    print("=" * 56)
+def _save_figure(fig, path):
+    fig.savefig(path, dpi=300, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
 
 
-def _generate_docx(data: dict, output_path: str):
-    """从 data.json 读取数据，计算并生成 Word 实验报告。"""
-    # 校验必填数据（required 字段为 null 或 array 含 null → 缺失）
-    missing = []
-    for k in ("u_r", "r"):
-        v = data.get(k)
-        if v is None:
-            missing.append(k)
-        elif isinstance(v, list) and any(x is None for x in v):
-            missing.append(k)
-    if missing:
-        print("以下必填数据未填写，请补齐后重新运行：")
-        for m in missing:
-            print(f"  - {m}")
-        return
+def _plot_coax(r, path):
+    fig, ax = plt.subplots(figsize=(6.5, 6.0), constrained_layout=True)
+    theta = np.linspace(0, 2 * np.pi, 361)
+    observed_theta = np.deg2rad(ANGLES)
+    for i, voltage in enumerate(COAX_LEVELS):
+        color = COLORS[i]
+        radius = r["r"][i]
+        ax.plot(radius * np.cos(theta), radius * np.sin(theta),
+                color=color, linewidth=1.7, label=f"{voltage} V")
+        ax.scatter(np.array(r["coax_radii"][i]) * np.cos(observed_theta),
+                   np.array(r["coax_radii"][i]) * np.sin(observed_theta),
+                   color=color, s=8, alpha=0.5, zorder=3)
+        ax.text(radius + 0.08, (3 - i) * 0.13, f"{voltage}V", color=color, fontsize=7)
+    for angle in np.deg2rad(range(0, 360, 30)):
+        ax.annotate("", xy=(4.65 * np.cos(angle), 4.65 * np.sin(angle)),
+                    xytext=(2.6 * np.cos(angle), 2.6 * np.sin(angle)),
+                    arrowprops={"arrowstyle": "->", "lw": 0.65, "color": "#7A8490"})
+    ax.set(xlabel="x (cm)", ylabel="y (cm)", title="同轴电缆模型：等势线与电场线")
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlim(-6, 6.4)
+    ax.set_ylim(-6, 6)
+    ax.grid(alpha=0.18)
+    _save_figure(fig, path)
 
+
+def _plot_fit(r, path):
+    x = np.array(r["ln_r"])
+    y = np.array(r["u_r_ua"])
+    xx = np.linspace(min(x) - 0.06, max(x) + 0.06, 250)
+    fig, ax = plt.subplots(figsize=(7, 4.5), constrained_layout=True)
+    ax.scatter(x, y, s=36, marker="o", facecolors="white", edgecolors="#0072B2",
+               linewidths=1.5, label="测量点", zorder=3)
+    ax.plot(xx, r["slope"] * xx + r["intercept"], color="#D55E00",
+            linewidth=1.8, label="实验拟合")
+    ax.plot(xx, 1 + r["theory_slope"] * xx, color="#343B46",
+            linewidth=1.1, linestyle="--", label="理论关系")
+    ax.set(xlabel="ln(r / cm)", ylabel=r"$U_r/U_a$", title="同轴电缆模型：归一化电位与 ln r")
+    ax.set_ylim(bottom=0)
+    ax.grid(alpha=0.18)
+    ax.legend(frameon=False, fontsize=8)
+    _save_figure(fig, path)
+
+
+def _plot_parallel(r, path):
+    fig, ax = plt.subplots(figsize=(7.4, 5.4), constrained_layout=True)
+    curves = []
+    for i, voltage in enumerate(PARALLEL_LEVELS):
+        xs = np.array(r["parallel_x"][i])
+        ys = np.array(r["parallel_y"][i])
+        # 每级全部10个实测点参与 x(y) 二次最小二乘，不预设剔除点。
+        polynomial = np.poly1d(np.polyfit(ys, xs, 2))
+        yy = np.linspace(min(ys), max(ys), 200)
+        ax.plot(polynomial(yy), yy, color=COLORS[i], linewidth=1.9,
+                label=f"{voltage} V")
+        ax.scatter(xs, ys, s=13, color=COLORS[i], alpha=0.65, zorder=3)
+        curves.append((polynomial, min(ys), max(ys)))
+        label_y = float(np.median(ys))
+        ax.text(polynomial(label_y) + 0.06, label_y, f"{voltage}V",
+                color=COLORS[i], fontsize=7)
+    # 中央共同测量区域的电场线示意：与近似竖直等势线正交，方向由高电位到低电位。
+    low = max(curve[1] for curve in curves)
+    high = min(curve[2] for curve in curves)
+    for y in np.linspace(low + 0.2, high - 0.2, 9):
+        x_left = curves[-1][0](y) + 0.18
+        x_right = curves[0][0](y) - 0.18
+        ax.annotate("", xy=(x_right, y), xytext=(x_left, y),
+                    arrowprops={"arrowstyle": "->", "lw": 0.7, "color": "#8B949E"})
+    ax.set(xlabel="x (cm)", ylabel="y (cm)", title="平行线电极模型：等势线与电场线")
+    ax.grid(alpha=0.15)
+    ax.set_xlim(min(min(row) for row in r["parallel_x"]) - 0.3,
+                max(max(row) for row in r["parallel_x"]) + 0.3)
+    ax.set_ylim(min(min(row) for row in r["parallel_y"]) - 0.3,
+                max(max(row) for row in r["parallel_y"]) + 0.3)
+    _save_figure(fig, path)
+
+
+def _generate_docx(data, output_path):
     r = _compute(data)
-    if r is None:
-        return
-    _print_results(r)
+    output_dir = os.path.dirname(os.path.abspath(output_path))
+    os.makedirs(output_dir, exist_ok=True)
+    coax_path = os.path.join(output_dir, "coax_field.png")
+    fit_path = os.path.join(output_dir, "fit_plot.png")
+    parallel_path = os.path.join(output_dir, "parallel_field.png")
+    _plot_coax(r, coax_path)
+    _plot_fit(r, fit_path)
+    _plot_parallel(r, parallel_path)
 
     doc = DocxReportWriter(output_path)
-
-    doc.add_title("静电场的模拟")
+    doc.add_title("电流场模拟静电场")
     doc.add_student_info()
-
-    # ── 变体组合：实验原理 / 实验方法（存在 variants.json 且应用传入选择时生效）──
     variants = compose(SCRIPT_DIR, r)
+
+    doc.add_heading("一、实验原理", level=1)
     if "实验原理" in variants:
-        doc.add_heading("实验原理", level=1)
         doc.add_paragraph_rich(variants["实验原理"])
+    else:
+        doc.add_paragraph_rich(
+            "无电荷区的静电位与均匀不良导体中稳恒电流场的电位都满足"
+            r"$\nabla^2 U=0$。电极形状、电位边界条件一致，且介质电导率均匀并远小于"
+            "电极电导率时，两场具有相同的电位分布。因此可用电流场模拟难以直接测量的静电场。"
+        )
+        doc.add_paragraph_rich(
+            r"同轴电缆模型满足 $U_r/U_a=\ln(r_b/r)/\ln(r_b/r_a)$；"
+            r"令 $x=\ln(r/\mathrm{cm})$，则 $U_r/U_a=1-x/\ln(r_b/r_a)$。"
+            "平行线电极模型在中央区域近似匀强，边缘处出现弯曲。"
+        )
     if "实验方法" in variants:
         doc.add_heading("实验方法", level=1)
         doc.add_paragraph_rich(variants["实验方法"])
 
-    doc.add_heading("一、原始数据提交（拍照上传）", level=1)
-    doc.add_data_photo("请在下方粘贴原始数据记录照片。")
+    doc.add_heading("二、数据记录", level=1)
+    doc.add_data_photo("原始测量照片未附；下列表格来自当前保存的数据。")
+    doc.add_paragraph("表1 同轴电缆模型：1～7 V 等位线，每30°记录一个半径，共12点。")
+    for start in (0, 6):
+        headers = ["电势"] + [f"{angle}°" for angle in ANGLES[start:start + 6]]
+        rows = [[f"{level} V"] + [f"{v:.2f}" for v in r["coax_radii"][i][start:start + 6]]
+                for i, level in enumerate(COAX_LEVELS)]
+        doc.add_table(headers, rows)
+    doc.add_paragraph("半径单位：cm。源模板角度行中的6 V第10列“70°”按其30°步进更正为270°。")
 
-    doc.add_heading("二、数据处理", level=1)
+    doc.add_paragraph("表3 平行线电极模型：3～8 V 等位线，每级10个(x,y)坐标。")
+    for start in (0, 5):
+        headers = ["电势", "坐标"] + [f"点{j}" for j in range(start + 1, start + 6)]
+        rows = []
+        for i, level in enumerate(PARALLEL_LEVELS):
+            rows.append([f"{level} V", "x/cm"] +
+                        [f"{r['parallel_x'][i][j]:.1f}" for j in range(start, start + 5)])
+            rows.append(["", "y/cm"] +
+                        [f"{r['parallel_y'][i][j]:.1f}" for j in range(start, start + 5)])
+        doc.add_table(headers, rows)
+    doc.add_paragraph("表中保留全部原始读数；平行线电极场图使用每级全部10个测量点拟合等势线。")
 
-    doc.add_heading("1. 等势线半径测量", level=2)
-    doc.add_paragraph("")
-    doc.add_run("测量同轴电缆模型各等势线的半径 ")
-    doc.add_inline_math("r")
-    doc.add_run("，对应电压 ")
-    doc.add_inline_math("U_r")
-    doc.add_run(" 从 ")
-    doc.add_inline_math(f"{r['u_a']:.0f} V")
-    doc.add_run(" 依次降至 ")
-    doc.add_inline_math(f"{min(r['u_r']):.0f} V")
-    doc.add_run("。计算各点的 ")
-    doc.add_inline_math(r"\ln(r)")
-    doc.add_run(" 和归一化电压 ")
-    doc.add_inline_math(r"U_r/U_a")
-    doc.add_run("：")
+    doc.add_page_break()
+    doc.add_heading("三、数据处理与作图", level=1)
+    doc.add_heading("（一）同轴电缆静电场分布", level=2)
+    if not render_custom_plot(doc, 1, width_cm=9.8):
+        doc.add_image(coax_path, width_cm=9.8)
+    doc.add_paragraph("图1 各级等势线按12个实测半径取平均绘圆，浅色点为原始半径位置；箭头沿电位降低方向。")
+    doc.add_paragraph("表2 同轴电缆模型的 U_r/U_a 与 ln(r/cm) 关系。")
+    doc.add_table(["U_r/V", "U_r/U_a", "平均r/cm", "ln(r/cm)"],
+                  [[f"{u}", f"{r['u_r_ua'][i]:.3f}", f"{r['r'][i]:.3f}",
+                    f"{r['ln_r'][i]:.3f}"] for i, u in enumerate(COAX_LEVELS)])
+    doc.add_paragraph("每级平均半径由表1的12个半径重新求算，未照抄源文档中个别不一致的平均值。")
+    doc.add_math(r"\frac{U_r}{U_a}=1-\frac{\ln(r/\mathrm{cm})}{\ln(r_b/r_a)}")
+    doc.add_paragraph(f"取 r_a={r['r_a']:.2f} cm、r_b={r['r_b']:.2f} cm，"
+                      f"理论斜率={r['theory_slope']:.4f}，理论截距=1。")
+    if not render_custom_plot(doc, 2, width_cm=14):
+        doc.add_image(fit_path, width_cm=14)
+    doc.add_paragraph(f"图2 实验点、最小二乘拟合与理论关系。实验式："
+                      f"U_r/U_a = {r['slope']:.4f} ln(r/cm) + {r['intercept']:.4f}；"
+                      f"R²={r['r_squared']:.4f}。")
+    doc.add_paragraph(f"斜率相对误差={r['slope_error']:.2f}%；"
+                      f"截距相对误差={r['intercept_error']:.2f}%。")
 
-    rows = []
-    for i in range(r["n"]):
-        rows.append([
-            f"{r['u_r'][i]:.1f}",
-            f"{r['r'][i]:.2f}",
-            f"{r['ln_r'][i]:.4f}",
-            f"{r['u_r_ua'][i]:.3f}",
-        ])
-    doc.add_table(["$U_r$ / V", "$r$ / cm", "$\\ln(r)$", "$U_r / U_a$"], rows,
-                  col_widths=[2.5, 2.5, 2.5, 2.5])
+    doc.add_heading("（二）平行线电极静电场分布", level=2)
+    if not render_custom_plot(doc, 3, width_cm=14):
+        doc.add_image(parallel_path, width_cm=14)
+    doc.add_paragraph("图3 根据表3全部坐标在各级测量范围内拟合的等势线；中央水平箭头为"
+                      "与等势线近似正交的电场方向示意，不代表新增测量点。")
 
-    doc.add_heading("2. 线性拟合验证", level=2)
-    doc.add_paragraph("")
-    doc.add_run("以归一化电压 ")
-    doc.add_inline_math(r"U_r/U_a")
-    doc.add_run(" 为横坐标，")
-    doc.add_inline_math(r"\ln(r)")
-    doc.add_run(" 为纵坐标，作散点图并进行最小二乘线性拟合。")
-    doc.add_paragraph("拟合方程：")
-    doc.add_math(
-        r"\ln(r) = a + b \cdot \frac{U_r}{U_a}"
-    )
-    doc.add_paragraph("")
-    doc.add_run("拟合结果：")
-    doc.add_math(
-        r"b = " + format_number(r["slope"], r["slope_u"])
-        + r",\quad a = " + format_number(r["intercept"], r["intercept_u"])
-    )
-    doc.add_paragraph("A类不确定度：")
-    doc.add_math(
-        r"\Delta b_A = \sigma_b = \frac{s}{\sqrt{\sum_{i=1}^{n}"
-        r"(x_i - \bar{x})^{2}}} = \frac{"
-        + format_number(r["s_res"], sig_figs=4) + r"}{\sqrt{"
-        + format_number(r["S_xx"]) + r"}}"
-        + r" \approx " + format_number(r["slope_u"], sig_figs=3)
-    )
-    doc.add_math(
-        r"\Delta a_A = \sigma_a = s\sqrt{\frac{1}{n} + "
-        r"\frac{\bar{x}^{2}}{\sum_{i=1}^{n}(x_i - \bar{x})^{2}}} = "
-        + format_number(r["s_res"], sig_figs=4)
-        + r"\sqrt{\frac{1}{" + str(r["n"]) + r"} + \frac{"
-        + f"{r['x_bar']:.3f}" + r"^{2}}{" + format_number(r["S_xx"]) + r"}}"
-        + r" \approx " + format_number(r["intercept_u"], sig_figs=3)
-    )
-    doc.add_paragraph(
-        "其中 x = U_r/U_a，s 为最小二乘拟合的残差标准差，σ_b、σ_a 由拟合残差给出"
-        "（A 类评定）；本实验数据中没有仪器允差来源，故不作 B 类评定。"
-    )
-    doc.add_paragraph("")
-    doc.add_run("相关系数 ")
-    doc.add_inline_math(f"r = {format_number(r['r_corr'])}")
-    doc.add_run("，决定系数 ")
-    doc.add_inline_math(f"R^2 = {format_number(r['r_squared'])}")
-    doc.add_run("。")
+    doc.add_heading("四、回答问题及结果分析", level=1)
+    if not render_custom_quiz(doc, r):
+        doc.add_heading("1. 电源电压加倍后，场的形状与数值如何变化？", level=2)
+        doc.add_paragraph("在电极几何和介质条件不变时，归一化等势线与电场线的形状不变；"
+                          "各点电位及电场强度随电源电压同比增大。")
+        doc.add_heading("2. 导电介质的导电率大小如何影响测量？", level=2)
+        doc.add_paragraph("理想均匀介质中，电位分布与导电率绝对值无关；实际介质过于导电时"
+                          "引线和电源内阻分压更明显，过于不导电时探针接触电阻和扰动更明显。")
+        doc.add_heading("3. 模拟静电场须满足什么条件？", level=2)
+        doc.add_paragraph("电极与被模拟导体几何相似；介质导电率均匀且远低于电极；"
+                          "电极的电位和接地边界条件与原静电场对应。")
 
-    # 绘制线性拟合图
-    fit_img_path = os.path.join(SCRIPT_DIR, "fit_plot.png")
-    plot_fit(
-        x=r["u_r_ua"], y=r["ln_r"],
-        slope=r["slope"], intercept=r["intercept"],
-        xlabel=r"$U_r / U_a$", ylabel=r"$\ln(r)$",
-        title="静电场线性拟合验证",
-        save_path=fit_img_path,
-        r_squared=r["r_squared"],
-    )
-    doc.add_paragraph("")
-    doc.add_run("线性拟合图如下：")
-    if not render_custom_plot(doc, 1, width_cm=12):
-        doc.add_image(fit_img_path, width_cm=12)
-
-    doc.add_heading("3. 静电场分布规律验证", level=2)
-    doc.add_paragraph("")
-    doc.add_run("对于无限长同轴电缆，静电场的理论分布为：")
-    doc.add_math(
-        r"U(r) = U_a \cdot \frac{\ln(b/r)}{\ln(b/a)}"
-    )
-    doc.add_paragraph("")
-    doc.add_run("变形可得 ")
-    doc.add_inline_math(r"\ln(r)")
-    doc.add_run(" 与 ")
-    doc.add_inline_math("U")
-    doc.add_run(" 呈线性关系：")
-    doc.add_math(
-        r"\ln(r) = \ln(b) - \frac{\ln(b/a)}{U_a} \cdot U"
-    )
-    doc.add_paragraph("")
-    doc.add_run("实验拟合的相关系数 ")
-    doc.add_inline_math(f"r = {format_number(r['r_corr'])}")
-    doc.add_run("，非常接近 1，说明 ")
-    doc.add_inline_math(r"\ln(r)")
-    doc.add_run(" 与 ")
-    doc.add_inline_math(r"U_r/U_a")
-    doc.add_run(" 之间存在良好的线性关系，")
-    doc.add_run("验证了同轴电缆静电场的理论分布规律，即模拟法测绘静电场是可靠的。")
-
-    # 数值代入：把拟合得到的 a、b 代回理论式，并用一组实测数据核对（课程要求写出计算过程）。
-    # 代入的必须是报告里显示的（已按不确定度修约的）系数，否则算式与显示值对不上。
-    import math as _math
-    _a_disp = format_number(r["intercept"], r["intercept_u"])
-    _b_disp = format_number(r["slope"], r["slope_u"])
-    _a_val = float(_a_disp)
-    _b_val = float(_b_disp)
-    _i0 = 0
-    _urua0 = r["u_r_ua"][_i0]
-    _lnr_fit = _a_val + _b_val * _urua0
-    doc.add_paragraph("")
-    doc.add_run("以第 1 组数据为例，把拟合系数代回 ")
-    doc.add_inline_math(r"\ln(r) = a + b \cdot U_r/U_a")
-    doc.add_run("：")
-    doc.add_math(
-        r"\ln(r) = " + _a_disp + r" + (" + _b_disp + r") \times "
-        + f"{_urua0:.3f}" + r" = " + f"{_lnr_fit:.4f}"
-        + r",\quad r = e^{" + f"{_lnr_fit:.4f}" + r"} = " + f"{_math.exp(_lnr_fit):.2f}"
-        + r"\ \mathrm{cm}"
-    )
-    doc.add_run("，与该点实测半径 ")
-    doc.add_inline_math(f"{r['r'][_i0]:.2f}\\ \\mathrm{{cm}}")
-    doc.add_run(" 相符，说明拟合直线能复现实测数据。")
-
-    doc.add_paragraph("")
-    doc.add_run("由拟合系数还可反推模型几何（理论上 ")
-    doc.add_inline_math(r"\ln(r) = \ln(r_b) - \ln(r_b/r_a)\cdot U_r/U_a")
-    doc.add_run("，即 ")
-    doc.add_inline_math(r"a = \ln(r_b)")
-    doc.add_run("、")
-    doc.add_inline_math(r"b = -\ln(r_b/r_a)")
-    doc.add_run("）：")
-    doc.add_math(
-        r"r_b = e^{a} = e^{" + _a_disp + r"} = "
-        + f"{_math.exp(_a_val):.2f}" + r"\ \mathrm{cm}, \quad "
-        + r"\frac{r_b}{r_a} = e^{-b} = e^{" + f"{-_b_val:.2f}" + r"} = "
-        + f"{_math.exp(-_b_val):.2f}"
-    )
-
-    doc.add_heading("三、实验结果分析", level=1)
-
-    # 结果分析 AI 导入消费点：AI 润色导入的「结果分析」覆盖硬编码段落
-    if "结果分析" in variants:
-        doc.add_paragraph_rich(variants["结果分析"])
-    doc.add_paragraph("")
-    doc.add_run("本次实验通过电流场模拟静电场，测量了同轴电缆模型各等势线的半径，")
-    doc.add_run("并通过线性拟合验证了 ")
-    doc.add_inline_math(r"\ln(r)")
-    doc.add_run(" 与 ")
-    doc.add_inline_math("U")
-    doc.add_run(" 的线性关系。拟合相关系数 ")
-    doc.add_inline_math(f"r = {format_number(r['r_corr'])}")
-    doc.add_run("，表明实验数据与理论规律吻合良好。")
-
-    doc.add_paragraph("")
-    doc.add_run("误差来源分析：")
-    doc.add_run("（1）导电介质的电导率不均匀，导致等势线发生畸变；")
-    doc.add_run("（2）探针接触电阻和测量时的压力变化引入读数误差；")
-    doc.add_run("（3）模型边界的有限尺寸效应，边缘处电场分布偏离无限长同轴电缆理论；")
-    doc.add_run("（4）探针定位的视觉误差和坐标纸读数误差。")
-
-    # ── 变体组合：误差分析 / 结论（存在 variants.json 且应用传入选择时生效）──
+    doc.add_heading("实验结果分析", level=2)
+    doc.add_paragraph(f"同轴模型的 U_r/U_a～ln(r/cm) 拟合斜率为 {r['slope']:.4f}，"
+                      f"理论值为 {r['theory_slope']:.4f}；"
+                      f"拟合截距为 {r['intercept']:.4f}，理论值为1。"
+                      "平行线电极中央区域等势线近似平行，边缘发生弯曲。"
+                      "偏差可来自电极有限尺寸、接触电阻、介质不均匀和探针定位。")
     if "误差分析" in variants:
-        doc.add_heading("误差分析", level=1)
+        doc.add_heading("误差分析", level=2)
         doc.add_paragraph_rich(variants["误差分析"])
     if "结论" in variants:
-        doc.add_heading("结论", level=1)
+        doc.add_heading("结论", level=2)
         doc.add_paragraph_rich(variants["结论"])
-
-    doc.add_heading("四、思考题", level=1)
-
-    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
-    import random
-    if not render_custom_quiz(doc, r):
-        _quiz = variants.get("思考题")
-        if isinstance(_quiz, str) and _quiz.strip():
-            doc.add_paragraph_rich(_quiz)
-            _quiz = None
-        elif not isinstance(_quiz, dict):
-            _quiz = None
-
-        doc.add_heading("1. 为什么可以用稳恒电流场模拟静电场？", level=2)
-        _o = _quiz.get("1") if _quiz else None
-        if _o:
-            doc.add_paragraph_rich(random.choice(_o))
-        else:
-
-            doc.add_paragraph_rich(
-                "答：稳恒电流场与静电场在一定条件下具有相似的空间分布。"
-                r"两者都满足拉普拉斯方程（$\nabla^2 U = 0$），且在相同的边界条件下具有相同的解。"
-                "因此可以用容易测量的稳恒电流场来模拟难以直接测量的静电场。"
-            )
-
-        doc.add_heading("2. 实验中为什么要保持电极与导电介质良好接触？", level=2)
-        _o = _quiz.get("2") if _quiz else None
-        if _o:
-            doc.add_paragraph_rich(random.choice(_o))
-        else:
-
-            doc.add_paragraph(
-                "答：如果电极与导电介质接触不良，会产生接触电阻，导致电极附近的电流分布发生畸变，"
-                "等势线不再是理想的同心圆，从而引入系统误差。良好的接触保证电极表面是等势面，"
-                "使电流场分布与静电场的边界条件一致。"
-            )
-
-        doc.add_heading("3. 如果将同轴电缆的内外电极电压反接，等势线分布会如何变化？", level=2)
-        _o = _quiz.get("3") if _quiz else None
-        if _o:
-            doc.add_paragraph_rich(random.choice(_o))
-        else:
-
-            doc.add_paragraph(
-                "答：电压反接后，电场方向反转，但等势线的几何形状（同心圆）不变，"
-                "只是各等势线对应的电压值符号相反。ln(r) 与 U 的线性关系仍然成立，"
-                "只是拟合斜率的符号变为正（原斜率为负，因为 U 越大 r 越小）。"
-            )
-
     doc.save()
     doc.close()
+    return r
 
 
 def main():
-    DATA_FILE = os.path.join(SCRIPT_DIR, "data.json")
-    DOCX_FILE = os.path.join(SCRIPT_DIR, "静电场的模拟.docx")
-
-    data = load_data(DATA_FILE)
+    data_file = os.path.join(SCRIPT_DIR, "data.json")
+    data = load_data(data_file)
     if not data:
-        print("未找到 data.json 或数据为空，请先在应用中填写数据。")
-        return
-
-    _generate_docx(data, DOCX_FILE)
-    if os.path.exists(DOCX_FILE):
-        print(f"报告已生成: {DOCX_FILE}")
-    else:
-        print("[错误] 生成中止，未输出报告，请按上方提示检查数据。")
+        raise ValueError("未找到 data.json 或数据为空，请先在应用中填写数据")
+    output = os.path.join(SCRIPT_DIR, "静电场的模拟.docx")
+    result = _generate_docx(data, output)
+    print(f"报告已生成: {output}")
+    print(f"U_r/U_a = {result['slope']:.4f} ln(r/cm) + {result['intercept']:.4f}")
 
 
 if __name__ == "__main__":

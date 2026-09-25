@@ -14,16 +14,18 @@
     },
     {
      "key": "delta_instr",
-     "label": "光电计时器 Δ仪",
+     "label": "秒表 Δ仪",
      "type": "number",
      "unit": "s",
      "default": 0.01,
+     "minimum": 0,
+     "maximum": 0.1,
      "required": true
     }
    ]
   },
   {
-   "name": "测量数据（9 孔 × 8 次）",
+   "name": "测量数据（横向 9 孔 × 纵向 8 次）",
    "fields": [
     {
      "key": "pivot",
@@ -50,6 +52,7 @@
      "type": "matrix",
      "rows": 9,
      "cols": 8,
+     "displayTranspose": true,
      "rowLabels": [
       "第1孔",
       "第2孔",
@@ -72,39 +75,26 @@
       "第8次"
      ],
      "unit": "s",
+     "ocrTranspose": true,
+     "ocrHint": "照片通常是8行测量次数×9列孔位；输出必须转成9行孔位×8列次数。第9孔整列必须保留；不要把单周期平均行混入此矩阵。",
      "required": true
+    },
+    {
+     "key": "T_avg",
+     "label": "单周期平均 T（第1～9孔）",
+     "type": "array",
+     "length": 9,
+     "unit": "s",
+     "fallbackMeanFrom": "trials",
+     "fallbackDivisor": 10,
+     "ocrHint": "抄录照片最下面的「单周期平均」行，按第1孔到第9孔从左到右给9个数；不要根据10周期数据推算。",
+     "required": false
     },
     {
      "key": "h",
      "label": "h（摆轴离中心距离）",
      "type": "array",
      "length": 9,
-     "unit": "cm",
-     "required": true
-    }
-   ]
-  },
-  {
-   "name": "对称点（从 T-h 曲线读取）",
-   "fields": [
-    {
-     "key": "T0",
-     "label": "等值周期 T₀",
-     "type": "number",
-     "unit": "s",
-     "required": true
-    },
-    {
-     "key": "h1",
-     "label": "较小悬距 h₁",
-     "type": "number",
-     "unit": "cm",
-     "required": true
-    },
-    {
-     "key": "h2",
-     "label": "较大悬距 h₂",
-     "type": "number",
      "unit": "cm",
      "required": true
     }

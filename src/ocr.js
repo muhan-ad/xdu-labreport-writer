@@ -252,7 +252,8 @@ function buildRecogPrompt(schema, includeStudent) {
       } else {
         shape = ' 类型=数值';
       }
-      lines.push(`${n}. key="${fld.key}"  标签="${label}"${shape}${unit}`);
+      const hint = fld.ocrHint ? ` 识图提示=${fld.ocrHint}` : '';
+      lines.push(`${n}. key="${fld.key}"  标签="${label}"${shape}${unit}${hint}`);
     }
   }
 
@@ -419,7 +420,11 @@ function validateRecog(raw, schema) {
         const rows = fld.rows || 0, cols = fld.cols || 0;
         if (!Array.isArray(rawVal)) { fail('识别结果不是矩阵'); }
         else {
-          const m = rawVal.map(r => (Array.isArray(r) ? r.map(coerceNum) : []));
+          let m = rawVal.map(r => (Array.isArray(r) ? r.map(coerceNum) : []));
+          if (fld.ocrTranspose && m.length === cols && m.every(r => r.length === rows)) {
+            m = Array.from({ length: rows }, (_, hole) => m.map(repeat => repeat[hole]));
+            warn('已把照片的测量次数×孔位表格转为每孔一行，请核对');
+          }
           // 有 rowLabels = 每行身份固定（第1次/第2次…），行数必须与模板一致；
           // 没有 rowLabels = 定长容器，rows 只是上限：照片上几行就收几行，
           // 模型顺手带出的尾部全空行先丢掉，否则会被误报成「未识别」。
@@ -448,6 +453,10 @@ function validateRecog(raw, schema) {
       } else {
         const num = coerceNum(rawVal);
         if (num === null) { fail('识别结果不是数值'); }
+        else if ((fld.minimum != null && num < fld.minimum)
+          || (fld.maximum != null && num > fld.maximum)) {
+          fail(`识别值超出${fld.label || fld.key}允许范围，请核对`);
+        }
         else {
           value = num;
           // scalar 与 schema 默认值比对：只在该默认值像"装置常量/参考值"时才有意义

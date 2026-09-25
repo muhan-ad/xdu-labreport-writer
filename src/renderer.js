@@ -476,6 +476,7 @@ async function selectExperiment(exp) {
   $('btnOpenData2').disabled = !exp.hasData;
   $('btnOpenReport').disabled = !exp.hasReport;
   $('btnOpenReport2').disabled = !exp.hasReport;
+  renderReportDirSetting();   // 同步头部「选择保存路径」按钮 title 上的当前路径
 
   // 结果区
   setResultState(exp.hasReport && exp.reportFile ? 'success' : 'empty', exp.reportFile);
@@ -760,9 +761,15 @@ async function loadFormData(exp) {
     for (const fld of (group.fields || [])) {
       if (currentData[fld.key] !== undefined) continue;
       if (fld.type === 'array') {
-        currentData[fld.key] = Array.isArray(fld.default)
+        const source = fld.fallbackMeanFrom && currentData[fld.fallbackMeanFrom];
+        const divisor = Number(fld.fallbackDivisor);
+        const derived = Array.isArray(source) && source.length === fld.length && divisor > 0
+          ? source.map(row => Array.isArray(row) && row.length > 0 && row.every(Number.isFinite)
+            ? row.reduce((sum, value) => sum + value, 0) / row.length / divisor : null)
+          : null;
+        currentData[fld.key] = derived || (Array.isArray(fld.default)
           ? fld.default
-          : new Array(fld.length || 0).fill(null);
+          : new Array(fld.length || 0).fill(null));
       } else if (fld.type === 'matrix') {
         currentData[fld.key] = Array.isArray(fld.default)
           ? fld.default
@@ -934,19 +941,27 @@ function renderField(fld, dataOverride) {
   if (fld.type === 'matrix') {
     const rows = fld.rows || 0, cols = fld.cols || 0;
     const rowLabels = fld.rowLabels || [], colLabels = fld.colLabels || [];
+    // 只转置显示方向，输入框仍使用原始行列索引；旧数据、识图结果和计算脚本无需迁移。
+    const transposed = fld.displayTranspose === true;
+    const displayRows = transposed ? cols : rows;
+    const displayCols = transposed ? rows : cols;
     let table = '<div class="matrix-scroll"><table class="matrix-input">';
     table += '<thead><tr><th class="matrix-corner"></th>';
-    for (let c = 0; c < cols; c++) {
-      const cl = (colLabels[c] != null) ? colLabels[c] : (c + 1);
+    for (let c = 0; c < displayCols; c++) {
+      const labels = transposed ? rowLabels : colLabels;
+      const cl = (labels[c] != null) ? labels[c] : (c + 1);
       table += `<th class="matrix-col-label">${escapeHtml(String(cl))}</th>`;
     }
     table += '</tr></thead><tbody>';
-    for (let r = 0; r < rows; r++) {
-      const rl = (rowLabels[r] != null) ? rowLabels[r] : (r + 1);
+    for (let r = 0; r < displayRows; r++) {
+      const labels = transposed ? colLabels : rowLabels;
+      const rl = (labels[r] != null) ? labels[r] : (r + 1);
       table += `<tr><td class="matrix-row-label">${escapeHtml(String(rl))}</td>`;
-      for (let c = 0; c < cols; c++) {
-        const mv = (Array.isArray(val) && val[r] && hasVal(val[r][c])) ? val[r][c] : '';
-        table += `<td><input type="number" step="any" class="field-input matrix-cell" data-key="${escapeHtml(key)}" data-row="${r}" data-col="${c}" value="${escapeHtml(mv)}"></td>`;
+      for (let c = 0; c < displayCols; c++) {
+        const sourceRow = transposed ? c : r;
+        const sourceCol = transposed ? r : c;
+        const mv = (Array.isArray(val) && val[sourceRow] && hasVal(val[sourceRow][sourceCol])) ? val[sourceRow][sourceCol] : '';
+        table += `<td><input type="number" step="any" class="field-input matrix-cell" data-key="${escapeHtml(key)}" data-row="${sourceRow}" data-col="${sourceCol}" value="${escapeHtml(mv)}"></td>`;
       }
       table += '</tr>';
     }
@@ -1887,7 +1902,8 @@ async function showJobWaitDialog(payload) {
       window.labAPI.cancelChartHelper(payload.id);
       logLine(`⏹ 已停止「${name}」`);
     } else if (payload.kind === 'generate') {
-      cancelGenerate();                       // 与点「取消生成」同一条路径
+      if (isBatchRunning) cancelAllQueue();   // 批量任务需要停止整条队列
+      else await cancelGenerate();            // 单项任务与「取消生成」同一路径
       logLine(`⏹ 已停止「${name}」`);
     }
   } catch (e) { /* 忽略 */ }
@@ -2798,6 +2814,9 @@ function bindEvents() {
   // 打开报告
   $('btnOpenReport').onclick = openReportFile;
   $('btnOpenReport2').onclick = openReportFile;
+
+  // 选择保存路径（与设置 → 报告管理同一个功能，放头部更醒目）
+  $('btnPickReportDir2').onclick = pickReportDir;
 
   // 生成报告
   $('btnGenerate').onclick = runGenerate;
@@ -3969,13 +3988,16 @@ function fmtSize(bytes) {
   return bytes + ' B';
 }
 
-// ── 自定义报告目录（设置 → 报告管理）──
+// ── 自定义报告目录（设置 → 报告管理；实验详情页头部有同功能按钮）──
 // 设置存 appSettings.customReportDir；生成成功后由主进程复制一份到该目录（实验目录原件保留）。
-// 界面上不再单独占一行展示路径（避免灰色小字），改为挂在「选择保存位置」按钮的 title 上。
+// 界面上不再单独占一行展示路径（避免灰色小字），改为挂在按钮的 title 上。
 function renderReportDirSetting() {
   const dir = loadSettings().customReportDir || '';
-  const btn = $('btnPickReportDir');
-  if (btn) btn.title = dir ? `当前保存位置：${dir}` : '未设置：报告只保存在实验目录';
+  const title = dir ? `当前保存位置：${dir}` : '未设置：报告只保存在实验目录';
+  for (const id of ['btnPickReportDir', 'btnPickReportDir2']) {
+    const btn = $(id);
+    if (btn) btn.title = title;
+  }
 }
 
 async function pickReportDir() {

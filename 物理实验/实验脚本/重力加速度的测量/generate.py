@@ -14,12 +14,24 @@ from common.data_io import load_data
 
 # ── 物理常数与仪器参数（按教材） ──
 G0_XIAN = 9.797               # 西安标准重力加速度 m/s²
-DELTA_TIMER = 0.01            # 光电计时器 Δ_仪 (s)
+DELTA_TIMER = 0.01            # 秒表 Δ_仪 (s)
 N_HOLES = 9                   # 测量孔数
 N_TRIALS = 8                  # 每孔 10 周期重复测量次数
 
 # 支点位置预填值（范例，用户可按需修改，单位 cm）
 DEFAULT_PIVOT_POSITIONS = [17.5, 15.5, 13.5, 11.5, 9.5, 7.5, 5.5, 3.5, 1.5]
+
+
+def _plot_axis_limits(h_values, periods):
+    """根据本次实测值确定坐标范围，保留少量边距供交点标记使用。"""
+    h_min, h_max = min(h_values), max(h_values)
+    t_min, t_max = min(periods), max(periods)
+    h_span = h_max - h_min
+    t_span = t_max - t_min
+    if h_span <= 0 or t_span <= 0:
+        raise ValueError("T-h 作图数据须包含不同的悬距和周期")
+    return (h_min - 0.06 * h_span, h_max + 0.06 * h_span), \
+        (t_min - 0.08 * t_span, t_max + 0.08 * t_span)
 
 
 def _plot_th_curve(h_values, T_avg, T0, h1, h2, output_path):
@@ -49,36 +61,32 @@ def _plot_th_curve(h_values, T_avg, T0, h1, h2, output_path):
 
     fig, ax = plt.subplots(figsize=(8, 5))
 
-    # 平滑插值曲线
-    try:
-        from scipy.interpolate import CubicSpline
-        cs = CubicSpline(h_sorted, T_sorted)
-        h_dense = np.linspace(h_sorted[0], h_sorted[-1], 300)
-        T_dense = cs(h_dense)
-    except ImportError:
-        # 后备：4 次多项式拟合
-        z = np.polyfit(h_sorted, T_sorted, min(4, len(h_sorted) - 1))
-        p = np.poly1d(z)
-        h_dense = np.linspace(h_sorted[0], h_sorted[-1], 300)
-        T_dense = p(h_dense)
+    # 分段线性插值经过每个实测点，且不触发 Windows 上可能卡住的 SciPy 导入。
+    h_dense = np.linspace(h_sorted[0], h_sorted[-1], 300)
+    T_dense = np.interp(h_dense, h_sorted, T_sorted)
     ax.plot(h_dense, T_dense, "-", color="steelblue", linewidth=1.5)
 
-    # 原始数据点（红色圆点）
-    ax.scatter(h_sorted, T_sorted, color="red", s=45, zorder=5)
+    # 坐标边界只由本次实测数据决定，不沿用范例图的数值范围。
+    x_limits, y_limits = _plot_axis_limits(h_sorted, T_sorted)
+    ax.set_xlim(*x_limits)
+    ax.set_ylim(*y_limits)
+
+    # 原始数据点
+    ax.scatter(h_sorted, T_sorted, color="#D55E00", s=45, zorder=5)
 
     # 黑色虚线等 T 线（从 h₁ 左侧延伸到 h₂ 右侧）
-    h_margin = (h_sorted[-1] - h_sorted[0]) * 0.05
+    h_margin = (h_sorted[-1] - h_sorted[0]) * 0.03
     ax.hlines(y=T0, xmin=h1 - h_margin, xmax=h2 + h_margin,
               colors="black", linestyles="dashed", linewidth=1.2, alpha=0.8)
 
-    # 标注对称点
+    # 交点和标签的位置跟随数据；完整数值放在图下方，避免长小数覆盖曲线。
     ax.scatter([h1, h2], [T0, T0], color="black", s=55, zorder=6)
-    ax.annotate(f"({h1}, {T0})", (h1, T0),
-                textcoords="offset points", xytext=(-10, 12), fontsize=9,
-                arrowprops=dict(arrowstyle="->", color="gray", lw=0.8))
-    ax.annotate(f"({h2}, {T0})", (h2, T0),
-                textcoords="offset points", xytext=(8, 12), fontsize=9,
-                arrowprops=dict(arrowstyle="->", color="gray", lw=0.8))
+    label_y = T0 + 0.035 * (y_limits[1] - y_limits[0])
+    ax.text(h1, label_y, "$h_1$", ha="center", va="bottom", fontsize=10)
+    ax.text(h2, label_y, "$h_2$", ha="center", va="bottom", fontsize=10)
+    fig.text(0.5, 0.025,
+             f"$T_0$ = {T0:.3f} s    $h_1$ = {h1:.2f} cm    $h_2$ = {h2:.2f} cm",
+             ha="center", va="bottom", fontsize=10)
 
     # 坐标轴标签
     ax.set_xlabel("h / cm", fontsize=12)
@@ -86,9 +94,46 @@ def _plot_th_curve(h_values, T_avg, T0, h1, h2, output_path):
     ax.set_title("T-h 关系曲线", fontsize=13)
     ax.grid(True, alpha=0.3)
 
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=150)
+    fig.tight_layout(rect=(0, 0.065, 1, 1))
+    fig.savefig(output_path, dpi=300)
     plt.close(fig)
+
+
+def _select_equal_period_points(h_values, periods):
+    """在实测 T-h 折线两支的共同高度区间中部取水平线，并求两个交点。"""
+    if len(h_values) != N_HOLES or len(periods) != N_HOLES:
+        raise ValueError("悬距和单周期平均值均须有 9 个孔位")
+    points = sorted((float(h), float(t)) for h, t in zip(h_values, periods))
+    if any(not math.isfinite(h) or h <= 0 or not math.isfinite(t) or t <= 0 for h, t in points):
+        raise ValueError("悬距和单周期平均值必须是正的有限数值")
+    if any(points[i][0] >= points[i + 1][0] for i in range(len(points) - 1)):
+        raise ValueError("悬距有重复值，无法确定 T-h 曲线交点")
+
+    minimum = min(range(len(points)), key=lambda i: points[i][1])
+    if minimum < 2 or minimum > len(points) - 3:
+        raise ValueError("T-h 曲线最低点靠近边界，左右两支不足，无法自动选取等周期点；请核对测量数据")
+    t_min = points[minimum][1]
+    upper = min(max(t for _, t in points[:minimum]), max(t for _, t in points[minimum + 1:]))
+    if upper - t_min < max(0.005, t_min * 0.01):
+        raise ValueError("T-h 曲线两支共同覆盖的周期范围太窄，无法可靠读取两个交点")
+
+    def crossings(start, stop, level):
+        found = []
+        for i in range(start, stop):
+            h_a, t_a = points[i]
+            h_b, t_b = points[i + 1]
+            if (t_a - level) * (t_b - level) < 0:
+                found.append(h_a + (level - t_a) * (h_b - h_a) / (t_b - t_a))
+        return found
+
+    # 优先取共同范围的中部；若正好经过测量点或遇到噪声造成的多交点，微调高度。
+    for fraction in (0.5, 0.45, 0.55, 0.4, 0.6):
+        level = t_min + fraction * (upper - t_min)
+        left = crossings(0, minimum, level)
+        right = crossings(minimum, len(points) - 1, level)
+        if len(left) == len(right) == 1:
+            return level, left[0], right[0]
+    raise ValueError("T-h 曲线在候选水平线处有多余或缺失的交点；请核对识图数据后重试")
 
 
 # （方式三：_create_template 已移除，数据真相为 data.json）
@@ -102,16 +147,23 @@ def _compute(data: dict) -> dict:
     pivot_positions = [float(v) for v in data["pivot"]]
     trials_10T = [[float(v) for v in hole] for hole in data["trials"]]
     h_values = [float(v) for v in data["h"]]
-    T0 = float(data["T0"])
-    h1 = float(data["h1"])
-    h2 = float(data["h2"])
     cm_position = data.get("cm_position")
 
-    # 计算单周期平均值
-    T_avg = []
-    for hole_data in trials_10T:
-        avg_10T = mean(hole_data)
-        T_avg.append(avg_10T / 10.0)
+    if len(trials_10T) != N_HOLES or any(len(row) != N_TRIALS for row in trials_10T):
+        raise ValueError("10 周期测量值应为 9 孔 × 每孔 8 次")
+    measured_avg = [mean(hole_data) / 10.0 for hole_data in trials_10T]
+    recorded_avg = data.get("T_avg")
+    if recorded_avg is None or (isinstance(recorded_avg, list) and all(v is None for v in recorded_avg)):
+        T_avg = measured_avg  # 兼容旧数据：照片没有平均行时才从 10 周期读数计算
+    else:
+        if not isinstance(recorded_avg, list) or len(recorded_avg) != N_HOLES or any(v is None for v in recorded_avg):
+            raise ValueError("单周期平均值须按第 1～9 孔完整填写")
+        T_avg = [float(v) for v in recorded_avg]
+        for i, (reported, computed) in enumerate(zip(T_avg, measured_avg), 1):
+            if not math.isfinite(reported) or abs(reported - computed) > max(0.03, computed * 0.03):
+                raise ValueError(f"第 {i} 孔单周期平均值与 10 周期读数不一致，请核对照片和表格")
+
+    T0, h1, h2 = _select_equal_period_points(h_values, T_avg)
 
     # 卡特公式计算 g
     # 等值单摆长 (cm → m)
@@ -147,7 +199,7 @@ def _generate_docx(data: dict, output_path: str):
         return v if isinstance(v, list) else [v]
 
     missing = []
-    for k in ("g0", "delta_instr", "pivot", "trials", "h", "T0", "h1", "h2"):
+    for k in ("g0", "delta_instr", "pivot", "trials", "h"):
         v = data.get(k)
         if v is None:
             missing.append(k)
@@ -254,7 +306,7 @@ def _generate_docx(data: dict, output_path: str):
         doc.add_image(th_plot_path, width_cm=12)
 
     doc.add_paragraph("")
-    doc.add_run("在 T-h 曲线上作水平线（图中黑色虚线），读取等周期对称点坐标：")
+    doc.add_run("在曲线最低点与左右两支共同覆盖的周期上限之间取中部高度，作水平线（图中黑色虚线），由分段线性插值自动求得两个交点：")
     doc.add_inline_math(f"T_0 = {T0:.3f}\\ \\mathrm{{s}}")
     doc.add_run("，")
     doc.add_inline_math(f"h_1 = {h1:.2f}\\ \\mathrm{{cm}}")
@@ -308,7 +360,7 @@ def _generate_docx(data: dict, output_path: str):
         "这是本实验最主要的误差来源；（2）摆角过大导致小角度近似不严格成立，"
         "周期公式为 sinθ ≈ θ 近似下的结果，大摆角会引入系统误差；"
         "（3）悬挂处孔与刀口接触不密切，摩擦影响周期测量；"
-        "（4）光电计时器的计时精度及人工启动/停止的响应时间差异。"
+        "（4）秒表的计时精度及人工启动/停止的响应时间差异。"
     )
 
     # ── 变体组合：误差分析 / 结论（存在 variants.json 且应用传入选择时生效）──
@@ -420,7 +472,7 @@ def _generate_docx(data: dict, output_path: str):
             )
             doc.add_paragraph(
                 "（2）测量摆动周期 T：使物体在小角度（小于 1°）下作自由摆动，"
-                "用光电计时器多次测量摆动周期（建议以 10T 计数），取平均值作为单周期 T。"
+                "用秒表多次测量摆动周期（建议以 10T 计数），取平均值作为单周期 T。"
             )
             doc.add_paragraph(
                 "（3）测量质量与质心位置：用天平称出物体质量 M；"

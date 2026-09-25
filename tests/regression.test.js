@@ -100,6 +100,32 @@ test('installed upgrades retain the verified data-package state', t => {
   assert.deepEqual(store.readState(target).manifest, { dataVersion: '2.3.4', removed: ['已下架实验'] });
 });
 
+test('installed upgrades preserve hot-updated resources and their variant baseline', t => {
+  const root = fixture(t), builtin = path.join(root, 'builtin'), target = path.join(root, 'user');
+  put(path.join(builtin, 'common/core.py'), 'bundled-v1');
+  put(path.join(builtin, 'A/generate.py'), 'bundled-v1');
+  put(path.join(builtin, 'A/variants.json'), '["bundled-v1"]');
+  store.syncBuiltin(builtin, target, store.resourceVersion(builtin), '1');
+  put(path.join(target, 'common/core.py'), 'package-v2');
+  put(path.join(target, 'A/generate.py'), 'package-v2');
+  put(path.join(target, 'A/variants.json'), '["package-v2"]');
+  store.writeState(target, {
+    ...store.readState(target),
+    manifest: { dataVersion: '2.3.4' },
+    variantBases: { [path.join('A', 'variants.json')]: '["package-v2"]' },
+  });
+  put(path.join(builtin, 'common/core.py'), 'bundled-v3');
+  put(path.join(builtin, 'A/generate.py'), 'bundled-v3');
+  put(path.join(builtin, 'A/variants.json'), '["bundled-v3"]');
+  put(path.join(builtin, 'A/new-helper.py'), 'new-helper');
+  store.syncBuiltin(builtin, target, store.resourceVersion(builtin), '3');
+  assert.equal(read(path.join(target, 'common/core.py')), 'package-v2');
+  assert.equal(read(path.join(target, 'A/generate.py')), 'package-v2');
+  assert.equal(read(path.join(target, 'A/variants.json')), '["package-v2"]');
+  assert.equal(read(path.join(target, 'A/new-helper.py')), 'new-helper');
+  assert.equal(store.readState(target).variantBases[path.join('A', 'variants.json')], '["package-v2"]');
+});
+
 test('resource sync carries non-script data files (vendored formula deps)', async t => {
   // 回归：白名单曾只认 .py/.json/.md，导致公式转换依赖的符号表 .txt 既不进指纹也不同步，
   // 用户端生成报告直接失败（内置副本缺文件）。这里钉住"数据文件必须一起走"。
@@ -191,6 +217,44 @@ test('form issue bar is refreshed while the user edits data', () => {
   ui.onFormInput();
   assert.equal(ui.$('dataIssueBar').style.display, 'block');
   assert.match(ui.$('dataIssueBar').innerHTML, /必须是有限数值/);
+});
+
+test('legacy gravity data gains a selectable one-period average without restoring manual intersections', async () => {
+  const ui = uiContext();
+  const trials = Array.from({ length: 9 }, (_, hole) => Array(8).fill(10 + hole));
+  ui.currentSchema = { groups: [{ fields: [
+    { key: 'trials', type: 'matrix', rows: 9, cols: 8 },
+    { key: 'T_avg', type: 'array', length: 9, fallbackMeanFrom: 'trials', fallbackDivisor: 10 },
+  ] }] };
+  ui.window = { labAPI: { readData: async () => ({ ok: true, data: { trials, T0: 0.898, h1: 5, h2: 15 } }) } };
+  Object.assign(ui, { renderForm: () => {}, refreshFormCheck: () => {}, notifyDataModified: () => {}, loadChartConfig: async () => {} });
+  load(ui, 'async function loadFormData(', '// 清除表单全部可输入数据');
+  await ui.loadFormData({ id: '重力加速度的测量', path: 'unused' });
+  assert.equal(ui.currentData.T_avg.length, 9);
+  assert.equal(ui.currentData.T_avg[8], 1.8);
+  assert.equal(ui.currentData.T0, 0.898, '旧字段只留在旧文件中，新 schema 不展示也不参与 Python 计算');
+  assert.match(renderer, /group\.fields\.filter\(f => f\.type === 'array'\)/,
+    '图表字段下拉自动列出 schema 中新增的平均值数组');
+});
+
+test('gravity measurement table shows holes across while preserving the stored matrix orientation', () => {
+  const ui = vm.createContext({ escapeHtml: String, currentData: {
+    trials: Array.from({ length: 9 }, (_, hole) =>
+      Array.from({ length: 8 }, (_, repeat) => 100 * hole + repeat)),
+  } });
+  load(ui, 'function renderField(', 'function onFormInput()');
+  const field = { key: 'trials', label: '10周期测量值', type: 'matrix',
+    rows: 9, cols: 8, displayTranspose: true,
+    rowLabels: Array.from({ length: 9 }, (_, i) => `第${i + 1}孔`),
+    colLabels: Array.from({ length: 8 }, (_, i) => `第${i + 1}次`) };
+  const html = ui.renderField(field);
+  const header = html.match(/<thead>(.*?)<\/thead>/s)[1];
+  assert.match(header, /第1孔.*第9孔/);
+  assert.doesNotMatch(header, /第1次/);
+  const firstRow = html.match(/<tbody><tr>(.*?)<\/tr>/s)[1];
+  assert.match(firstRow, /第1次/);
+  assert.match(firstRow, /data-row="8" data-col="0" value="800"/);
+  assert.equal((html.match(/class="field-input matrix-cell"/g) || []).length, 72);
 });
 
 test('multi-section polishing uses the original snapshot after switching experiments', async () => {
@@ -1479,6 +1543,20 @@ test('job wait dialog stops via the matching cancel channel', async () => {
     'AI 请求的按钮是「暂停」，长任务的是「停止」');
 });
 
+test('job wait dialog stops a running batch queue rather than a single task', async () => {
+  const ui = uiContext();
+  const calls = [];
+  ui.isBatchRunning = true;
+  ui.window = { labAPI: {} };
+  ui.logEvent = () => {};
+  ui.cancelGenerate = () => calls.push('single');
+  ui.cancelAllQueue = () => calls.push('batch');
+  load(ui, 'const AI_STALL_WARN_SECONDS = 90;', 'async function runAiPolish(');
+  ui.appConfirm = async () => false;
+  await ui.promptJobWait({ kind: 'generate', label: '批量任务', seconds: 300 });
+  assert.deepEqual(calls, ['batch']);
+});
+
 // 生成 / 画图 / 图表脚本的时间闸：到点只提示，绝不自己杀进程
 test('job wait gates prompt instead of interrupting the job', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
@@ -1567,6 +1645,33 @@ test('report pane keeps one action row with pick-directory, no open/clear button
   assert.match(renderer, /loadSettings\(\)\.customReportDir \|\| ''/, '生成时把自定义目录传给主进程');
   assert.match(preload, /pickDirectory: \(current\) => ipcRenderer\.invoke\('pick-directory', current\)/, 'preload 暴露 pickDirectory');
   assert.ok(!/openDirectory:/.test(preload), 'preload 不再暴露已删除的 openDirectory');
+});
+
+// 实验详情页头部「打开报告」右侧的「选择保存路径」：与设置 → 报告管理里那个同一个功能
+//（复用 pickReportDir 与 appSettings.customReportDir，不新增 IPC），只是放在更显眼的位置。
+test('header open-report row gets a save-path button reusing the settings handler', () => {
+  const html = read(path.join(__dirname, '../src/index.html'));
+  const open = html.indexOf('id="btnOpenReport"');
+  const pick2 = html.indexOf('id="btnPickReportDir2"');
+  const contribute = html.indexOf('id="btnContribute"');
+  assert.ok(open > -1 && pick2 > open && pick2 < contribute, '「选择保存路径」紧贴在「打开报告」右侧');
+  assert.ok(!/id="btnPickReportDir2"[^>]*disabled/.test(html), '保存路径与有没有报告无关，不设 disabled');
+  assert.match(html, />\s*选择保存路径\s*<\/button>/, '按钮文案为「选择保存路径」');
+  assert.match(renderer, /\$\('btnPickReportDir2'\)\.onclick = pickReportDir;/, '头部按钮绑定到同一个 pickReportDir（不新增 IPC）');
+  assert.match(renderer, /for \(const id of \['btnPickReportDir', 'btnPickReportDir2'\]\)/, '两个入口的 title 一起刷新');
+  assert.match(renderer, /\$\('btnOpenReport2'\)\.disabled = !exp\.hasReport;\s*renderReportDirSetting\(\);/, '切换实验时同步头部按钮上的当前路径');
+});
+
+// 重力加速度的测量：计时仪器是秒表（线上版本整套文案误写成光电计时器/光电门/挡光片）
+test('gravity experiment wording uses a stopwatch, not a photogate timer', () => {
+  const expDir = path.join(__dirname, '../物理实验/实验脚本/重力加速度的测量');
+  const schema = read(path.join(expDir, 'schema.json'));
+  const variants = read(path.join(expDir, 'variants.json'));
+  const generate = read(path.join(expDir, 'generate.py'));
+  assert.match(schema, /"label": "秒表 Δ仪"/, '表单标签应为秒表');
+  for (const [name, src] of [['variants.json', variants], ['generate.py', generate]]) {
+    assert.ok(!/光电|挡光/.test(src), name + ' 不该再出现光电门/挡光片相关措辞');
+  }
 });
 
 // AI 润色响应体异常偏大：历史行为是直接中止并报「AI 响应内容过大」；现改为只告警不中止。
