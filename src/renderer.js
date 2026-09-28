@@ -220,6 +220,8 @@ async function init() {
   updateEmptyStats();
   updateStudentDisplay();
   bindEvents();
+  // 首屏就绪后后台检查，两类版本独立；不等待网络，也不自动下载。
+  setTimeout(() => { checkStartupUpdates().catch(() => {}); }, 1500);
 }
 
 // ── 开发者调试模式 ──
@@ -255,7 +257,7 @@ function loadDevelopPane() {
   $('rdNormalMode').checked = !dev;
 }
 
-// ── 变体管理：实验级章节开关（设置-开发者调试）──
+// ── 变体管理：实验级章节开关（设置 → 报告管理 → 变体管理）──
 async function loadSecCfgExpList() {
   const sel = $('secCfgExpSel');
   if (!sel) return;
@@ -1593,7 +1595,7 @@ function getEnabledSkills() {
   const st = getSkillStates();
   return skillsCache.filter(sk => st[sk.id] !== false);
 }
-// 润色面板技能展示（只读）：启用与否由「设置 → AI 润色技能」的开关决定，这里不再逐次勾选
+// 润色面板技能展示（只读）：启用与否由「设置 → AI 服务 → 技能」的开关决定
 function renderSkillOptions() {
   const box = $('aiSkillGroup');
   if (!box) return;
@@ -1602,7 +1604,7 @@ function renderSkillOptions() {
   if (!skills.length) {
     const span = document.createElement('span');
     span.className = 'ai-check-empty';
-    span.textContent = '未启用技能 —— 可在「设置 → AI 润色技能」中启用';
+    span.textContent = '未启用技能 —— 可在「设置 → AI 服务 → 技能」中启用';
     box.appendChild(span);
     return;
   }
@@ -1997,7 +1999,7 @@ async function runAiPolish(onlyScopeVal) {
   }
   isAiPolishing = true;
   try {
-  // 启用技能由「设置 → AI 润色技能」的开关决定（skillStates）；面板只读展示，不再逐次勾选
+  // 启用技能由「设置 → AI 服务 → 技能」的开关决定（skillStates）；面板只读展示
   // scope:'plot' 的绘图技能只在「自定义画图」请求里注入，避免撑爆润色提示词
   const skillStates = (loadSettings().skillStates && typeof loadSettings().skillStates === 'object') ? loadSettings().skillStates : {};
   const skillIds = (skillsCache || []).filter(sk => sk.scope !== 'plot' && skillStates[sk.id] !== false).map(sk => sk.id);
@@ -2775,6 +2777,24 @@ function updateStudentDisplay() {
 
 // ── 事件绑定 ──
 function bindEvents() {
+  $('btnExperimentPreparation').onclick = async () => {
+    const button = $('btnExperimentPreparation');
+    button.disabled = true;
+    try {
+      const result = await window.labAPI.openExternal('https://wlsyzx.xidian.edu.cn/expe/index.html');
+      if (!result.ok) showToast('error', '实验预习网站未打开', result.error || '请稍后重试', 5000);
+    } catch (error) { showToast('error', '实验预习网站未打开', error.message, 5000); }
+    finally { button.disabled = false; }
+  };
+  $('btnOpenSchoolPortal').onclick = async () => {
+    const button = $('btnOpenSchoolPortal');
+    button.disabled = true;
+    try {
+      const result = await window.labAPI.openSchoolPortal();
+      if (!result.ok) showToast('error', '学校网站未打开', result.error || '请稍后重试', 5000);
+    } catch (error) { showToast('error', '学校网站未打开', error.message, 5000); }
+    finally { button.disabled = false; }
+  };
   // 主进程请求"保存后退出"：保存当前数据，成功则确认关闭
   if (window.labAPI && window.labAPI.onSaveAndClose) {
     window.labAPI.onSaveAndClose(async () => {
@@ -2833,11 +2853,10 @@ function bindEvents() {
   $('btnSaveStudent').onclick = saveStudent;
 
   // 设置
-  $('btnSettings').onclick = () => { openModal('settingsModal'); loadSettingsForm(); switchSettingsPane('ai'); };
+  $('btnSettings').onclick = () => { openModal('settingsModal'); loadSettingsForm(); switchSettingsPane('notice'); };
   $('btnNavAi').onclick = () => switchSettingsPane('ai');
-  $('btnNavSkills').onclick = () => { switchSettingsPane('skills'); loadSkillList(); };
-  $('btnNavCustomVariants').onclick = () => { switchSettingsPane('customvariants'); loadCustomVariantsPane(); };
-  $('btnNavReports').onclick = () => { switchSettingsPane('reports'); loadReportsList(); };
+  bindSettingsModuleTabs();
+  $('btnNavReports').onclick = () => switchSettingsPane('reports');
   $('btnRefreshReports').onclick = loadReportsList;
   $('btnPickReportDir').onclick = pickReportDir;
   $('btnNavHelp').onclick = () => switchSettingsPane('help');
@@ -2850,7 +2869,7 @@ function bindEvents() {
   $('btnExportDiagnostics').onclick = exportDiagnostics;
   const noticeReminder = document.querySelector('.notice-reminder');
   if (noticeReminder) noticeReminder.onclick = () => { openModal('settingsModal'); switchSettingsPane('notice'); };
-  $('btnNavDevelop').onclick = () => { switchSettingsPane('develop'); loadDevelopPane(); loadSecCfgExpList(); };
+  $('btnNavDevelop').onclick = () => { switchSettingsPane('develop'); loadDevelopPane(); };
   $('rdDevMode').onclick = () => setDevMode(true);
   $('rdNormalMode').onclick = () => setDevMode(false);
   $('secCfgExpSel').onchange = () => {
@@ -2861,6 +2880,7 @@ function bindEvents() {
   $('btnFillDefaultData').onclick = fillDefaultData;
   $('btnCheckUpdate').onclick = checkForUpdate;
   $('btnCheckDataUpdate').onclick = checkDataUpdate;
+  $('btnRestoreBuiltinResources').onclick = restoreBuiltinResources;
   $('btnUpdateLater').onclick = () => closeModal('updateModal');
   $('btnCloseUpdateModal').onclick = () => closeModal('updateModal');
   // 通用确认弹窗
@@ -2894,7 +2914,7 @@ function bindEvents() {
     $('inputApiKey').value = ''; $('inputApiKey').placeholder = '请输入 API Key'; updateAiStatus();
     showToast('success', '已清除', '已删除此应用保存的 API Key');
   };
-  $('btnAiConfig').onclick = () => { closeModal('studentModal'); openModal('settingsModal'); loadSettingsForm(); };
+  $('btnAiConfig').onclick = () => { closeModal('studentModal'); openModal('settingsModal'); loadSettingsForm(); switchSettingsPane('ai'); };
   $('selectProvider').onchange = () => {
     renderModelChips();
     autoFillApiUrl();
@@ -3183,31 +3203,71 @@ function collapseAiConfigPanels() {
 }
 
 // ── 加载设置表单 ──
-// 设置模块导航切换
+// 设置主分类与内部独立模块；内部模块不占用左侧主导航。
+const SETTINGS_MODULES = {
+  ai: [
+    { name: 'config', button: 'btnAiModuleConfig', panel: 'paneAiConfig' },
+    { name: 'skills', button: 'btnAiModuleSkills', panel: 'paneSkills' },
+  ],
+  reports: [
+    { name: 'files', button: 'btnReportModuleFiles', panel: 'paneReportFiles' },
+    { name: 'custom', button: 'btnReportModuleCustom', panel: 'paneCustomVariants' },
+    { name: 'sections', button: 'btnReportModuleSections', panel: 'paneSectionVariants' },
+  ],
+};
+
+function bindSettingsModuleTabs() {
+  for (const [group, modules] of Object.entries(SETTINGS_MODULES)) {
+    modules.forEach((module, index) => {
+      const button = $(module.button);
+      button.onclick = () => switchSettingsModule(group, module.name);
+      button.onkeydown = event => {
+        let next;
+        if (event.key === 'ArrowRight') next = (index + 1) % modules.length;
+        else if (event.key === 'ArrowLeft') next = (index + modules.length - 1) % modules.length;
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = modules.length - 1;
+        else return;
+        event.preventDefault();
+        $(modules[next].button).focus();
+        switchSettingsModule(group, modules[next].name);
+      };
+    });
+  }
+}
+
+async function switchSettingsModule(group, name) {
+  const modules = SETTINGS_MODULES[group];
+  if (!modules || !modules.some(module => module.name === name)) return;
+  for (const module of modules) {
+    const active = module.name === name;
+    $(module.button).classList.toggle('active', active);
+    $(module.button).setAttribute('aria-selected', String(active));
+    $(module.button).tabIndex = active ? 0 : -1;
+    $(module.panel).hidden = !active;
+  }
+  const panes = document.querySelector('.settings-panes');
+  if (panes) panes.scrollTop = 0;
+  try {
+    if (group === 'ai' && name === 'skills') await loadSkillList();
+    if (group === 'reports' && name === 'files') await loadReportsList();
+    if (group === 'reports' && name === 'custom') await loadCustomVariantsPane();
+    if (group === 'reports' && name === 'sections') await loadSecCfgExpList();
+  } catch (error) { showToast('error', '模块加载失败', error.message || String(error), 5000); }
+}
+
 function switchSettingsPane(name) {
-  if (name === 'ai') collapseAiConfigPanels();   // 每次进入 AI 服务页都回到"只有两个按钮"的初始态
-  $('btnNavAi').classList.toggle('active', name === 'ai');
-  $('paneAi').classList.toggle('active', name === 'ai');
-  $('btnNavSkills').classList.toggle('active', name === 'skills');
-  $('paneSkills').classList.toggle('active', name === 'skills');
-  $('btnNavCustomVariants').classList.toggle('active', name === 'customvariants');
-  $('paneCustomVariants').classList.toggle('active', name === 'customvariants');
-  $('btnNavReports').classList.toggle('active', name === 'reports');
-  $('paneReports').classList.toggle('active', name === 'reports');
-  $('btnNavHelp').classList.toggle('active', name === 'help');
-  $('paneHelp').classList.toggle('active', name === 'help');
-  $('btnNavDanger').classList.toggle('active', name === 'danger');
-  $('paneDanger').classList.toggle('active', name === 'danger');
-  $('btnNavDevelop').classList.toggle('active', name === 'develop');
-  $('paneDevelop').classList.toggle('active', name === 'develop');
-  $('btnNavUpdate').classList.toggle('active', name === 'update');
-  $('paneUpdate').classList.toggle('active', name === 'update');
-  $('btnNavFeedback').classList.toggle('active', name === 'feedback');
-  $('paneFeedback').classList.toggle('active', name === 'feedback');
-  $('btnNavNotice').classList.toggle('active', name === 'notice');
-  $('paneNotice').classList.toggle('active', name === 'notice');
-  $('btnNavThanks').classList.toggle('active', name === 'thanks');
-  $('paneThanks').classList.toggle('active', name === 'thanks');
+  const pages = { notice: 'Notice', ai: 'Ai', reports: 'Reports', help: 'Help',
+    update: 'Update', feedback: 'Feedback', develop: 'Develop', thanks: 'Thanks', danger: 'Danger' };
+  if (!pages[name]) return;
+  for (const [page, suffix] of Object.entries(pages)) {
+    $('btnNav' + suffix).classList.toggle('active', page === name);
+    $('pane' + suffix).classList.toggle('active', page === name);
+  }
+  const panes = document.querySelector('.settings-panes');
+  if (panes) panes.scrollTop = 0;
+  if (name === 'ai') { collapseAiConfigPanels(); switchSettingsModule('ai', 'config'); }
+  if (name === 'reports') switchSettingsModule('reports', 'files');
 }
 
 // ── 感谢声明（名单来自 common/credits.json，可随实验数据更新推送）──
@@ -3242,6 +3302,58 @@ async function loadThanksPane() {
 // ── 检查更新（对象存储清单，国内高速）──
 const MANIFEST_URL = 'https://labreport-1485394950.cos.ap-guangzhou.myqcloud.com/latest.json';
 let updateInfo = null;   // 最近一次检查结果（含下载入口）
+const updateCheckFlights = new Map();
+const updateCheckResults = new Map();
+let startupUpdatesChecked = false;
+
+function showUpdateCheckStatus(kind, result) {
+  const el = $(kind === 'app' ? 'appUpdateStatus' : 'dataUpdateStatus');
+  const label = kind === 'app' ? '应用' : '实验数据';
+  if (el) el.textContent = !result.ok
+    ? `${label}更新检查未完成：${result.error || '网络不可用'}。可稍后手动重试。`
+    : result.hasUpdate ? `发现${label}新版本 v${kind === 'app' ? result.latest : result.remoteVersion}`
+      : result.noRemote ? '云端暂无实验数据更新包。' : `${label}已是最新。`;
+  if (el && el.dataset) el.dataset.state = !result.ok ? 'error' : result.hasUpdate ? 'available' : 'current';
+  const hasUpdate = [...updateCheckResults.values()].some(r => r.ok && r.hasUpdate);
+  for (const id of ['btnSettings', 'btnNavUpdate']) {
+    const button = $(id);
+    if (button) {
+      button.classList.toggle('has-update', hasUpdate);
+      if (id === 'btnSettings') button.title = hasUpdate ? '有可用更新，请进入设置 → 检查更新' : '设置';
+    }
+  }
+}
+
+function requestUpdateCheck(kind) {
+  // 启动自动检查与用户点击检查共用同一请求，避免清单许可被并发检查反复重置。
+  if (updateCheckFlights.has(kind)) return updateCheckFlights.get(kind);
+  const el = $(kind === 'app' ? 'appUpdateStatus' : 'dataUpdateStatus');
+  if (el) el.textContent = '正在检查更新…';
+  const flight = Promise.resolve().then(() => kind === 'app'
+    ? window.labAPI.checkForUpdate({ manifestUrl: MANIFEST_URL }) : window.labAPI.checkDataUpdate())
+    .catch(error => ({ ok: false, error: error.message || String(error), hasUpdate: false }))
+    .then(result => {
+      const r = result || { ok: false, error: '未收到检查结果', hasUpdate: false };
+      updateCheckResults.set(kind, r);
+      if (kind === 'app' && r.ok) updateInfo = r;
+      showUpdateCheckStatus(kind, r);
+      return r;
+    }).finally(() => updateCheckFlights.delete(kind));
+  updateCheckFlights.set(kind, flight);
+  return flight;
+}
+
+async function checkStartupUpdates() {
+  if (startupUpdatesChecked) return;
+  startupUpdatesChecked = true;
+  const [application, data] = await Promise.all(['app', 'data'].map(kind =>
+    updateCheckResults.get(kind) || requestUpdateCheck(kind)));
+  const available = [];
+  if (application.ok && application.hasUpdate) available.push(`应用 v${application.latest}`);
+  if (data.ok && data.hasUpdate) available.push(`实验数据 v${data.remoteVersion}`);
+  if (available.length) showToast('info', '发现可用更新', escapeHtml(available.join('、')) + '；请进入设置 → 检查更新。', 8000);
+  // 已是最新或离线时不弹窗，结果留在设置页，避免打断填写数据和生成报告。
+}
 
 function loadUpdatePane() {
   window.labAPI.getAppVersion().then(v => {
@@ -3258,10 +3370,39 @@ async function loadDataInfo() {
     const r = await window.labAPI.getDataInfo();
     if (r.ok) {
       el.textContent = r.localVersion || r.builtinVersion || '1.0.0';
+      const warnings = Array.isArray(r.resourceWarnings) ? r.resourceWarnings : [];
+      if ($('resourceSyncStatus')) $('resourceSyncStatus').textContent = warnings.length
+        ? `已保留 ${warnings.length} 个来源不明或自行修改的资源文件。若报告仍使用旧逻辑，可选择内置修复；原资源会备份。`
+        : '内置实验修复已同步；测量数据和自建内容保持不变。';
+      if ($('btnRestoreBuiltinResources')) $('btnRestoreBuiltinResources').hidden = !warnings.length;
     } else {
       el.textContent = '未知';
     }
   } catch (e) { el.textContent = '未知'; }
+}
+
+async function restoreBuiltinResources() {
+  if (isGenerating || isBatchRunning || isSavingData || isAiPolishing || isDataModified) {
+    showToast('warning', '暂时不能修复', '请先保存测量数据，并等待当前任务完成。');
+    return;
+  }
+  if (!(await appConfirm('将使用当前安装包内的官方实验脚本和模板。\n测量数据、报告、照片和自行修改的变体不会覆盖；旧资源会保留备份。\n来源不明的自定义脚本会被替换，是否继续？', { okText: '使用内置修复' }))) return;
+  const button = $('btnRestoreBuiltinResources');
+  button.disabled = true;
+  try {
+    const result = await window.labAPI.restoreBuiltinResources();
+    if (!result.ok) throw Error(result.error);
+    const previousId = currentExp?.id;
+    experiments = await fetchExperiments();
+    experiments.forEach(e => { e.category = getCategory(e.name); });
+    const selected = experiments.find(e => e.id === previousId) || null;
+    currentExp = null;
+    updateCategoryCounts(); renderList(); updateEmptyStats();
+    if (selected) await selectExperiment(selected);
+    await loadDataInfo();
+    showToast('success', '实验资源已修复', '旧资源已备份，测量数据与报告保持不变。');
+  } catch (error) { showToast('error', '修复失败', error.message, 6000); }
+  finally { button.disabled = false; }
 }
 
 async function checkDataUpdate() {
@@ -3269,7 +3410,7 @@ async function checkDataUpdate() {
   btn.disabled = true;
   btn.textContent = '检查中…';
   try {
-    const r = await window.labAPI.checkDataUpdate();
+    const r = await requestUpdateCheck('data');
     if (!r.ok) {
       showToast('error', '检查失败', r.error, 5000);
       return;
@@ -3320,6 +3461,8 @@ async function checkDataUpdate() {
     renderList();
     updateEmptyStats();
     loadDataInfo();
+    updateCheckResults.set('data', { ok: true, hasUpdate: false });
+    showUpdateCheckStatus('data', { ok: true, hasUpdate: false });
     loadSecCfgExpList();   // 数据包可能新增了实验，刷新变体管理下拉
     if (ap.warnings && ap.warnings.length) {
       const w = ap.warnings.join('；') + (addedExps.length ? `；本次新增实验：${addedExps.join('、')}` : '');
@@ -3342,7 +3485,7 @@ async function checkForUpdate() {
   btn.disabled = true;
   btn.textContent = '检查中…';
   try {
-    const r = await window.labAPI.checkForUpdate({ manifestUrl: MANIFEST_URL });
+    const r = await requestUpdateCheck('app');
     if (!r.ok) {
       showToast('error', '检查更新失败', r.error, 5000);
       return;
@@ -3357,7 +3500,7 @@ async function checkForUpdate() {
     showToast('error', '检查更新失败', err.message, 5000);
   } finally {
     btn.disabled = false;
-    btn.textContent = '检查更新';
+    btn.textContent = '检查应用更新';
   }
 }
 

@@ -66,6 +66,48 @@ def _matrix(data, key, rows, cols, positive=False):
     return result
 
 
+def _analyze_parallel(px, py):
+    """全点拟合与质量检查；警告不删点，不强行把交叉曲线修饰成正确场线。"""
+    curves, warnings = [], []
+    for level, xs, ys in zip(PARALLEL_LEVELS, px, py):
+        xs, ys = np.array(xs), np.array(ys)
+        low, high = float(min(ys)), float(max(ys))
+        degree = min(2, len(set(ys)) - 1)
+        if degree == 0:
+            polynomial = np.poly1d([float(np.mean(xs))])
+            warnings.append(f"{level} V 的 y 坐标没有变化，无法可靠确定等势线形状。")
+        else:
+            # 平移和缩放自变量，避免大坐标或极窄范围导致数值病态。
+            center, scale = float(np.mean(ys)), high - low
+            normalized = np.poly1d(np.polyfit((ys - center) / scale, xs, degree))
+            polynomial = normalized(np.poly1d([1 / scale, -center / scale]))
+            if degree < 2:
+                warnings.append(f"{level} V 仅有两个不同的 y 坐标，采用全点直线拟合。")
+        residual = float(np.sqrt(np.mean((polynomial(ys) - xs) ** 2)))
+        if residual > max(float(np.ptp(xs)) * 0.25, 1e-9):
+            warnings.append(f"{level} V 拟合残差较大（均方根 {residual:.3g} cm），请核对原始坐标。")
+        curves.append({"coefficients": polynomial.c.tolist(), "low": low, "high": high})
+    for i, first in enumerate(curves):
+        for j in range(i + 1, len(curves)):
+            second = curves[j]
+            low, high = max(first["low"], second["low"]), min(first["high"], second["high"])
+            if high <= low:
+                continue
+            difference = np.poly1d(first["coefficients"]) - np.poly1d(second["coefficients"])
+            overlap = np.allclose(difference.c, 0, rtol=0, atol=1e-10)
+            crossing = any(abs(root.imag) < 1e-8 and low <= root.real <= high
+                           for root in np.roots(difference)) if not overlap else False
+            if overlap or crossing:
+                warnings.append(f"{PARALLEL_LEVELS[i]} V 与 {PARALLEL_LEVELS[j]} V 的拟合等势线"
+                                + ("重合" if overlap else "相交")
+                                + "，不符合不同电位等势线的物理要求；请核对数据与拟合适用性。")
+    low = max(curve["low"] for curve in curves)
+    high = min(curve["high"] for curve in curves)
+    if high <= low:
+        warnings.append("各级等势线没有共同测量区间，不绘制跨级电场方向箭头。")
+    return curves, warnings
+
+
 def _compute(data):
     u_a = _number(data.get("u_a"), "电源电压 U_a")
     r_a = _number(data.get("r_a"), "内电极半径 r_a")
@@ -80,6 +122,8 @@ def _compute(data):
     ratio = [u / u_a for u in COAX_LEVELS]
     fit = linear_regression(ln_r, ratio)  # 与慕寒模板图2一致：x=ln r，y=U_r/U_a
     theory_slope = -1 / math.log(r_b / r_a)
+    theory_intercept = math.log(r_b) / math.log(r_b / r_a)
+    parallel_curves, warnings = _analyze_parallel(px, py)
     return {
         "u_a": u_a, "r_a": r_a, "r_b": r_b,
         "coax_radii": coax, "parallel_x": px, "parallel_y": py,
@@ -88,9 +132,11 @@ def _compute(data):
         "slope": fit.slope, "intercept": fit.intercept,
         "slope_u": fit.slope_uncertainty, "intercept_u": fit.intercept_uncertainty,
         "r_corr": fit.r, "r_squared": fit.r_squared,
-        "theory_slope": theory_slope, "theory_intercept": 1.0,
+        "theory_slope": theory_slope, "theory_intercept": theory_intercept,
         "slope_error": abs((fit.slope - theory_slope) / theory_slope) * 100,
-        "intercept_error": abs(fit.intercept - 1.0) * 100,
+        "intercept_error": (abs((fit.intercept - theory_intercept) / theory_intercept) * 100
+                            if abs(theory_intercept) > 1e-12 else None),
+        "parallel_curves": parallel_curves, "warnings": warnings,
     }
 
 
@@ -103,6 +149,10 @@ def _plot_coax(r, path):
     fig, ax = plt.subplots(figsize=(6.5, 6.0), constrained_layout=True)
     theta = np.linspace(0, 2 * np.pi, 361)
     observed_theta = np.deg2rad(ANGLES)
+    extent = max(r["r_b"], max(map(max, r["coax_radii"])))
+    margin = extent * 0.12
+    arrow_start = max(r["r_a"], min(r["r"]))
+    arrow_end = min(r["r_b"], max(r["r"]))
     for i, voltage in enumerate(COAX_LEVELS):
         color = COLORS[i]
         radius = r["r"][i]
@@ -111,15 +161,17 @@ def _plot_coax(r, path):
         ax.scatter(np.array(r["coax_radii"][i]) * np.cos(observed_theta),
                    np.array(r["coax_radii"][i]) * np.sin(observed_theta),
                    color=color, s=8, alpha=0.5, zorder=3)
-        ax.text(radius + 0.08, (3 - i) * 0.13, f"{voltage}V", color=color, fontsize=7)
+        ax.text(radius + extent * 0.015, (3 - i) * extent * 0.02, f"{voltage}V", color=color, fontsize=7)
     for angle in np.deg2rad(range(0, 360, 30)):
-        ax.annotate("", xy=(4.65 * np.cos(angle), 4.65 * np.sin(angle)),
-                    xytext=(2.6 * np.cos(angle), 2.6 * np.sin(angle)),
+        if arrow_end <= arrow_start:
+            continue
+        ax.annotate("", xy=(arrow_end * np.cos(angle), arrow_end * np.sin(angle)),
+                    xytext=(arrow_start * np.cos(angle), arrow_start * np.sin(angle)),
                     arrowprops={"arrowstyle": "->", "lw": 0.65, "color": "#7A8490"})
     ax.set(xlabel="x (cm)", ylabel="y (cm)", title="同轴电缆模型：等势线与电场线")
     ax.set_aspect("equal", adjustable="box")
-    ax.set_xlim(-6, 6.4)
-    ax.set_ylim(-6, 6)
+    ax.set_xlim(-extent - margin, extent + margin)
+    ax.set_ylim(-extent - margin, extent + margin)
     ax.grid(alpha=0.18)
     _save_figure(fig, path)
 
@@ -133,10 +185,9 @@ def _plot_fit(r, path):
                linewidths=1.5, label="测量点", zorder=3)
     ax.plot(xx, r["slope"] * xx + r["intercept"], color="#D55E00",
             linewidth=1.8, label="实验拟合")
-    ax.plot(xx, 1 + r["theory_slope"] * xx, color="#343B46",
+    ax.plot(xx, r["theory_intercept"] + r["theory_slope"] * xx, color="#343B46",
             linewidth=1.1, linestyle="--", label="理论关系")
     ax.set(xlabel="ln(r / cm)", ylabel=r"$U_r/U_a$", title="同轴电缆模型：归一化电位与 ln r")
-    ax.set_ylim(bottom=0)
     ax.grid(alpha=0.18)
     ax.legend(frameon=False, fontsize=8)
     _save_figure(fig, path)
@@ -145,38 +196,55 @@ def _plot_fit(r, path):
 def _plot_parallel(r, path):
     fig, ax = plt.subplots(figsize=(7.4, 5.4), constrained_layout=True)
     curves = []
+    plotted_x = []
     for i, voltage in enumerate(PARALLEL_LEVELS):
         xs = np.array(r["parallel_x"][i])
         ys = np.array(r["parallel_y"][i])
         # 每级全部10个实测点参与 x(y) 二次最小二乘，不预设剔除点。
-        polynomial = np.poly1d(np.polyfit(ys, xs, 2))
+        polynomial = np.poly1d(r["parallel_curves"][i]["coefficients"])
         yy = np.linspace(min(ys), max(ys), 200)
+        plotted_x.extend(polynomial(yy).tolist())
         ax.plot(polynomial(yy), yy, color=COLORS[i], linewidth=1.9,
+                linestyle="--" if r["warnings"] else "-",
                 label=f"{voltage} V")
         ax.scatter(xs, ys, s=13, color=COLORS[i], alpha=0.65, zorder=3)
         curves.append((polynomial, min(ys), max(ys)))
-        label_y = float(np.median(ys))
+        # 在各自实测区间内交错标注，避免相邻曲线的中点标签重叠。
+        label_y = float(min(ys) + (0.35 if i % 2 == 0 else 0.65) * (max(ys) - min(ys)))
         ax.text(polynomial(label_y) + 0.06, label_y, f"{voltage}V",
                 color=COLORS[i], fontsize=7)
     # 中央共同测量区域的电场线示意：与近似竖直等势线正交，方向由高电位到低电位。
     low = max(curve[1] for curve in curves)
     high = min(curve[2] for curve in curves)
-    for y in np.linspace(low + 0.2, high - 0.2, 9):
-        x_left = curves[-1][0](y) + 0.18
-        x_right = curves[0][0](y) - 0.18
-        ax.annotate("", xy=(x_right, y), xytext=(x_left, y),
-                    arrowprops={"arrowstyle": "->", "lw": 0.7, "color": "#8B949E"})
+    if high > low and not r["warnings"]:
+        for y in np.linspace(low + 0.1 * (high - low), high - 0.1 * (high - low), 9):
+            # 仅在等势线近似竖直、次序一致处给出水平方向示意，不跨越异常区间。
+            positions = [curve[0](y) for curve in curves]
+            deltas = np.diff(positions)
+            if not (np.all(deltas > 0) or np.all(deltas < 0)):
+                continue
+            if any(abs(np.polyder(curve[0])(y)) > 0.25 for curve in curves):
+                continue
+            x_start, x_end = positions[-1], positions[0]
+            inset = (x_end - x_start) * 0.05
+            ax.annotate("", xy=(x_end - inset, y), xytext=(x_start + inset, y),
+                        arrowprops={"arrowstyle": "->", "lw": 0.7, "color": "#8B949E"})
     ax.set(xlabel="x (cm)", ylabel="y (cm)", title="平行线电极模型：等势线与电场线")
     ax.grid(alpha=0.15)
-    ax.set_xlim(min(min(row) for row in r["parallel_x"]) - 0.3,
-                max(max(row) for row in r["parallel_x"]) + 0.3)
+    all_x = [v for row in r["parallel_x"] for v in row] + plotted_x
+    x_margin = max((max(all_x) - min(all_x)) * 0.08, 0.1)
+    ax.set_xlim(min(all_x) - x_margin, max(all_x) + x_margin)
     ax.set_ylim(min(min(row) for row in r["parallel_y"]) - 0.3,
                 max(max(row) for row in r["parallel_y"]) + 0.3)
+    if r["warnings"]:
+        ax.set_title("平行线电极模型：全点拟合（存在异常，需核对）")
     _save_figure(fig, path)
 
 
 def _generate_docx(data, output_path):
     r = _compute(data)
+    for warning in r["warnings"]:
+        print("[提示] " + warning)
     output_dir = os.path.dirname(os.path.abspath(output_path))
     os.makedirs(output_dir, exist_ok=True)
     coax_path = os.path.join(output_dir, "coax_field.png")
@@ -202,7 +270,7 @@ def _generate_docx(data, output_path):
         )
         doc.add_paragraph_rich(
             r"同轴电缆模型满足 $U_r/U_a=\ln(r_b/r)/\ln(r_b/r_a)$；"
-            r"令 $x=\ln(r/\mathrm{cm})$，则 $U_r/U_a=1-x/\ln(r_b/r_a)$。"
+            r"令 $x=\ln(r/\mathrm{cm})$，则截距为 $\ln(r_b/\mathrm{cm})/\ln(r_b/r_a)$。"
             "平行线电极模型在中央区域近似匀强，边缘处出现弯曲。"
         )
     if "实验方法" in variants:
@@ -242,22 +310,25 @@ def _generate_docx(data, output_path):
                   [[f"{u}", f"{r['u_r_ua'][i]:.3f}", f"{r['r'][i]:.3f}",
                     f"{r['ln_r'][i]:.3f}"] for i, u in enumerate(COAX_LEVELS)])
     doc.add_paragraph("每级平均半径由表1的12个半径重新求算，未照抄源文档中个别不一致的平均值。")
-    doc.add_math(r"\frac{U_r}{U_a}=1-\frac{\ln(r/\mathrm{cm})}{\ln(r_b/r_a)}")
+    doc.add_math(r"\frac{U_r}{U_a}=\frac{\ln(r_b/\mathrm{cm})-\ln(r/\mathrm{cm})}{\ln(r_b/r_a)}")
     doc.add_paragraph(f"取 r_a={r['r_a']:.2f} cm、r_b={r['r_b']:.2f} cm，"
-                      f"理论斜率={r['theory_slope']:.4f}，理论截距=1。")
+                      f"理论斜率={r['theory_slope']:.4f}，理论截距={r['theory_intercept']:.4f}。")
     if not render_custom_plot(doc, 2, width_cm=14):
         doc.add_image(fit_path, width_cm=14)
     doc.add_paragraph(f"图2 实验点、最小二乘拟合与理论关系。实验式："
                       f"U_r/U_a = {r['slope']:.4f} ln(r/cm) + {r['intercept']:.4f}；"
                       f"R²={r['r_squared']:.4f}。")
-    doc.add_paragraph(f"斜率相对误差={r['slope_error']:.2f}%；"
-                      f"截距相对误差={r['intercept_error']:.2f}%。")
+    intercept_note = (f"截距相对误差={r['intercept_error']:.2f}%。" if r['intercept_error'] is not None
+                      else "理论截距为零，截距相对误差不适用。")
+    doc.add_paragraph(f"斜率相对误差={r['slope_error']:.2f}%；" + intercept_note)
 
     doc.add_heading("（二）平行线电极静电场分布", level=2)
     if not render_custom_plot(doc, 3, width_cm=14):
         doc.add_image(parallel_path, width_cm=14)
-    doc.add_paragraph("图3 根据表3全部坐标在各级测量范围内拟合的等势线；中央水平箭头为"
-                      "与等势线近似正交的电场方向示意，不代表新增测量点。")
+    doc.add_paragraph("图3 保留表3全部实测点，曲线仅为全点拟合近似；存在异常时采用虚线并取消电场方向箭头。"
+                      "仅在共同测量区间内、曲线次序正常且近似竖直时绘制由高电位到低电位的方向示意。")
+    for warning in r["warnings"]:
+        doc.add_paragraph("拟合质量提示：" + warning)
 
     doc.add_heading("四、回答问题及结果分析", level=1)
     if not render_custom_quiz(doc, r):
@@ -274,8 +345,8 @@ def _generate_docx(data, output_path):
     doc.add_heading("实验结果分析", level=2)
     doc.add_paragraph(f"同轴模型的 U_r/U_a～ln(r/cm) 拟合斜率为 {r['slope']:.4f}，"
                       f"理论值为 {r['theory_slope']:.4f}；"
-                      f"拟合截距为 {r['intercept']:.4f}，理论值为1。"
-                      "平行线电极中央区域等势线近似平行，边缘发生弯曲。"
+                      f"拟合截距为 {r['intercept']:.4f}，理论值为 {r['theory_intercept']:.4f}。"
+                      "平行线电极模型的形状需结合实测点与上述拟合质量提示判断。"
                       "偏差可来自电极有限尺寸、接触电阻、介质不均匀和探针定位。")
     if "误差分析" in variants:
         doc.add_heading("误差分析", level=2)

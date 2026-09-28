@@ -17,6 +17,30 @@ function fixture(t) {
 function put(file, text) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, text); }
 function read(file) { return fs.readFileSync(file, 'utf8'); }
 
+test('settings navigation SVGs retain complete heads, dots and refresh arrow', () => {
+  const html = read(path.join(__dirname, '../src/index.html'));
+  const icon = id => {
+    const start = html.indexOf(`id="${id}"`);
+    assert.ok(start >= 0, `${id} exists`);
+    const button = html.slice(start, html.indexOf('</button>', start));
+    const svg = button.match(/<svg\b[^>]*>[\s\S]*?<\/svg>/);
+    assert.ok(svg, `${id} has an SVG`);
+    return svg[0];
+  };
+  assert.match(icon('btnNavAi'), /<circle cx="12" cy="6" r="4"\/>/);
+  assert.doesNotMatch(icon('btnAiModuleSkills'), /<polyline\b/);
+  assert.match(icon('btnAiModuleSkills'), /<path\b/);
+  for (const id of ['btnNavHelp', 'btnNavNotice', 'btnNavDanger']) {
+    assert.match(icon(id), /<circle cx="12" cy="17" r="0\.9" fill="currentColor" stroke="none"\/>/);
+    assert.doesNotMatch(icon(id), /x2="12\.01"/);
+  }
+  const refresh = icon('btnNavUpdate');
+  assert.equal((refresh.match(/<path\b/g) || []).length, 1);
+  assert.equal((refresh.match(/<polyline\b/g) || []).length, 1);
+  assert.doesNotMatch(refresh, /<line\b/);
+  assert.match(refresh, /points="21 7 21 12 16 12"/);
+});
+
 test('resource update commits files and metadata together, retaining a recovery copy', t => {
   const target = path.join(fixture(t), 'experiments');
   put(path.join(target, 'common/core.py'), 'old');
@@ -142,10 +166,147 @@ test('resource sync carries non-script data files (vendored formula deps)', asyn
   assert.equal(read(path.join(target, 'common/_vendor/latex2mathml/unimathsymbols.txt')), 'DATA-2');
 });
 
+test('resource revisions apply newer bundled fixes without losing data or rolling back newer packages', t => {
+  const root = fixture(t), builtin = path.join(root, 'builtin'), target = path.join(root, 'user'), staging = path.join(root, 'package');
+  put(path.join(builtin, 'common/resource-release.json'), '{"revision":1}');
+  put(path.join(builtin, 'common/core.py'), 'bundled-v1');
+  put(path.join(target, 'A/data.json'), '{"measurement":42}');
+  put(path.join(target, 'A/report.docx'), 'report');
+  store.syncBuiltin(builtin, target, store.resourceVersion(builtin), '2.1.2');
+  put(path.join(staging, 'common/resource-release.json'), '{"revision":2}');
+  put(path.join(staging, 'common/core.py'), 'package-v2');
+  put(path.join(target, 'common/core.py'), 'package-v2');
+  store.writeState(target, { ...store.readState(target), manifest: { dataVersion: '2.0.0' },
+    resourceOrigins: store.packageOrigins(staging, store.readState(target).resourceOrigins, '2.0.0') });
+  put(path.join(builtin, 'common/resource-release.json'), '{"revision":3}');
+  put(path.join(builtin, 'common/core.py'), 'bundled-v3');
+  store.syncBuiltin(builtin, target, store.resourceVersion(builtin), '2.1.2');
+  assert.equal(read(path.join(target, 'common/core.py')), 'bundled-v3');
+  assert.equal(read(path.join(target, 'A/data.json')), '{"measurement":42}');
+  assert.equal(read(path.join(target, 'A/report.docx')), 'report');
+  assert.equal(store.readState(target).manifest.dataVersion, '2.0.0');
+  put(path.join(staging, 'common/resource-release.json'), '{"revision":5}');
+  put(path.join(staging, 'common/core.py'), 'package-v5');
+  put(path.join(target, 'common/core.py'), 'package-v5');
+  store.writeState(target, { ...store.readState(target), resourceOrigins: store.packageOrigins(staging, {}, '3.0.0') });
+  put(path.join(builtin, 'common/core.py'), 'bundled-v4');
+  store.syncBuiltin(builtin, target, store.resourceVersion(builtin), '2.1.2');
+  assert.equal(read(path.join(target, 'common/core.py')), 'package-v5');
+});
+
+test('unknown legacy package and user scripts are preserved with a backed-up repair path', t => {
+  const root = fixture(t), builtin = path.join(root, 'builtin'), target = path.join(root, 'user');
+  put(path.join(builtin, 'common/resource-release.json'), '{"revision":3}');
+  put(path.join(builtin, 'A/generate.py'), 'official fix');
+  put(path.join(builtin, 'A/variants.json'), '["official"]');
+  put(path.join(target, 'A/generate.py'), 'legacy script');
+  put(path.join(target, 'A/variants.json'), '["personal variant"]');
+  put(path.join(target, 'A/data.json'), '{"measurement":42}');
+  store.writeState(target, { manifest: { dataVersion: '2.0.0' } });
+  const fingerprint = store.resourceVersion(builtin);
+  store.syncBuiltin(builtin, target, fingerprint, '2.1.2');
+  assert.equal(read(path.join(target, 'A/generate.py')), 'legacy script');
+  assert.ok(store.readState(target).syncWarnings.includes(path.join('A', 'generate.py')));
+  store.syncBuiltin(builtin, target, fingerprint, '2.1.2', { force: true });
+  assert.equal(read(path.join(target, 'A/generate.py')), 'official fix');
+  assert.equal(read(path.join(target, 'A/variants.json')), '["personal variant"]');
+  assert.equal(read(path.join(target, 'A/data.json')), '{"measurement":42}');
+  const backups = fs.readdirSync(root).filter(name => name.startsWith('.resource-'));
+  assert.ok(backups.some(name => fs.existsSync(path.join(root, name, 'previous/A/generate.py'))
+    && read(path.join(root, name, 'previous/A/generate.py')) === 'legacy script'));
+  put(path.join(target, 'A/generate.py'), 'personal script');
+  put(path.join(builtin, 'A/generate.py'), 'next official fix');
+  store.syncBuiltin(builtin, target, store.resourceVersion(builtin), '2.1.2');
+  assert.equal(read(path.join(target, 'A/generate.py')), 'personal script');
+});
+
+test('older installers cannot roll back tracked newer builtin resources', t => {
+  const root = fixture(t), builtin = path.join(root, 'builtin'), target = path.join(root, 'user');
+  put(path.join(builtin, 'common/resource-release.json'), '{"revision":3}');
+  put(path.join(builtin, 'common/core.py'), 'new');
+  store.syncBuiltin(builtin, target, store.resourceVersion(builtin), '2.1.2');
+  put(path.join(builtin, 'common/resource-release.json'), '{"revision":1}');
+  put(path.join(builtin, 'common/core.py'), 'old');
+  store.syncBuiltin(builtin, target, store.resourceVersion(builtin), '2.1.2');
+  assert.equal(read(path.join(target, 'common/core.py')), 'new');
+});
+
+test('fixed matrices reject entirely missing rows while RLC keeps explicitly optional rows', () => {
+  const validation = require('../src/shared/data-validation');
+  const base = path.join(__dirname, '../物理实验/实验脚本');
+  for (const name of fs.readdirSync(base)) {
+    const schemaPath = path.join(base, name, 'schema.json');
+    if (!fs.existsSync(schemaPath)) continue;
+    const schema = JSON.parse(read(schemaPath)), sample = JSON.parse(read(path.join(base, name, 'sample.json')));
+    assert.equal(validation.validate(schema, sample).length, 0, name + ' baseline');
+    for (const group of schema.groups) for (const field of group.fields) {
+      if (field.type !== 'matrix' || !field.required) continue;
+      const data = JSON.parse(JSON.stringify(sample));
+      if (field.variableRows) {
+        const complete = sample[field.key].find(row => row.every(value => value != null));
+        data[field.key] = Array.from({ length: field.rows }, () => [...complete]);
+      }
+      data[field.key][0].fill(null);
+      assert.equal(validation.validate(schema, data).length > 0, !field.variableRows, name + '/' + field.key);
+      assert.equal(validation.validate(schema, data, false).length, 0, 'draft can be saved');
+      if (!field.variableRows) {
+        data[field.key].shift();
+        assert.ok(validation.validate(schema, data).length, 'short fixed matrix rejected');
+      } else {
+        data[field.key] = data[field.key].slice(1, field.minFilledRows);
+        assert.ok(validation.validate(schema, data).length, 'variable tables need the declared minimum measurements');
+      }
+    }
+  }
+});
+
 const renderer = read(path.join(__dirname, '../src/renderer.js'));
 function load(context, start, end) {
   vm.runInContext(renderer.slice(renderer.indexOf(start), renderer.indexOf(end, renderer.indexOf(start))), context);
 }
+
+function startupUpdateContext(api) {
+  const nodes = {}, toasts = [];
+  const context = vm.createContext({ window: { labAPI: api }, escapeHtml: String,
+    showToast: (...args) => toasts.push(args),
+    $: id => nodes[id] ||= { textContent: '', classList: { toggle: () => {} } } });
+  load(context, 'const MANIFEST_URL =', 'function loadUpdatePane()');
+  return { context, nodes, toasts };
+}
+
+test('startup checks both versions once, deduplicates manual checks, and never downloads', async () => {
+  let appCalls = 0, dataCalls = 0, release;
+  const appResult = new Promise(resolve => { release = resolve; });
+  const { context, nodes, toasts } = startupUpdateContext({
+    checkForUpdate: async () => { appCalls++; return appResult; },
+    checkDataUpdate: async () => { dataCalls++; return { ok: true, hasUpdate: true, remoteVersion: '2.0.0' }; },
+    downloadDataPackage: () => { throw Error('must not automatically download'); },
+  });
+  const startup = context.checkStartupUpdates(), manual = context.requestUpdateCheck('app');
+  release({ ok: true, hasUpdate: true, latest: '3.0.0' });
+  await Promise.all([startup, manual]);
+  await context.checkStartupUpdates();
+  assert.equal(appCalls, 1); assert.equal(dataCalls, 1);
+  assert.equal(toasts.length, 1);
+  assert.match(toasts[0][2], /应用 v3\.0\.0.*实验数据 v2\.0\.0/);
+  assert.match(nodes.appUpdateStatus.textContent, /新版本/);
+});
+
+test('startup stays quiet offline or up to date, and failed checks can be retried', async () => {
+  let calls = 0;
+  const { context, nodes, toasts } = startupUpdateContext({
+    checkForUpdate: async () => { if (++calls === 1) throw Error('offline'); return { ok: true, hasUpdate: false }; },
+    checkDataUpdate: async () => ({ ok: true, hasUpdate: false, noRemote: true }),
+  });
+  await context.checkStartupUpdates();
+  assert.equal(toasts.length, 0);
+  assert.match(nodes.appUpdateStatus.textContent, /未完成.*offline/);
+  assert.match(nodes.dataUpdateStatus.textContent, /暂无/);
+  await context.requestUpdateCheck('app');
+  assert.equal(calls, 2);
+  assert.match(nodes.appUpdateStatus.textContent, /已是最新/);
+  assert.match(renderer, /setTimeout\(\(\) => \{ checkStartupUpdates\(\)/);
+});
 function uiContext() {
   const nodes = {};
   return vm.createContext({
@@ -157,6 +318,79 @@ function uiContext() {
     showToast: () => {}, setResultState: () => {}, switchTab: () => {}, updateAiStatus: () => {},
   });
 }
+
+function settingsModulesContext() {
+  const nodes = {}, calls = [], panes = { scrollTop: 50 };
+  const context = vm.createContext({
+    $: id => nodes[id] ||= { hidden: false, attributes: {}, tabIndex: 0,
+      classList: { toggle: (name, active) => { nodes[id][name] = active; } },
+      setAttribute: (name, value) => { nodes[id].attributes[name] = value; },
+      focus: () => { calls.push('focus:' + id); } },
+    document: { querySelector: () => panes },
+    collapseAiConfigPanels: () => calls.push('collapse'),
+    loadSkillList: async () => calls.push('skills'),
+    loadReportsList: async () => calls.push('files'),
+    loadCustomVariantsPane: async () => calls.push('custom'),
+    loadSecCfgExpList: async () => calls.push('sections'),
+    showToast: (...args) => calls.push(args),
+  });
+  load(context, 'const SETTINGS_MODULES =', '// ── 感谢声明');
+  return { context, nodes, calls, panes };
+}
+
+test('settings modules load only their own data and preserve independent tab state', async () => {
+  const { context, nodes, calls, panes } = settingsModulesContext();
+  context.switchSettingsPane('reports');
+  await context.switchSettingsModule('reports', 'custom');
+  assert.equal(nodes.paneReportFiles.hidden, true);
+  assert.equal(nodes.paneCustomVariants.hidden, false);
+  assert.equal(nodes.paneSectionVariants.hidden, true);
+  assert.equal(nodes.btnReportModuleCustom.attributes['aria-selected'], 'true');
+  assert.equal(nodes.btnReportModuleCustom.tabIndex, 0);
+  assert.equal(nodes.btnReportModuleFiles.tabIndex, -1);
+  assert.deepEqual(calls, ['files', 'custom']);
+  await context.switchSettingsModule('reports', 'sections');
+  assert.equal(nodes.paneSectionVariants.hidden, false);
+  assert.equal(nodes.paneCustomVariants.hidden, true);
+  context.switchSettingsPane('ai');
+  await context.switchSettingsModule('ai', 'skills');
+  assert.equal(nodes.paneSkills.hidden, false);
+  assert.equal(nodes.paneAiConfig.hidden, true);
+  assert.equal(nodes.paneAi.active, true);
+  assert.equal(nodes.paneReports.active, false);
+  assert.deepEqual(calls, ['files', 'custom', 'sections', 'collapse', 'skills']);
+  assert.equal(panes.scrollTop, 0);
+});
+
+test('settings module keyboard navigation wraps and reports loading errors without rejecting', async () => {
+  const { context, nodes, calls } = settingsModulesContext();
+  context.bindSettingsModuleTabs();
+  let prevented = false;
+  nodes.btnReportModuleFiles.onkeydown({ key: 'ArrowLeft', preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.equal(nodes.paneSectionVariants.hidden, false);
+  assert.ok(calls.includes('focus:btnReportModuleSections'));
+  context.loadSkillList = async () => { throw Error('test offline'); };
+  await context.switchSettingsModule('ai', 'skills');
+  assert.deepEqual(calls.at(-1), ['error', '模块加载失败', 'test offline', 5000]);
+});
+
+test('section switches saved from builtin paths are immediately read back from user copies', async t => {
+  const h = mainHarness(t);
+  const builtin = path.join(__dirname, '../物理实验/实验脚本/长度与体积的测量');
+  const sourceConfig = path.join(builtin, 'sections-config.json');
+  const before = fs.existsSync(sourceConfig) ? read(sourceConfig) : null;
+  const written = await h.handlers.get('write-sections-config')({}, builtin, ['实验原理']);
+  assert.equal(written.ok, true, written.error);
+  assert.ok(written.path.startsWith(h.root), 'only the isolated user copy is written');
+  const fromBuiltin = await h.handlers.get('read-sections-config')({}, builtin);
+  const fromUser = await h.handlers.get('read-sections-config')({}, written.path);
+  assert.equal(fromBuiltin.ok, true);
+  assert.deepEqual([...fromBuiltin.disabled], ['实验原理']);
+  assert.deepEqual([...fromUser.disabled], ['实验原理']);
+  assert.equal(fs.existsSync(sourceConfig) ? read(sourceConfig) : null, before, 'builtin configuration is unchanged');
+  assert.equal((await h.handlers.get('read-sections-config')({}, path.join(h.root, 'foreign'))).ok, false);
+});
 
 test('clicking the current experiment does not reload unsaved data', async () => {
   const ui = uiContext();
@@ -1020,7 +1254,10 @@ test('settings thanks pane is wired above the danger entry', () => {
   assert.ok(pane > html.indexOf('id="paneNotice"') && pane < html.indexOf('id="paneDanger"'), 'paneThanks 位于必读公告与请勿点击之间');
   assert.ok(html.indexOf('id="thanksList"') > pane, '名单容器 thanksList 存在');
   assert.match(renderer, /btnNavThanks'\)\.onclick = \(\) => \{ switchSettingsPane\('thanks'\); loadThanksPane\(\); \}/, 'renderer 绑定导航项并懒加载名单');
-  assert.match(renderer, /\$\('paneThanks'\)\.classList\.toggle\('active', name === 'thanks'\)/, 'switchSettingsPane 切换 paneThanks');
+  const settings = settingsModulesContext();
+  settings.context.switchSettingsPane('thanks');
+  assert.equal(settings.nodes.paneThanks.active, true, 'switchSettingsPane 切换 paneThanks');
+  assert.equal(settings.nodes.btnNavThanks.active, true, '感谢声明导航保持同步');
   assert.match(preload, /readCredits: \(\) => ipcRenderer\.invoke\('read-credits'\)/, 'preload 暴露 readCredits');
   const css = read(path.join(__dirname, '../src/style.css'));
   for (const cls of ['.thanks-list', '.thanks-row', '.thanks-name', '.settings-nav-thanks']) {
@@ -1056,6 +1293,9 @@ test('run-generate copies the report into the custom directory and keeps the ori
   const pending = h.handlers.get('run-generate')({}, exp, {}, {}, {}, true, customDir);
   const report = path.join(h.root, '实验数据/实验脚本/长度与体积的测量/长度与体积的测量.docx');
   put(report, 'report bytes');
+  // 模拟真实生成后的新文件，避开 Windows 同毫秒时间戳舍入造成的偶发误判。
+  const generatedAt = new Date(Date.now() + 1000);
+  fs.utimesSync(report, generatedAt, generatedAt);
   h.children[0].exitCode = 0;
   h.children[0].emit('close', 0);
   const r = await pending;
@@ -1076,7 +1316,10 @@ test('an unusable custom report directory does not fail generation', async t => 
   // 指向内置数据目录（安装目录内）→ 必须被拒；生成本身仍应成功
   const bad = path.join(__dirname, '../物理实验/实验脚本');
   const pending = h.handlers.get('run-generate')({}, exp, {}, {}, {}, true, bad);
-  put(path.join(h.root, '实验数据/实验脚本/长度与体积的测量/长度与体积的测量.docx'), 'report bytes');
+  const report = path.join(h.root, '实验数据/实验脚本/长度与体积的测量/长度与体积的测量.docx');
+  put(report, 'report bytes');
+  const generatedAt = new Date(Date.now() + 1000);
+  fs.utimesSync(report, generatedAt, generatedAt);
   h.children[0].exitCode = 0;
   h.children[0].emit('close', 0);
   const r = await pending;
@@ -1637,8 +1880,8 @@ test('report pane keeps one action row with pick-directory, no open/clear button
   const pick = html.indexOf('id="btnPickReportDir"');
   const del = html.indexOf('id="btnDeleteAllReports"');
   assert.ok(row > -1 && row < pick && pick < del, '按钮顺序：刷新列表 → 选择保存位置 → 删除全部报告');
-  assert.match(css, /#paneReports > \.skill-actions #btnDeleteAllReports \{ margin-left: auto; \}/, '删除全部报告靠右');
-  assert.match(css, /#paneReports > \.skill-actions \{/, '按钮行按直接子级吸底（相对位置固定）');
+  assert.match(css, /#paneReportFiles > \.skill-actions #btnDeleteAllReports \{ margin-left: auto; \}/, '删除全部报告靠右');
+  assert.match(css, /#paneReportFiles > \.skill-actions \{/, '按钮行只在报告文件模块中吸底，不覆盖变体模块');
   assert.ok(!/\.reports-list[^}]*overflow-y/.test(css), '列表不再自成滚动容器（整页只留一个滚动条）');
   assert.match(renderer, /\$\('btnPickReportDir'\)\.onclick = pickReportDir;/, '选择保存位置按钮已绑定');
   assert.match(renderer, /settings\.customReportDir = r\.dir;/, '选择后写入 appSettings');

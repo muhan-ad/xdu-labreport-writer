@@ -2,7 +2,7 @@
 // 桌面端冒烟：逐个用 Electron 启动 scripts 列表里的测试脚本（各自使用独立用户目录）
 const { spawnSync } = require('child_process');
 const path = require('path');
-const SCRIPTS = ['tests/electron_smoke.js', 'tests/variant_smoke.js'];
+const SCRIPTS = ['tests/electron_smoke.js', 'tests/variant_smoke.js', 'tests/school_portal_smoke.js'];
 let failed = null;
 for (const file of SCRIPTS) {
   console.log('\n=== ' + file + ' ===');

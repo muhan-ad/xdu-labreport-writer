@@ -13,7 +13,7 @@
     {
       "name": "表1 幅频特性测量（13 行 × [f / kHz, Uᵢ / V, V_R / V]）",
       "fields": [
-        {"key": "t1", "label": "幅频特性数据", "type": "matrix", "rows": 13, "cols": 3, "required": true, "default": null,
+        {"key": "t1", "label": "幅频特性数据", "type": "matrix", "rows": 13, "cols": 3, "variableRows": true, "minFilledRows": 5, "required": true, "default": null,
          "rowLabels": ["第1点", "第2点", "第3点", "第4点", "第5点", "第6点", "第7点", "第8点", "第9点", "第10点", "第11点", "第12点", "第13点"],
          "colLabels": ["f/kHz", "Ui/V", "VR/V"]}
       ]
@@ -21,7 +21,7 @@
     {
       "name": "表2 相频特性测量（13 行 × [f / kHz, A格 Uᵢ / V, B格 U_R / V]）",
       "fields": [
-        {"key": "t2", "label": "相频特性数据", "type": "matrix", "rows": 13, "cols": 3, "required": true, "default": null,
+        {"key": "t2", "label": "相频特性数据", "type": "matrix", "rows": 13, "cols": 3, "variableRows": true, "minFilledRows": 5, "required": true, "default": null,
          "rowLabels": ["第1点", "第2点", "第3点", "第4点", "第5点", "第6点", "第7点", "第8点", "第9点", "第10点", "第11点", "第12点", "第13点"],
          "colLabels": ["f/kHz", "A格 Ui/V", "B格 UR/V"]}
       ]

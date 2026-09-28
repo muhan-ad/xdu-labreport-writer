@@ -68,9 +68,7 @@ async function main() {
   })()`);
   console.log('设置弹窗几何:', JSON.stringify(geo));
 
-  const users = ['btnNavSkills', 'btnNavCustomVariants', 'btnNavReports', 'btnNavHelp',
-    'btnNavUpdate', 'paneFeedbackX', 'paneDevelopX', 'btnNavNotice', 'btnNavDanger'];
-  const ids = ['btnNavSkills', 'btnNavCustomVariants', 'btnNavReports', 'btnNavHelp',
+  const ids = ['btnNavAi', 'btnAiModuleSkills', 'btnNavReports', 'btnReportModuleCustom', 'btnReportModuleSections', 'btnNavHelp',
     'btnNavUpdate', 'btnNavFeedback', 'btnNavDevelop', 'btnNavNotice', 'btnNavDanger'];
   for (const id of ids) {
     await evaluate(`(() => { const b = document.getElementById('${id}'); if (b) b.click(); return 1; })()`);

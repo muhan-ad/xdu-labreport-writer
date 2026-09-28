@@ -99,7 +99,7 @@ test('AI 服务页：两个配置入口就地展开，小米默认模型为 mimo
   }
   // 面板开关：互斥 + 进入页面收起
   assert.match(renderer, /function toggleAiConfigPanel/, '存在面板开关函数');
-  assert.match(renderer, /name === 'ai'\) collapseAiConfigPanels\(\)/, '进入 AI 服务页时收起面板');
+  assert.match(renderer, /name === 'ai'\) \{ collapseAiConfigPanels\(\)/, '进入 AI 服务页时收起面板');
   // 小米模型默认值
   assert.match(renderer, /mimo: \[\s*\{ name: 'mimo-v2\.5', desc: '默认' \},\s*\{ name: 'mimo-v2\.5-pro'/, '小米快捷模型为 mimo-v2.5 / mimo-v2.5-pro');
   assert.match(renderer, /mimo: 'mimo-v2\.5'/, 'getDefaultModel 为小米提供默认模型（此前缺失会回退 deepseek）');

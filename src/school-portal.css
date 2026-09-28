@@ -1,0 +1,36 @@
+* { box-sizing: border-box; }
+body { margin: 0; background: #fff; color: #1c1917; font: 13px 'Segoe UI', 'Microsoft YaHei', sans-serif; }
+.portal-controls { height: 100px; padding: 12px 18px; border-bottom: 1px solid #e7e5e4; background: #fafaf9; }
+.portal-topline, .portal-actions { display: flex; align-items: center; gap: 10px; }
+.portal-topline { margin-bottom: 10px; }
+.portal-topline strong { font-size: 16px; }
+.portal-domain { color: #57534e; font: 12px Consolas, monospace; }
+.portal-connection { margin-left: auto; color: #b45309; font-size: 12px; }
+button { background: #fff; border: 1px solid #d6d3d1; border-radius: 6px; padding: 7px 12px; color: #1c1917; font: inherit; cursor: pointer; white-space: nowrap; }
+button:hover { border-color: #15803d; color: #15803d; }
+button:focus-visible { outline: 2px solid #15803d; outline-offset: 2px; }
+button:disabled { cursor: default; opacity: .45; }
+.portal-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #57534e; font-size: 12px; }
+.portal-actions { gap: 8px; }
+.portal-actions button { padding: 7px 9px; }
+#manageCredentials { color: #15803d; border-color: #a7cbb2; }
+.credential-dialog { width: min(520px, calc(100vw - 48px)); padding: 24px; border: 1px solid #d6d3d1; border-radius: 10px; color: #1c1917; background: #fafaf9; }
+.credential-dialog::backdrop { background: rgb(28 25 23 / 28%); }
+.credential-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.credential-eyebrow { color: #15803d; font-size: 12px; }
+.credential-heading h1 { margin: 5px 0 0; font-size: 21px; }
+.credential-state { padding: 12px; margin: 20px 0 16px; background: #edf8ef; border-left: 3px solid #15803d; line-height: 1.6; }
+.credential-dialog label { display: block; font-weight: 600; margin: 14px 0 6px; }
+.credential-dialog input { display: block; width: 100%; padding: 10px 12px; border: 1px solid #d6d3d1; border-radius: 6px; font: inherit; background: #fff; }
+.credential-dialog input:focus { outline: 2px solid #15803d; outline-offset: 1px; }
+.credential-note { font-size: 12px; line-height: 1.7; color: #57534e; }
+.credential-message { min-height: 20px; line-height: 1.6; color: #b45309; }
+.credential-footer { display: flex; justify-content: space-between; gap: 12px; padding-top: 12px; border-top: 1px solid #e7e5e4; }
+.credential-save { background: #15803d; color: #fff; border-color: #15803d; }
+.credential-save:hover { color: #fff; background: #166534; }
+@media (max-width: 900px) { .portal-controls { padding-inline: 12px; } .portal-actions { gap: 5px; } .portal-actions button { padding-inline: 7px; } }
+.portal-error { max-width: 640px; margin: 60px auto; padding: 24px; border: 1px solid #e7e5e4; border-radius: 10px; background: #fafaf9; }
+.portal-error[hidden] { display: none; }
+.portal-error h1 { font-size: 20px; }
+.portal-error p { color: #57534e; line-height: 1.8; overflow-wrap: anywhere; }
+.portal-error button { background: #15803d; color: #fff; border-color: #15803d; }

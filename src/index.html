@@ -108,6 +108,17 @@
         </div>
       </header>
 
+      <section class="school-portal-entry" aria-label="学校实验系统入口">
+        <div class="school-portal-intro">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 10l9-6 9 6M5 10v10h14V10M9 20v-6h6v6M2 20h20"/><path d="M9 10h6"/></svg>
+          <div><strong>学校实验系统</strong><span>西安电子科技大学 · 在应用内打开，直接登录学校网站</span></div>
+        </div>
+        <div class="school-portal-actions">
+          <button class="btn btn-outline btn-sm" id="btnExperimentPreparation" type="button" title="在默认浏览器中打开实验预习及要求">实验预习及要求 <span aria-hidden="true">↗</span></button>
+          <button class="btn btn-primary btn-sm" id="btnOpenSchoolPortal" type="button">打开学校实验系统 <span aria-hidden="true">↗</span></button>
+        </div>
+      </section>
+
       <!-- 内容区 -->
       <div class="content" id="content">
 
@@ -399,7 +410,7 @@
                     <div class="ai-option-group">
                       <label>润色技能（自动应用已启用的技能）</label>
                       <div class="ai-check-group" id="aiSkillGroup"></div>
-                      <span class="ai-option-note">以上为本次将使用的技能；启用/停用在「设置 → AI 润色技能」中管理</span>
+                      <span class="ai-option-note">以上为本次将使用的技能；启用/停用在「设置 → AI 服务 → 技能」中管理</span>
                     </div>
                     <div class="ai-option-group">
                       <label class="checkbox-label"><input type="checkbox" id="chkKbOnly" checked /> 限定知识库：只依据本实验教材原理润色</label>
@@ -736,28 +747,24 @@
       <div class="modal-body settings-center">
         <!-- 设置模块导航 -->
         <div class="settings-nav">
-          <button class="settings-nav-item active" id="btnNavAi">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2a4 4 0 0 1 4 4c0 1.1-.45 2.1-1.17 2.83A4 4 0 0 1 12 11a4 4 0 1 1 0-9z"/><path d="M4 21v-1a5 5 0 0 1 5-5h6a5 5 0 0 1 5 5v1"/></svg>
+          <button class="settings-nav-item settings-nav-notice active" id="btnNavNotice">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg>
+            必读公告
+          </button>
+          <button class="settings-nav-item" id="btnNavAi">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="6" r="4"/><path d="M4 21v-1a5 5 0 0 1 5-5h6a5 5 0 0 1 5 5v1"/></svg>
             AI 服务
-          </button>
-          <button class="settings-nav-item" id="btnNavSkills">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 7.7l5.4-.8z"/><polyline points="12 2 12 12"/></svg>
-            技能
-          </button>
-          <button class="settings-nav-item" id="btnNavCustomVariants">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2"/><path d="M4 7v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7"/><line x1="12" y1="7" x2="12" y2="17"/><line x1="7" y1="12" x2="17" y2="12"/></svg>
-            自建变体
           </button>
           <button class="settings-nav-item" id="btnNavReports">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
             报告管理
           </button>
           <button class="settings-nav-item" id="btnNavHelp">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg>
             使用说明
           </button>
           <button class="settings-nav-item" id="btnNavUpdate">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-9-9"/><polyline points="21 3 21 9 15 9"/><polyline points="21 12 21 15 21 21"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 7 21 12 16 12"/></svg>
             检查更新
           </button>
           <button class="settings-nav-item" id="btnNavFeedback">
@@ -768,24 +775,26 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 9l-3 3 3 3"/><path d="M16 9l3 3-3 3"/><line x1="12" y1="5" x2="12" y2="19"/></svg>
             开发者调试
           </button>
-          <button class="settings-nav-item settings-nav-notice" id="btnNavNotice">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-            必读公告
-          </button>
           <button class="settings-nav-item settings-nav-thanks" id="btnNavThanks">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
             感谢声明
           </button>
           <button class="settings-nav-item settings-nav-danger" id="btnNavDanger">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg>
             请勿点击
           </button>
         </div>
         <!-- 模块内容 -->
         <div class="settings-panes">
-          <!-- AI 服务页：页面上只放两个配置入口 + 两个生成选项开关，
-               具体配置项点按钮就地展开（同一时刻只展开一组），保持页面清爽 -->
-          <div class="settings-pane active" id="paneAi">
+          <!-- AI 服务：服务配置与技能为独立模块 -->
+          <div class="settings-pane" id="paneAi">
+            <div class="settings-module-tabs" id="aiModuleTabs" role="tablist" aria-label="AI 服务模块">
+              <button class="settings-module-tab active" id="btnAiModuleConfig" type="button" role="tab" aria-controls="paneAiConfig" aria-selected="true">服务配置</button>
+              <button class="settings-module-tab" id="btnAiModuleSkills" type="button" role="tab" aria-controls="paneSkills" aria-selected="false" tabindex="-1">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 7.7l5.4-.8z"/></svg>技能
+              </button>
+            </div>
+            <div class="settings-module-panel" id="paneAiConfig" role="tabpanel" aria-labelledby="btnAiModuleConfig">
             <div class="settings-section">
               <h4>AI 服务</h4>
               <div class="ai-config-actions">
@@ -830,11 +839,11 @@
               <div class="form-group"><label>自定义识图 API 地址</label><input type="text" id="inputVisionApiUrl" placeholder="https://api.example.com/v1" /><div class="form-hint" id="visionApiUrlHint"></div></div>
               <div class="form-hint">专用密钥使用系统安全存储，并与服务地址绑定。</div>
             </div>
-          </div>
-          <!-- 技能页 -->
-          <div class="settings-pane" id="paneSkills">
+            </div>
+            <div class="settings-module-panel" id="paneSkills" role="tabpanel" aria-labelledby="btnAiModuleSkills" hidden>
             <div class="settings-section">
-              <h4>AI 润色技能（Skill）</h4>
+              <h4>技能</h4>
+              <p class="settings-module-hint">管理 AI 润色与自定义绘图使用的技能，开关会自动保存。</p>
               <div id="skillList" class="skill-list"></div>
               <div class="skill-actions">
                 <button class="btn btn-sm btn-primary" id="btnImportSkill" type="button">导入 skill</button>
@@ -842,22 +851,16 @@
                 <button class="btn btn-sm btn-outline" id="btnGetSkill" type="button">获取 skill</button>
               </div>
             </div>
-          </div>
-          <!-- 自建变体页 -->
-          <div class="settings-pane" id="paneCustomVariants">
-            <div class="settings-section">
-              <h4>自建变体库</h4>
-              <div id="customVariantExpList" class="custom-variant-list"></div>
-              <div id="customVariantDetail" class="custom-variant-detail"></div>
-              <div class="skill-actions">
-                <button class="btn btn-sm btn-primary" id="btnExportCustomVariant" type="button">导出当前实验</button>
-                <button class="btn btn-sm btn-outline" id="btnExportAllCustomVariants" type="button">导出全部</button>
-                <button class="btn btn-sm btn-outline" id="btnImportCustomVariants" type="button" style="display:none;">导入（批量）</button>
-              </div>
             </div>
           </div>
           <!-- 报告管理页 -->
           <div class="settings-pane" id="paneReports">
+            <div class="settings-module-tabs" id="reportModuleTabs" role="tablist" aria-label="报告管理模块">
+              <button class="settings-module-tab active" id="btnReportModuleFiles" type="button" role="tab" aria-controls="paneReportFiles" aria-selected="true">已生成报告</button>
+              <button class="settings-module-tab" id="btnReportModuleCustom" type="button" role="tab" aria-controls="paneCustomVariants" aria-selected="false" tabindex="-1">自建变体</button>
+              <button class="settings-module-tab" id="btnReportModuleSections" type="button" role="tab" aria-controls="paneSectionVariants" aria-selected="false" tabindex="-1">变体管理</button>
+            </div>
+            <div class="settings-module-panel" id="paneReportFiles" role="tabpanel" aria-labelledby="btnReportModuleFiles">
             <div class="settings-section">
               <h4>已生成的报告</h4>
               <div class="form-hint" id="reportsSummary">加载中…</div>
@@ -867,6 +870,35 @@
               <button class="btn btn-sm btn-outline" id="btnRefreshReports" type="button">刷新列表</button>
               <button class="btn btn-sm btn-outline" id="btnPickReportDir" type="button">选择保存位置</button>
               <button class="btn btn-sm btn-danger" id="btnDeleteAllReports" type="button" disabled>删除全部报告</button>
+            </div>
+            </div>
+            <div class="settings-module-panel" id="paneCustomVariants" role="tabpanel" aria-labelledby="btnReportModuleCustom" hidden>
+              <div class="settings-section">
+                <h4>自建变体库</h4>
+                <p class="settings-module-hint">按实验查看已归档的变体，支持恢复到实验、删除与导出。</p>
+                <div id="customVariantExpList" class="custom-variant-list"></div>
+                <div id="customVariantDetail" class="custom-variant-detail"></div>
+                <div class="skill-actions">
+                  <button class="btn btn-sm btn-primary" id="btnExportCustomVariant" type="button">导出当前实验</button>
+                  <button class="btn btn-sm btn-outline" id="btnExportAllCustomVariants" type="button">导出全部</button>
+                  <button class="btn btn-sm btn-outline" id="btnImportCustomVariants" type="button" style="display:none;">导入（批量）</button>
+                </div>
+              </div>
+            </div>
+            <div class="settings-module-panel" id="paneSectionVariants" role="tabpanel" aria-labelledby="btnReportModuleSections" hidden>
+              <div class="settings-section">
+                <h4>变体管理 · 章节开关</h4>
+                <p class="settings-module-hint">选择实验，设置下次生成报告时需要保留的章节。</p>
+                <div class="form-group">
+                  <label for="secCfgExpSel">实验</label>
+                  <select id="secCfgExpSel" class="field-input"></select>
+                </div>
+                <div id="secCfgList" class="sections-config-list"></div>
+                <div class="form-hint">取消勾选的章节不会出现在新生成的报告中，不影响已有报告。按实验保存。</div>
+                <div class="skill-actions">
+                  <button class="btn btn-sm btn-primary" id="btnSaveSecCfg" type="button">保存章节开关</button>
+                </div>
+              </div>
             </div>
           </div>
           <!-- 使用说明页 -->
@@ -918,7 +950,7 @@
             </div>
           </div>
           <!-- 必读公告页 -->
-          <div class="settings-pane" id="paneNotice">
+          <div class="settings-pane active" id="paneNotice">
             <div class="settings-section notice-section">
               <h4 class="notice-title">⚠ 必读公告</h4>
               <ol class="notice-list">
@@ -952,23 +984,35 @@
           </div>
           <!-- 检查更新页 -->
           <div class="settings-pane" id="paneUpdate">
-            <div class="settings-section update-simple">
-              <div class="update-version">
-                <span class="update-version-label">当前版本</span>
-                <span class="update-version-value" id="inputCurrentVersion">—</span>
+            <div class="settings-page-heading">
+              <h4>检查更新</h4>
+              <p>启动后自动检查；下载、安装与数据更新均需确认。</p>
+            </div>
+            <div class="settings-section update-card">
+              <div class="update-card-heading">
+                <div><h4>应用更新</h4><p>应用功能、界面与程序修复</p></div>
+                <div class="update-version"><span class="update-version-label">当前版本</span><span class="update-version-value" id="inputCurrentVersion">—</span></div>
               </div>
-              <div class="skill-actions">
-                <button class="btn btn-primary btn-block" id="btnCheckUpdate" type="button">检查更新</button>
+              <div class="update-card-footer">
+                <p class="update-check-status" id="appUpdateStatus" role="status">等待自动检查…</p>
+                <button class="btn btn-sm btn-primary" id="btnCheckUpdate" type="button">检查应用更新</button>
               </div>
             </div>
-            <div class="settings-section update-simple">
-              <div class="update-version">
-                <span class="update-version-label">当前数据版本</span>
-                <span class="update-version-value" id="dataVersionText">1.0.0</span>
+            <div class="settings-section update-card">
+              <div class="update-card-heading">
+                <div><h4>实验数据更新</h4><p>实验模板、原理资料与实验脚本</p></div>
+                <div class="update-version"><span class="update-version-label">当前数据版本</span><span class="update-version-value" id="dataVersionText">1.0.0</span></div>
               </div>
-              <div class="skill-actions">
-                <button class="btn btn-primary btn-block" id="btnCheckDataUpdate" type="button">检查实验数据更新</button>
+              <div class="update-card-footer">
+                <p class="update-check-status" id="dataUpdateStatus" role="status">等待自动检查…</p>
+                <button class="btn btn-sm btn-primary" id="btnCheckDataUpdate" type="button">检查实验数据更新</button>
               </div>
+            </div>
+            <div class="settings-section update-card update-repair-card">
+              <h4>实验资源维护</h4>
+              <p class="form-hint" id="resourceSyncStatus" role="status"></p>
+              <details class="update-repair-help"><summary>什么是内置实验修复？</summary><p>重新应用当前安装包内的官方脚本和模板，不联网下载。测量数据、报告与照片保留；旧资源先备份，自行修改的脚本可能被替换。</p></details>
+              <button class="btn btn-sm btn-outline" id="btnRestoreBuiltinResources" type="button" hidden>使用内置实验修复</button>
             </div>
           </div>
           <!-- 意见反馈页 -->
@@ -999,17 +1043,6 @@
                   <button class="btn btn-sm btn-outline" id="btnExportDiagnostics" type="button">导出诊断日志</button>
                 </div>
                 <div class="form-hint" id="diagnosticsStatus"></div>
-              </div>
-            </div>
-            <div class="settings-section">
-              <h4>变体管理（章节开关）</h4>
-              <div class="form-row">
-                <select id="secCfgExpSel" class="field-input"></select>
-              </div>
-              <div id="secCfgList" class="sections-config-list"></div>
-              <div class="form-hint">取消勾选的章节在生成报告中不再出现（如不需要「实验原理」的实验）。按实验保存，立即生效。</div>
-              <div class="skill-actions">
-                <button class="btn btn-sm btn-primary" id="btnSaveSecCfg" type="button">保存章节开关</button>
               </div>
             </div>
           </div>

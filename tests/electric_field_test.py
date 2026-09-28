@@ -72,6 +72,7 @@ class ElectricFieldTemplateTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             with patch.object(module.np, "polyfit", side_effect=capture):
+                result = module._compute(legacy)
                 module._plot_parallel(result, str(Path(temporary) / "parallel.png"))
         self.assertEqual(sizes, [(10, 10, 2)] * 6)
 
@@ -87,6 +88,70 @@ class ElectricFieldTemplateTest(unittest.TestCase):
                           if name.startswith("word/media/") and name.endswith(".png")]
                 self.assertEqual(len(images), 3)
                 self.assertNotIn("坏点", package.read("word/document.xml").decode("utf-8"))
+                self.assertIn("拟合质量提示", package.read("word/document.xml").decode("utf-8"))
+
+    def test_theory_intercept_matches_both_electrode_boundaries(self):
+        for inner, outer in [(2, 12), (0.1, 1), (0.2, 0.8)]:
+            self.data.update(r_a=inner, r_b=outer)
+            result = module._compute(self.data)
+            self.assertAlmostEqual(result["theory_intercept"], math.log(outer) / math.log(outer / inner))
+            self.assertAlmostEqual(result["theory_intercept"] + result["theory_slope"] * math.log(inner), 1)
+            self.assertAlmostEqual(result["theory_intercept"] + result["theory_slope"] * math.log(outer), 0)
+        self.data.update(r_a=0.1, r_b=1)
+        self.assertIsNone(module._compute(self.data)["intercept_error"])
+
+    def test_coax_axes_and_arrows_follow_scaled_data(self):
+        self.data["r_a"] *= 2
+        self.data["r_b"] *= 2
+        self.data["coax_radii"] = [[value * 2 for value in row] for row in self.data["coax_radii"]]
+        result = module._compute(self.data)
+        def check(fig, unused):
+            axes = fig.axes[0]
+            extent = max(result["r_b"], max(map(max, result["coax_radii"])))
+            self.assertLess(axes.get_xlim()[0], -extent)
+            self.assertGreater(axes.get_xlim()[1], extent)
+            self.assertGreater(axes.get_ylim()[1], extent)
+            for annotation in axes.texts:
+                if hasattr(annotation, "xy"):
+                    self.assertLessEqual(math.hypot(*annotation.xy), result["r_b"] + 1e-9)
+            module.plt.close(fig)
+        with patch.object(module, "_save_figure", side_effect=check):
+            module._plot_coax(result, None)
+
+    def test_crossing_sample_warns_and_does_not_draw_field_arrows(self):
+        result = module._compute(self.data)
+        self.assertTrue(any("7 V 与 8 V" in warning and "相交" in warning for warning in result["warnings"]))
+        self.assertEqual(result["parallel_x"], self.data["parallel_x"])
+        def check(fig, unused):
+            axes = fig.axes[0]
+            self.assertFalse(any(hasattr(text, "arrow_patch") for text in axes.texts))
+            self.assertTrue(all(line.get_linestyle() == "--" for line in axes.lines))
+            self.assertEqual(sum(len(points.get_offsets()) for points in axes.collections), 60)
+            for line in axes.lines:
+                self.assertLess(axes.get_xlim()[0], min(line.get_xdata()))
+                self.assertGreater(axes.get_xlim()[1], max(line.get_xdata()))
+            module.plt.close(fig)
+        with patch.object(module, "_save_figure", side_effect=check):
+            module._plot_parallel(result, None)
+
+    def test_degenerate_coordinates_warn_without_crashing_or_dropping_points(self):
+        self.data["parallel_y"][0] = [5] * 10
+        result = module._compute(self.data)
+        self.assertTrue(any("没有变化" in warning for warning in result["warnings"]))
+        self.assertEqual(len(result["parallel_x"][0]), 10)
+
+    def test_no_common_y_range_warns(self):
+        self.data["parallel_y"][0] = list(range(100, 110))
+        result = module._compute(self.data)
+        self.assertTrue(any("没有共同测量区间" in warning for warning in result["warnings"]))
+
+    def test_shared_validator_rejects_empty_fixed_rows(self):
+        from common.data_validation import validate
+        schema = json.loads((EXP / "schema.json").read_text(encoding="utf-8"))
+        self.data["parallel_x"][0] = [None] * 10
+        result = validate(schema, self.data)
+        self.assertFalse(result["ok"])
+        self.assertIn("3 V", result["missing"][0]["reason"])
 
 
 if __name__ == "__main__":

@@ -13,6 +13,8 @@ const network = require('./src/main/network');
 const updatePackage = require('./src/main/update-package');
 const { createKeyStore } = require('./src/main/key-store');
 const ocr = require('./src/main/ocr');
+const { createSchoolPortal } = require('./src/main/school-portal');
+const { createSchoolCredentials } = require('./src/main/school-credentials');
 const { pathToFileURL } = require('url');
 const crypto = require('crypto');
 // Keep the legacy top-level origin so existing student/settings storage is preserved.
@@ -128,6 +130,16 @@ function findProjectRoot() {
 const PROJECT_ROOT = findProjectRoot();
 const EXPERIMENTS_DIR = path.join(PROJECT_ROOT, '物理实验', '实验脚本');
 let mainWindow = null;
+const schoolPortal = createSchoolPortal({ electron: require('electron'), root: __dirname, getParent: () => mainWindow,
+  credentials: createSchoolCredentials(path.join(app.getPath('userData'), 'school-portal'), safeStorage) });
+handle('open-school-portal', () => schoolPortal.open());
+let schoolClipboardQuitting = false;
+app.on('will-quit', event => {
+  if (!schoolPortal.hasOwnedClipboard() || schoolClipboardQuitting) return;
+  event.preventDefault(); schoolClipboardQuitting = true;
+  Promise.race([schoolPortal.cleanup(), new Promise(resolve => setTimeout(resolve, 1000))])
+    .catch(() => {}).finally(() => app.quit());
+});
 // 关闭前未保存提示状态
 let isDataDirty = false;
 let allowClose = false;
@@ -190,7 +202,7 @@ function createWindow() {
   mainWindow.loadURL(APP_URL);
   // mainWindow.webContents.openDevTools();
 
-  mainWindow.on('closed', () => { mainWindow = null; });
+  mainWindow.on('closed', () => { schoolPortal.close(); mainWindow = null; });
 
   // 关闭前提示未保存的数据
   mainWindow.on('close', (e) => {
@@ -1521,13 +1533,31 @@ function ensureInside(p, root) { return security.inside(p, root); }
 // ── IPC: 实验数据版本信息（本地）
 handle('get-data-info', () => {
   const mf = readLocalDataManifest();
+  const resourceState = resourceStore.readState(getDataRoots().udRoot);
   return {
     ok: true,
     localVersion: (mf && mf.dataVersion) || null,   // 无热更新数据时为空，即内置版本
     notes: (mf && mf.notes) || '',
     updatedAt: (mf && mf.updatedAt) || null,
     builtinVersion: DATA_BUILTIN_VERSION,
+    resourceRevision: resourceState.builtinRevision || 0,
+    resourceWarnings: resourceState.syncWarnings || [],
   };
+});
+
+// 来源不明的旧热更新不自动覆盖；用户确认后可采用安装包内的官方修复。
+handle('restore-builtin-resources', () => {
+  if (generationBusy || resourceUpdating || activeDataReq) return { ok: false, error: '生成或资源更新中，请稍后重试' };
+  resourceUpdating = true;
+  try {
+    builtinFingerprint = resourceStore.resourceVersion(EXPERIMENTS_DIR);
+    resourceStore.syncBuiltin(EXPERIMENTS_DIR, getDataRoots().udRoot, builtinFingerprint, app.getVersion(), { force: true });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  } finally {
+    resourceUpdating = false;
+  }
 });
 
 // ── IPC: 检查实验数据更新（远端 data-manifest.json）
@@ -1753,6 +1783,8 @@ handle('apply-data-package', async (_, payload) => {
         if (path.basename(rel) === 'variants.json') bases[rel.split('/').join(path.sep)] = fs.readFileSync(path.join(staging, file), 'utf8');
       }
       state.variantBases = bases;
+      state.resourceOrigins = resourceStore.packageOrigins(stagingRoot, state.resourceOrigins, version);
+      state.syncWarnings = [];
       // 下架清单以清单为准：发布端每次都下发完整累计列表，为空时省略字段
       // （省略即「当前无下架实验」，因此这里必须清空，否则恢复上架无法生效）
       const removedList = Array.isArray(manifest.removed)
@@ -2952,6 +2984,13 @@ function readSectionsConfig(expPath) {
 handle('read-sections-config', async (_, expPath) => {
   try {
     expPath = experimentPath(expPath);
+    // 保存会把内置实验迁移到用户目录；列表尚未刷新时仍可能传入旧内置路径。
+    // 优先读取同实验的已保存用户副本，不创建目录，也不回退覆盖用户配置。
+    if (expPath.startsWith(path.resolve(EXPERIMENTS_DIR) + path.sep)) {
+      const { udRoot } = getDataRoots();
+      const userCopy = security.inside(path.join(udRoot, path.basename(expPath)), udRoot);
+      if (fs.existsSync(userCopy)) expPath = experimentPath(userCopy);
+    }
     return { ok: true, ...readSectionsConfig(expPath) };
   } catch (err) {
     return { ok: false, error: err.message };

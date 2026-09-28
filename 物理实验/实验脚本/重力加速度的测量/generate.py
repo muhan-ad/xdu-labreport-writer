@@ -109,29 +109,39 @@ def _select_equal_period_points(h_values, periods):
     if any(points[i][0] >= points[i + 1][0] for i in range(len(points) - 1)):
         raise ValueError("悬距有重复值，无法确定 T-h 曲线交点")
 
-    minimum = min(range(len(points)), key=lambda i: points[i][1])
-    if minimum < 2 or minimum > len(points) - 3:
+    t_min = min(t for _, t in points)
+    minima = [i for i, (_, t) in enumerate(points) if t == t_min]
+    left_min, right_min = minima[0], minima[-1]
+    if left_min == 0 or right_min == len(points) - 1:
         raise ValueError("T-h 曲线最低点靠近边界，左右两支不足，无法自动选取等周期点；请核对测量数据")
-    t_min = points[minimum][1]
-    upper = min(max(t for _, t in points[:minimum]), max(t for _, t in points[minimum + 1:]))
-    if upper - t_min < max(0.005, t_min * 0.01):
-        raise ValueError("T-h 曲线两支共同覆盖的周期范围太窄，无法可靠读取两个交点")
+    upper = min(max(t for _, t in points[:left_min]), max(t for _, t in points[right_min + 1:]))
+    if upper - t_min <= max(1e-12, t_min * 1e-12):
+        raise ValueError("T-h 曲线两支没有共同的非零周期范围，无法读取两个交点")
 
     def crossings(start, stop, level):
         found = []
         for i in range(start, stop):
             h_a, t_a = points[i]
             h_b, t_b = points[i + 1]
-            if (t_a - level) * (t_b - level) < 0:
-                found.append(h_a + (level - t_a) * (h_b - h_a) / (t_b - t_a))
+            if t_a == t_b:
+                continue
+            if min(t_a, t_b) <= level <= max(t_a, t_b):
+                h = h_a + (level - t_a) * (h_b - h_a) / (t_b - t_a)
+                if not found or not math.isclose(h, found[-1], rel_tol=1e-10, abs_tol=1e-10):
+                    found.append(h)
         return found
 
-    # 优先取共同范围的中部；若正好经过测量点或遇到噪声造成的多交点，微调高度。
-    for fraction in (0.5, 0.45, 0.55, 0.4, 0.6):
-        level = t_min + fraction * (upper - t_min)
-        left = crossings(0, minimum, level)
-        right = crossings(minimum, len(points) - 1, level)
-        if len(left) == len(right) == 1:
+    # 优先取中部；噪声导致多交点时，检查各周期区间中部，避免有限次微调误拦截。
+    middle = t_min + 0.5 * (upper - t_min)
+    boundaries = sorted({t_min, upper, *(t for _, t in points if t_min < t < upper)})
+    alternatives = sorted(((a + b) / 2 for a, b in zip(boundaries, boundaries[1:])),
+                          key=lambda level: abs(level - middle))
+    for level in [middle, *alternatives]:
+        if any(t_a == t_b == level for (_, t_a), (_, t_b) in zip(points, points[1:])):
+            continue  # 水平线重合于整段折线时，不具有两个唯一交点。
+        left = crossings(0, left_min, level)
+        right = crossings(right_min, len(points) - 1, level)
+        if len(left) == len(right) == 1 and len(crossings(0, len(points) - 1, level)) == 2:
             return level, left[0], right[0]
     raise ValueError("T-h 曲线在候选水平线处有多余或缺失的交点；请核对识图数据后重试")
 
@@ -164,6 +174,10 @@ def _compute(data: dict) -> dict:
                 raise ValueError(f"第 {i} 孔单周期平均值与 10 周期读数不一致，请核对照片和表格")
 
     T0, h1, h2 = _select_equal_period_points(h_values, T_avg)
+    warnings = []
+    # 范围较窄不再等同于不存在交点；保留计算，并明确提示测量精度风险。
+    if T0 - min(T_avg) <= max(delta_instr / 10.0, 0.001):
+        warnings.append("等周期水平线距最低周期较近，交点位置对计时误差较敏感；请增加两侧测量范围并核对结果。")
 
     # 卡特公式计算 g
     # 等值单摆长 (cm → m)
@@ -181,7 +195,7 @@ def _compute(data: dict) -> dict:
         "pivot_positions": pivot_positions, "trials_10T": trials_10T,
         "h_values": h_values, "T0": T0, "h1": h1, "h2": h2,
         "cm_position": cm_position,
-        "T_avg": T_avg, "l_cm": l_cm, "l_m": l_m,
+        "T_avg": T_avg, "l_cm": l_cm, "l_m": l_m, "warnings": warnings,
         "g_calc": g_calc, "delta_E": delta_E,
     }
 
@@ -235,6 +249,8 @@ def _generate_docx(data: dict, output_path: str):
     print(f"g = {g_calc:.4f} m/s^2,  |g0 - g| = {abs(g0 - g_calc):.4f} m/s^2,  delta_E = {delta_E:.3f}%")
     print("9-hole T_avg (s): " + "  ".join(f"{t:.3f}" for t in T_avg))
     print(f"l = {l_cm:.2f} cm")
+    for warning in r["warnings"]:
+        print("[提示] " + warning)
     print()
 
     # ═══════════════════════════════════════════════
@@ -313,6 +329,9 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_run("，")
     doc.add_inline_math(f"h_2 = {h2:.2f}\\ \\mathrm{{cm}}")
     doc.add_run("。")
+
+    for warning in r["warnings"]:
+        doc.add_paragraph("测量可靠性提示：" + warning)
 
     # （三）重力加速度计算
     doc.add_heading("（三）重力加速度计算", level=2)

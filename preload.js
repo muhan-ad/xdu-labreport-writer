@@ -78,11 +78,13 @@ contextBridge.exposeInMainWorld('labAPI', {
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
   openDataFile: (expPath) => ipcRenderer.invoke('open-data-file', expPath),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  openSchoolPortal: () => ipcRenderer.invoke('open-school-portal'),
   // 贡献数据上传（COS 直传）
   contributeGetCredentials: (payload) => ipcRenderer.invoke('contribute-get-credentials', payload),
   contributeUpload: (payload) => ipcRenderer.invoke('contribute-upload', payload),
   // 实验数据热更新（免重装）
   getDataInfo: () => ipcRenderer.invoke('get-data-info'),
+  restoreBuiltinResources: () => ipcRenderer.invoke('restore-builtin-resources'),
   checkDataUpdate: () => ipcRenderer.invoke('check-data-update'),
   downloadDataPackage: (payload) => ipcRenderer.invoke('download-data-package', payload),
   applyDataPackage: (payload) => ipcRenderer.invoke('apply-data-package', payload),

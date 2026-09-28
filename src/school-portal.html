@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'" />
+  <title>学校实验系统</title>
+  <link rel="stylesheet" href="school-portal.css" />
+</head>
+<body>
+  <header class="portal-controls">
+    <div class="portal-topline"><strong>学校实验系统</strong><span class="portal-domain">wlsy.xidian.edu.cn</span><span class="portal-connection" id="connection">HTTP · 未加密</span></div>
+    <nav class="portal-actions" aria-label="学校网站操作">
+      <button id="back" disabled>返回</button><button id="reload">刷新</button>
+      <span class="portal-status" id="status" role="status">正在打开学校网站…</span>
+      <button id="autofill" disabled>自动填充</button>
+      <button id="copyAccount" disabled>复制账号</button><button id="copyPassword" disabled>复制密码</button>
+      <button id="manageCredentials">账号密码管理</button>
+      <button id="clearLogin">清除登录状态</button>
+    </nav>
+  </header>
+  <dialog id="credentialsDialog" class="credential-dialog" aria-labelledby="credentialsTitle">
+    <div class="credential-heading"><div><span class="credential-eyebrow">学校系统 · 本机保存</span><h1 id="credentialsTitle">账号密码管理</h1></div><button id="closeCredentials" aria-label="关闭账号密码管理">关闭</button></div>
+    <p id="credentialState" class="credential-state" role="status">正在检查加密存储…</p>
+    <form id="credentialForm" autocomplete="off">
+      <label for="credentialAccount">账号</label><input id="credentialAccount" type="password" autocomplete="off" spellcheck="false" maxlength="512" placeholder="输入学校账号（掩码显示）" required />
+      <label for="credentialPassword">密码</label><input id="credentialPassword" type="password" autocomplete="off" spellcheck="false" maxlength="4096" placeholder="输入学校密码（掩码显示）" required />
+      <p class="credential-note">已保存内容不回显；修改时请重新输入账号和密码。保存仅用于本机管理，不会发送到学校网站。</p>
+      <p id="credentialMessage" class="credential-message" role="status"></p>
+      <div class="credential-footer"><button id="deleteCredentials" type="button" disabled>删除已保存账号</button><button id="saveCredentials" class="credential-save" type="submit">加密保存</button></div>
+    </form>
+  </dialog>
+  <main class="portal-error" id="errorPanel" hidden>
+    <h1>学校网站暂时无法打开</h1>
+    <p id="errorText"></p><p>如果其他浏览器也打不开，请确认校园网连接或稍后重试。此问题不会影响本地报告生成。</p>
+    <button id="retry">重新连接</button>
+  </main>
+  <script src="school-portal-renderer.js"></script>
+</body>
+</html>

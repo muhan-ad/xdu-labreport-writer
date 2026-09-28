@@ -8,7 +8,7 @@
 2. **先递增版本号**（`package.json` 与 `package-lock.json` 两处，如 `2.0.1`；必须是 `x.y.z` 三段式，应用内版本比较与数据包的 `minAppVersion` 都按三段式解析），再 `npm run build:win`。
    同一版本号不要出现两份不同内容的构建——用户端只按版本号判断新旧，同号无法发现修复。
 3. 把安装包（建议用英文名副本 `labreport-setup-<版本>.exe`）放到网盘，并记下新链接与提取码。
-4. 更新本地清单模板 `dist/latest.json`，再**上传覆盖 COS 上的 `latest.json`**（对象名固定，不带版本号）：
+4. 更新随源码保存的清单 `release/latest.json`，同步到本地发布物料 `dist/latest.json`，再**上传覆盖 COS 上的 `latest.json`**（对象名固定，不带版本号）。先确认新 Release 和安装包可用，再发布清单；旧网盘入口仅在维护者确认继续使用该分享链接时保留：
 
 ```json
 {

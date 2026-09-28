@@ -27,14 +27,32 @@ def validate(schema, data):
                     missing.append({"key": key, "label": label})
                     continue
                 if typ == "matrix":
-                    # 定长容器语义：整行全空 = 未使用的行，不算缺失。
-                    # 只有「一行都没填」或「某行只填了一半」才算漏填。
+                    # 固定矩阵不能跳过整行；variableRows 表格才允许未使用的行。
                     if not isinstance(v, list):
                         missing.append({"key": key, "label": label})
                         continue
+                    if not fld.get("variableRows"):
+                        rows = fld.get("rows")
+                        if rows is not None and len(v) != rows:
+                            missing.append({"key": key, "label": label,
+                                            "reason": f"应完整填写 {rows} 行"})
+                            continue
+                        labels = fld.get("rowLabels", [])
+                        empty = [i for i, row in enumerate(v)
+                                 if isinstance(row, list) and any(x is None for x in row)]
+                        if empty:
+                            for i in empty:
+                                row_label = labels[i] if i < len(labels) else f"第 {i + 1} 行"
+                                missing.append({"key": key, "label": label,
+                                                "reason": f"{row_label}未填写完整"})
+                            continue
                     filled = [r for r in v
                               if isinstance(r, list) and any(x is not None for x in r)]
                     half = any(any(x is None for x in r) for r in filled)
+                    if fld.get("minFilledRows") is not None and len(filled) < fld["minFilledRows"]:
+                        missing.append({"key": key, "label": label,
+                                        "reason": f"至少填写 {fld['minFilledRows']} 行"})
+                        continue
                     if not filled or half:
                         missing.append({"key": key, "label": label})
                         continue
@@ -59,7 +77,7 @@ def validate(schema, data):
                     invalid.append({"key": key, "label": label, "reason": "应为矩阵"})
                 else:
                     rows, cols = fld.get("rows"), fld.get("cols")
-                    # 定长容器：rows 是上限。少几行 = 学生没填满，合法；多出来才是错。
+                    # 多于容器上限始终非法；必填固定矩阵的少行已在上面拦截。
                     if rows is not None and len(v) > rows:
                         invalid.append({"key": key, "label": label,
                                         "reason": f"行数不应超过 {rows}"})
@@ -80,4 +98,3 @@ def validate(schema, data):
                     invalid.append({"key": key, "label": label, "reason": "超出允许范围"})
                     break
     return {"ok": (not missing and not invalid), "missing": missing, "invalid": invalid}
-

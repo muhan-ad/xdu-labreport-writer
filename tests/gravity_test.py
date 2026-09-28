@@ -73,6 +73,35 @@ class GravityTests(unittest.TestCase):
         self.assertLess(x0[0], min(self.data["h"]))
         self.assertGreater(y0[1], max(original["T_avg"]))
 
+    def test_narrow_common_range_with_two_intersections_is_not_blocked(self):
+        h = [24.95, 22.95, 20.95, 18.95, 16.95, 14.95, 12.95, 10.95, 8.95]
+        periods = [1.232, 1.23, 1.22, 1.22, 1.24, 1.25, 1.3, 1.34, 1.44]
+        level, smaller, larger = gravity._select_equal_period_points(h, periods)
+        self.assertAlmostEqual(level, 1.226)
+        self.assertAlmostEqual(smaller, 18.35)
+        self.assertAlmostEqual(larger, 22.15)
+
+    def test_minimum_with_one_measured_point_on_each_side_is_supported(self):
+        level, smaller, larger = gravity._select_equal_period_points(
+            list(range(1, 10)), [1.3, 1.2, 1.25, 1.3, 1.35, 1.4, 1.45, 1.5, 1.55])
+        self.assertGreater(level, 1.2)
+        self.assertLess(smaller, 2)
+        self.assertGreater(larger, 2)
+
+    def test_fixed_matrix_missing_row_is_rejected_before_calculation(self):
+        from common.data_validation import validate
+        schema = json.loads((EXP / "schema.json").read_text(encoding="utf-8"))
+        self.data["trials"][0] = [None] * 8
+        result = validate(schema, self.data)
+        self.assertFalse(result["ok"])
+        self.assertIn("第1孔", result["missing"][0]["reason"])
+        self.data["trials"] = self.data["trials"][1:]
+        self.assertFalse(validate(schema, self.data)["ok"])
+
+    def test_existing_average_tolerance_is_unchanged(self):
+        self.data["T_avg"] = [sum(row) / len(row) / 10 * 1.029 for row in self.data["trials"]]
+        self.assertEqual(gravity._compute(self.data)["T_avg"], self.data["T_avg"])
+
 
 if __name__ == "__main__":
     unittest.main()

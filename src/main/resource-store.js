@@ -119,17 +119,38 @@ function resourceVersion(root) {
   return hash.digest('hex');
 }
 
-function syncBuiltin(builtin, target, fingerprint, appVersion) {
+function hashFile(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function resourceRevision(root) {
+  const release = atomic.readJson(path.join(root, 'common', 'resource-release.json'), {});
+  return Number.isSafeInteger(release.revision) && release.revision >= 0 ? release.revision : 0;
+}
+
+function packageOrigins(stagingRoot, previous = {}, version = '') {
+  const result = { ...previous }, revision = resourceRevision(stagingRoot);
+  for (const file of resourceFiles(stagingRoot)) {
+    result[file] = { source: 'package', hash: hashFile(path.join(stagingRoot, file)), revision, version };
+  }
+  return result;
+}
+
+function syncBuiltin(builtin, target, fingerprint, appVersion, { force = false } = {}) {
   const state = readState(target);
-  if (state.builtinFingerprint === fingerprint) return false;
+  if (!force && state.builtinFingerprint === fingerprint && state.builtinHashes) return false;
   const hasDataPackage = Boolean(state.manifest?.dataVersion);
+  const revision = resourceRevision(builtin);
   replaceTree(target, candidate => {
     const variantBases = {};
+    const builtinHashes = {}, resourceOrigins = { ...(state.resourceOrigins || {}) }, syncWarnings = [];
     for (const file of resourceFiles(builtin)) {
       const source = path.join(builtin, file);
       const dest = path.join(candidate, file);
       const parts = file.split(path.sep);
       const isVariants = path.basename(file) === 'variants.json';
+      const sourceHash = hashFile(source);
+      builtinHashes[file] = sourceHash;
       if (isVariants) {
         // 数据包的变体基线属于数据包，安装升级不能改写其所有权记录。
         variantBases[file] = hasDataPackage && state.variantBases?.[file] !== undefined
@@ -137,9 +158,27 @@ function syncBuiltin(builtin, target, fingerprint, appVersion) {
       }
       // Only migrate existing user experiments. New ones are copied on first write.
       if (parts[0] !== 'common' && !fs.existsSync(path.join(candidate, parts[0]))) continue;
-      // 已应用数据包时，现有资源可能来自热更新；旧状态没有逐文件来源信息，
-      // 因此保守保留现有文件，只补齐安装包新增而本地缺失的资源。
-      if (hasDataPackage && fs.existsSync(dest)) continue;
+      if (fs.existsSync(dest)) {
+        const currentHash = hashFile(dest), origin = resourceOrigins[file];
+        if (currentHash === sourceHash) {
+          // 不接管较新热更新的所有权，否则下次同版本安装会把它当作旧内置文件。
+          if (!origin || origin.source !== 'package' || revision > (origin.revision || 0)) {
+            resourceOrigins[file] = { source: 'builtin', hash: sourceHash, revision, version: appVersion };
+          }
+          continue;
+        }
+        const unchangedBuiltin = (!origin || origin.source === 'builtin') && currentHash === state.builtinHashes?.[file];
+        const unchangedPackage = origin?.source === 'package' && currentHash === origin.hash;
+        const newerBuiltin = unchangedPackage && revision > (origin.revision || 0);
+        const unknownLegacyPackage = hasDataPackage && !origin && !unchangedBuiltin;
+        const userModified = origin && currentHash !== origin.hash && !unchangedBuiltin;
+        const keepNewerPackage = unchangedPackage && !newerBuiltin;
+        const keepNewerBuiltin = origin?.source === 'builtin' && currentHash === origin.hash && revision < (origin.revision || 0);
+        if (!force && (unknownLegacyPackage || userModified || keepNewerPackage || keepNewerBuiltin)) {
+          if (unknownLegacyPackage || userModified) syncWarnings.push(file);
+          continue;
+        }
+      }
       if (isVariants) {
         const text = fs.readFileSync(source, 'utf8');
         const previous = state.variantBases?.[file];
@@ -151,6 +190,8 @@ function syncBuiltin(builtin, target, fingerprint, appVersion) {
       }
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.copyFileSync(source, dest);
+      resourceOrigins[file] = { source: 'builtin', hash: sourceHash, revision, version: appVersion };
+      if (isVariants) variantBases[file] = fs.readFileSync(source, 'utf8');
     }
     // Remove stale Python bytecode so same-sized script replacements take effect.
     const purgeCache = dir => {
@@ -164,9 +205,11 @@ function syncBuiltin(builtin, target, fingerprint, appVersion) {
     purgeCache(candidate);
     // 内置资源同步不等同于数据包更新；保留已验证的数据包版本和下架名单，
     // 否则应用升级会把热更新状态重置，导致下架实验重新出现在列表中。
-    writeState(candidate, { ...state, builtinFingerprint: fingerprint, appVersion, variantBases });
+    writeState(candidate, { ...state, builtinFingerprint: fingerprint, builtinHashes, builtinRevision: revision,
+      resourceOrigins, syncWarnings, appVersion, variantBases });
   });
   return true;
 }
 
-module.exports = { readState, writeState, replaceTree, resourceVersion, syncBuiltin, recoverTree };
+module.exports = { readState, writeState, replaceTree, resourceVersion, syncBuiltin, recoverTree,
+  resourceRevision, packageOrigins };
