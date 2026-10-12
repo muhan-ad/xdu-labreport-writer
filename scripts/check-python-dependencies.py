@@ -31,7 +31,7 @@ def main():
     optional = declared(ROOT / 'requirements-optional.txt')
     files = list((ROOT / '物理实验/实验脚本').rglob('*.py'))
     files += list((ROOT / 'tests').glob('*.py'))
-    local = {'common', 'validate_schema', 'docx_omml'}
+    local = {'common', 'validate_schema', 'docx_omml', 'report_integrity'}
     for file in files:
         for node in ast.walk(ast.parse(file.read_text(encoding='utf-8-sig'))):
             names = []
