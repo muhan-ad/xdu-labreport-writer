@@ -1,55 +1,74 @@
 {
- "实验": "光栅光谱的测量",
- "groups": [
-  {
-   "name": "衍射角读数（表 3-13-1，5 条谱线 × 8 列）",
-   "fields": [
+  "实验": "光栅光谱的测量",
+  "groups": [
     {
-     "key": "angles",
-     "label": "θ 读数（度、分交替：θA⁻¹、θB⁻¹、θA⁺¹、θB⁺¹）",
-     "type": "matrix",
-     "rows": 5,
-     "cols": 8,
-     "unit": "度、分",
-     "required": true,
-     "rowLabels": [
-      "黄2光",
-      "黄1光",
-      "绿光1次",
-      "绿光2次",
-      "绿光3次"
-     ],
-     "colLabels": [
-      "θA⁻¹度",
-      "θA⁻¹分",
-      "θB⁻¹度",
-      "θB⁻¹分",
-      "θA⁺¹度",
-      "θA⁺¹分",
-      "θB⁺¹度",
-      "θB⁺¹分"
-     ]
-    }
-   ]
-  },
-  {
-   "name": "给定与观察参数",
-   "fields": [
-    {
-     "key": "lambda_green",
-     "label": "汞灯绿线波长 λ绿",
-     "type": "number",
-     "unit": "nm",
-     "default": 546.1,
-     "required": true
+      "name": "衍射角读数（表 3-13-1，5 条谱线 × 8 列）",
+      "fields": [
+        {
+          "key": "angles",
+          "label": "θ 读数（度、分交替：θA⁻¹、θB⁻¹、θA⁺¹、θB⁺¹）",
+          "type": "matrix",
+          "rows": 5,
+          "cols": 8,
+          "unit": "度、分",
+          "required": true,
+          "rowLabels": [
+            "黄2光",
+            "黄1光",
+            "绿光1次",
+            "绿光2次",
+            "绿光3次"
+          ],
+          "colLabels": [
+            "θA⁻¹度",
+            "θA⁻¹分",
+            "θB⁻¹度",
+            "θB⁻¹分",
+            "θA⁺¹度",
+            "θA⁺¹分",
+            "θB⁺¹度",
+            "θB⁺¹分"
+          ],
+          "default": null
+        }
+      ]
     },
     {
-     "key": "kmax_obs",
-     "label": "观察到最高衍射级数 Kmax",
-     "type": "number",
-     "required": true
+      "name": "给定与观察参数",
+      "fields": [
+        {
+          "key": "lambda_green",
+          "label": "汞灯绿线波长 λ绿",
+          "type": "number",
+          "unit": "nm",
+          "default": null,
+          "required": true
+        },
+        {
+          "key": "kmax_obs",
+          "label": "观察到最高衍射级数 Kmax",
+          "type": "number",
+          "required": true,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "实际仪器参数（不使用教材或示例数值）",
+      "fields": [
+        {
+          "key": "instrument_delta_instr_min",
+          "label": "分光计仪器限差（按实际仪器填写）",
+          "type": "number",
+          "unit": "角分",
+          "required": true,
+          "default": null,
+          "exclusiveMinimum": 0,
+          "bindConstant": "DELTA_INSTR_MIN"
+        }
+      ]
     }
-   ]
-  }
- ]
+  ],
+  "schemaVersion": 1,
+  "userInputOnly": true
 }

@@ -1,44 +1,45 @@
 {
   "readings": [
     [
-      100,
-      15,
-      280,
-      20,
-      220,
-      18,
-      40,
-      21
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
     ],
     [
-      112,
-      40,
-      292,
-      44,
-      232,
-      38,
-      52,
-      44
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
     ],
     [
-      88,
-      12,
-      268,
-      5,
-      208,
-      12,
-      28,
-      1
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
     ],
     [
-      331,
-      50,
-      151,
-      55,
-      91,
-      47,
-      271,
-      58
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
     ]
-  ]
+  ],
+  "instrument_delta_instr_min": null
 }

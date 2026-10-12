@@ -1,51 +1,84 @@
 {
- "实验": "平凸透镜曲率半径的测量",
- "groups": [
-  {
-   "name": "暗环序号（预填）",
-   "fields": [
+  "实验": "平凸透镜曲率半径的测量",
+  "groups": [
     {
-     "key": "rings",
-     "label": "暗环序号",
-     "type": "array",
-     "length": 10,
-     "unit": "",
-     "required": true,
-     "default": [
-      20,
-      19,
-      18,
-      17,
-      16,
-      15,
-      14,
-      13,
-      12,
-      11
-     ]
-    }
-   ]
-  },
-  {
-   "name": "显微镜直径测量读数（10 环）",
-   "fields": [
-    {
-     "key": "d_left",
-     "label": "暗环左端读数 D左",
-     "type": "array",
-     "length": 10,
-     "unit": "mm",
-     "required": true
+      "name": "光源参数",
+      "fields": [
+        {
+          "key": "wavelength_nm",
+          "label": "光源波长 λ",
+          "type": "number",
+          "unit": "nm",
+          "required": true,
+          "default": null,
+          "exclusiveMinimum": 0,
+          "hint": "按实际光源的标称或校准值填写；可主动选择常用值，也可直接输入。",
+          "presets": [
+            {
+              "label": "钠光（实验常用给定值）589.3 nm",
+              "value": 589.3
+            },
+            {
+              "label": "绿光 546.1 nm",
+              "value": 546.1
+            }
+          ]
+        }
+      ]
     },
     {
-     "key": "d_right",
-     "label": "暗环右端读数 D右",
-     "type": "array",
-     "length": 10,
-     "unit": "mm",
-     "required": true
+      "name": "暗环序号（预填）",
+      "fields": [
+        {
+          "key": "rings",
+          "label": "暗环序号",
+          "type": "array",
+          "length": 10,
+          "unit": "",
+          "required": true,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "显微镜直径测量读数（10 环）",
+      "fields": [
+        {
+          "key": "d_left",
+          "label": "暗环左端读数 D左",
+          "type": "array",
+          "length": 10,
+          "unit": "mm",
+          "required": true,
+          "default": null
+        },
+        {
+          "key": "d_right",
+          "label": "暗环右端读数 D右",
+          "type": "array",
+          "length": 10,
+          "unit": "mm",
+          "required": true,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "实际仪器参数（不使用教材或示例数值）",
+      "fields": [
+        {
+          "key": "instrument_delta_instrument",
+          "label": "测量仪器限差（按实际仪器填写）",
+          "type": "number",
+          "unit": "mm",
+          "required": true,
+          "default": null,
+          "exclusiveMinimum": 0,
+          "bindConstant": "DELTA_INSTRUMENT"
+        }
+      ]
     }
-   ]
-  }
- ]
+  ],
+  "schemaVersion": 1,
+  "userInputOnly": true
 }

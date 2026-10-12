@@ -14,12 +14,12 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
-from common.data_io import load_data
+from common.data_io import load_data, bind_input_parameters
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
 
 # ── 物理常数与仪器参数（按教材） ──
-DELTA_INSTRUMENT = 0.05  # cm, Δ_仪 = 0.5 × 0.1cm（光具座最小分度 0.1cm）
+DELTA_INSTRUMENT = None  # 由当前用户仪器参数绑定，无示例兜底
 
 MIN_CONJ_ROWS = 3  # 共轭法至少测几次（少于这个数视为填得不够，不出报告）
 
@@ -83,6 +83,7 @@ def _compute(data: dict) -> dict:
     计算逻辑与原 _generate_docx 完全一致，仅抽出以便正文与变体章节
     （%%DATA:key:格式%% 占位符）共用同一份结果。
     """
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
 
     # ── 取出数据 ──
     f_auto_raw = data["f_auto"]       # 自准法：8 次 f 值
@@ -183,6 +184,7 @@ def _compute(data: dict) -> dict:
 
 def _generate_docx(data: dict, output_path: str):
     """从 data.json 读取数据，计算并生成 Word 实验报告。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
 
     # ═══════════════════════════════════════════
     # 1. 读取数据（含必填空值校验）
@@ -350,11 +352,11 @@ def _generate_docx(data: dict, output_path: str):
     )
     doc.add_paragraph("B类不确定度：")
     doc.add_math(
-        r"\Delta_{\text{仪}} = 0.5 \times 0.1 = 0.05 \mathrm{cm}"
+        rf"\Delta_{{\text{{仪}}}} = {DELTA_INSTRUMENT:g} \mathrm{{cm}}"
     )
     doc.add_math(
         rf"\Delta f_B = \frac{{\Delta_{{\text{{仪}}}}}}{{\sqrt{{3}}}}"
-        rf" = \frac{{0.05}}{{\sqrt{{3}}}} \approx {uB_auto:.2f} \mathrm{{cm}}"
+        rf" = \frac{{{DELTA_INSTRUMENT:g}}}{{\sqrt{{3}}}} \approx {uB_auto:.2f} \mathrm{{cm}}"
     )
     doc.add_paragraph("合成不确定度：")
     doc.add_math(
@@ -430,11 +432,11 @@ def _generate_docx(data: dict, output_path: str):
     )
     doc.add_paragraph("B类不确定度：")
     doc.add_math(
-        r"\Delta_{\text{仪}} = 0.5 \times 0.1 = 0.05 \mathrm{cm}"
+        rf"\Delta_{{\text{{仪}}}} = {DELTA_INSTRUMENT:g} \mathrm{{cm}}"
     )
     doc.add_math(
         rf"\Delta v_B = \frac{{\Delta_{{\text{{仪}}}}}}{{\sqrt{{3}}}}"
-        rf" = \frac{{0.05}}{{\sqrt{{3}}}} \approx {uB_v:.2f} \mathrm{{cm}}"
+        rf" = \frac{{{DELTA_INSTRUMENT:g}}}{{\sqrt{{3}}}} \approx {uB_v:.2f} \mathrm{{cm}}"
     )
     doc.add_paragraph("合成不确定度：")
     doc.add_math(

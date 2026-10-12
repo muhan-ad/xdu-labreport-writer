@@ -13,7 +13,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
-from common.data_io import load_data
+from common.data_io import load_data, bind_input_parameters
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
 
@@ -22,8 +22,7 @@ from common.custom_plot import render_custom_plot
 # ============================================================
 
 K_ORDER = 1              # 谱线级次 K=1
-T_FACTOR = 4.30          # t 分布因子 t_{0.95,2}（绿光 3 次测量）
-DELTA_INSTR_MIN = 1.0    # 分光计最小分度 1′（仪器误差限）
+DELTA_INSTR_MIN = None  # 由当前用户仪器参数绑定，无示例兜底
 
 # 谱线行标签（Excel 第 4~8 行，顺序固定）
 LINE_LABELS = ["黄2光", "黄1光", "绿光1次", "绿光2次", "绿光3次"]
@@ -113,10 +112,12 @@ def _compute(angles, lambda_green):
     r["ot"] = _ot
     green_kept = _ot["kept"]
     r["n_kept"] = _ot["n_kept"]
+    r["t_used"] = t_factor(r["n_kept"], 0.95)
+    r["confidence"] = 0.95
     r["phi_green_mean"] = mean(green_kept)
     r["dev_min"] = [(p - r["phi_green_mean"]) * 60 for p in green_kept]  # 各次偏差/′
     r["sigma_min"] = std_dev(green_kept) * 60                            # σφ/′
-    r["delta_A_min"] = (T_FACTOR * r["sigma_min"]
+    r["delta_A_min"] = (t_factor(r["n_kept"], 0.95) * r["sigma_min"]
                         / math.sqrt(r["n_kept"]))                        # t 分布修正
     r["delta_B_min"] = DELTA_INSTR_MIN / math.sqrt(3)
     r["dphi_green_min"] = combine(r["delta_A_min"], r["delta_B_min"])   # 合成 Δφ/′
@@ -159,6 +160,7 @@ def _compute(angles, lambda_green):
 
 def _generate_docx(data: dict, output_path: str) -> bool:
     """从 data.json 读取数据 → 计算 → 输出 docx 报告。成功返回 True。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
     parsed = _read_data(data)
     if parsed is None:
         return False
@@ -260,19 +262,19 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     # 3σ 坏值检验（绿线为同一被测量的 3 次等精度重复测量）
     doc.add_paragraph(outlier_note(r["ot"], unit="′", digits=1, scale=60))
     doc.add_paragraph("")
-    doc.add_run("由于只有三次测量，采用 t 分布进行修正（")
-    doc.add_inline_math(r"t_{0.95,2} \approx 4.30")
+    doc.add_run(f"保留{r['n_kept']}次有效测量，按双侧95%置信水平取t系数（")
+    doc.add_inline_math(rf"t_{{0.95,{r['n_kept']-1}}} \approx {r['t_used']:.4f}")
     doc.add_run("）。")
-    doc.add_paragraph("A类不确定度：")
+    doc.add_paragraph("均值的95%统计区间半宽（课程评定分量）：")
     doc.add_math(f"\\Delta_{{A}} = \\frac{{t \\cdot \\sigma_{{\\varphi}}}}{{\\sqrt{{n}}}}"
-                 f" = \\frac{{4.30 \\times {r['sigma_min']:.1f}′}}"
+                 f" = \\frac{{{r['t_used']:.4f} \\times {r['sigma_min']:.1f}′}}"
                  f"{{\\sqrt{{{r['n_kept']}}}}}"
                  f" \\approx {r['delta_A_min']:.1f}′")
     doc.add_paragraph("B类不确定度：")
     doc.add_math(f"\\Delta_{{B}} = \\frac{{\\Delta_{{\\text{{仪}}}}}}{{\\sqrt{{3}}}}"
-                 f" = \\frac{{1′}}{{\\sqrt{{3}}}}"
+                 f" = \\frac{{{DELTA_INSTR_MIN:g}′}}{{\\sqrt{{3}}}}"
                  f" \\approx {r['delta_B_min']:.2f}′")
-    doc.add_paragraph("合成不确定度：")
+    doc.add_paragraph("按课程公式合成统计与仪器分量；该合成评定量不单独宣称具有95%覆盖概率：")
     doc.add_math(f"\\Delta\\varphi_{{K}} = \\sqrt{{\\Delta_{{A}}^{{2}} + \\Delta_{{B}}^{{2}}}}"
                  f" = \\sqrt{{({r['delta_A_min']:.1f}′)^{{2}}"
                  f" + ({r['delta_B_min']:.2f}′)^{{2}}}}"
@@ -453,13 +455,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
             doc.add_math(r"\alpha = \text{arcsin}\left(\frac{\sin\theta_{K}"
                          r" + \sin\theta_{-K}}{2}\right)")
             doc.add_paragraph("")
-            doc.add_run("例如，若测得绿光 ")
-            doc.add_inline_math(r"\theta_{+1} = 164°29′")
-            doc.add_run("、")
-            doc.add_inline_math(r"\theta_{-1} = 183°21′")
-            doc.add_run("，代入得 ")
-            doc.add_inline_math(r"\alpha \approx 6.0°")
-            doc.add_run("，则应将光栅旋转约 6° 使入射角趋近于 0。")
+            doc.add_run("入射角的数值必须由本次正负级测量角度计算，不能采用示例调整角。")
 
     doc.save()
     doc.close()

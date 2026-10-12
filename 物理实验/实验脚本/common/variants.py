@@ -71,11 +71,11 @@ def render_variant(text: str, data: dict) -> str:
         key, fmt = m.group(1), m.group(2)
         val = data.get(key)
         if val is None:
-            return m.group(0)  # 数据缺失时保留占位符，便于排查
+            raise ValueError("计算结果缺少占位符字段：" + key)
         try:
             return fmt % val
-        except Exception:
-            return str(val)
+        except Exception as error:
+            raise ValueError("计算结果占位符格式无效：" + key) from error
 
     return DATA_PATTERN.sub(repl, text)
 
@@ -255,7 +255,8 @@ def render_custom_quiz(doc, data):
             answers = quiz["answers"].get(i)
         if isinstance(answers, str):
             answers = [answers]
-        rendered = [render_variant(normalize_polish_md(str(a)), data)
+        from .content_policy import validate_polish
+        rendered = [render_variant(normalize_polish_md(validate_polish(str(a))), data)
                     for a in (answers or []) if str(a or "").strip()]
         if rendered:
             doc.add_paragraph_rich(rendered[0])
@@ -275,6 +276,8 @@ def compose(script_dir: str, data: dict) -> dict:
     variants = load_variants(script_dir) or {}
     choices = get_variant_choices()
     disabled = get_disabled_sections()
+    enforce_policy = os.path.isfile(os.path.join(script_dir, "rag", "knowledge.json"))
+    from .content_policy import validate_polish
     out = {}
     for section, texts in variants.items():
         if section in disabled:
@@ -282,21 +285,27 @@ def compose(script_dir: str, data: dict) -> dict:
         if section == "思考题":
             # 思考题：按问回答变体字典原样透传（题目在 generate.py 写死，
             # 生成器对每问随机选回答；LAB_POLISH 覆盖时下方循环替换为整段文本）
-            out[section] = texts
+            if isinstance(texts, dict):
+                out[section] = {qno: [render_variant(validate_polish(str(answer)) if enforce_policy else str(answer), data)
+                                     for answer in (answers if isinstance(answers, list) else [answers])]
+                                for qno, answers in texts.items()}
             continue
-        idx = -1
+        idx = 0 if enforce_policy else -1
         if choices and section in choices:
             try:
                 idx = int(choices[section])
             except Exception:
                 idx = -1
         if 0 <= idx < len(texts):
+            if enforce_policy:
+                validate_polish(texts[idx])
             out[section] = render_variant(texts[idx], data)
     for section, md in (get_polish_overrides() or {}).items():
         if section in disabled:
             continue   # 润色覆盖同样受章节开关约束
         if not isinstance(md, str) or not md.strip():
             continue
+        from .content_policy import validate_polish
         if section == "思考题":
             # 整段润色文本自带题目与答案，而 generate.py 的题目写死、按问取回答：
             # 这里解析成按问回答，避免「整段文本」与「写死题目 + 兜底答案」各输出一遍。
@@ -309,10 +318,10 @@ def compose(script_dir: str, data: dict) -> dict:
             base = out.get("思考题")
             merged = dict(base) if isinstance(base, dict) else {}
             for qno, answers in quiz.items():
-                merged[qno] = [render_variant(normalize_polish_md(a), data) for a in answers]
+                merged[qno] = [render_variant(normalize_polish_md(validate_polish(a)), data) for a in answers]
             out["思考题"] = merged
             continue
-        out[section] = render_variant(normalize_polish_md(md), data)
+        out[section] = render_variant(normalize_polish_md(validate_polish(md)), data)
     if out:
         print(SECTIONS_MARKER + json.dumps(out, ensure_ascii=False), flush=True)
     return out

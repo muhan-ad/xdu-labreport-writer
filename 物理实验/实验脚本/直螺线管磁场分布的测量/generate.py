@@ -10,7 +10,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
-from common.data_io import load_data
+from common.data_io import load_data, bind_input_parameters
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
 
@@ -22,13 +22,12 @@ MU0 = 4 * math.pi * 1e-7  # 真空磁导率 / (N/A²)
 # ═══════════════════════════════════════════════════════════
 # 仪器误差
 # ═══════════════════════════════════════════════════════════
-DELTA_AMMETER_A = 1.0e-3   # 直流电流表 Δ仪 / A (0.5级, 200mA量程 → 1.0mA)
-DELTA_SCALE_MM = 0.5       # 标尺 Δ仪 / mm (最小分度1mm, 估读至0.5mm)
+DELTA_AMMETER_A = None  # 由当前用户仪器参数绑定，无示例兜底
+DELTA_SCALE_MM = None  # 由当前用户仪器参数绑定，无示例兜底
 
 # ═══════════════════════════════════════════════════════════
 # 16 个测点位置 (教材表3-20-2)
 # ═══════════════════════════════════════════════════════════
-X_POSITIONS_MM = [0, 20, 40, 60, 80, 100, 110, 120, 130, 140, 150, 160, 170, 180, 190, 200]
 
 # ═══════════════════════════════════════════════════════════
 # _create_template — 生成数据模板
@@ -67,6 +66,7 @@ def _plot_dm_x(x_mm: list, dm_cm: list, output_path: str):
 def _generate_docx(data: dict, output_path: str):
     # ── 1. 读取数据（data.json）──
     # 校验必填数据（required 字段为 null 或 array 含 null → 缺失）
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
     missing = []
     for k in ("M_mH", "N", "l_m", "r0_m", "n_coil", "S_m2", "I_A", "R_ohm",
               "I0_ma", "dm1_cm", "dm2_cm", "x_mm", "d_left_cm", "d_right_cm"):
@@ -196,7 +196,7 @@ def _generate_docx(data: dict, output_path: str):
         # 但 propagate_numeric 需要传入 dm1_cm, dm2_cm 分别的不确定度
         # 对于 d̄m(cm) = (dm1(cm) + dm2(cm)) / 2
         # u(dm_cm) = type_b(0.05cm) / √2  (0.05cm = 0.5mm)
-        u_dm_cm = type_b(0.05, "uniform") / math.sqrt(2.0)
+        u_dm_cm = type_b(DELTA_SCALE_MM / 10, "uniform") / math.sqrt(2.0)
 
         _, u_i = propagate_numeric(_calc_RKb_single, {
             "I0_A": (I0_A_i, u_I0_single_A),
@@ -373,12 +373,12 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("B类不确定度：")
     doc.add_math(
         r"u_{\mathrm{B}}(I_0) = \frac{\Delta_{\text{仪}}}{\sqrt{3}} = "
-        r"\frac{1.0 \times 10^{-3}}{\sqrt{3}} \approx " + format_scientific(u_I0_single_A, 3)
+        r"\frac{" + format_scientific(DELTA_AMMETER_A, 8) + r"}{\sqrt{3}} \approx " + format_scientific(u_I0_single_A, 3)
         + r"\,\mathrm{A}"
     )
     doc.add_math(
         r"u_{\mathrm{B}}(\bar{d}_m) = \frac{\Delta_{\text{仪}}}{\sqrt{3}\sqrt{2}} = "
-        r"\frac{0.5}{\sqrt{3}\sqrt{2}} \approx " + f"{u_dm_cm * 10:.3f}"
+        r"\frac{" + format_number(DELTA_SCALE_MM, sig_figs=8) + r"}{\sqrt{3}\sqrt{2}} \approx " + f"{u_dm_cm * 10:.3f}"
         + r"\,\mathrm{mm}"
     )
     doc.add_math(
@@ -465,9 +465,9 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("中心点磁感应强度 B 由 RKb 与 dm 传递得到，各不确定度分量：")
     doc.add_paragraph("")
     doc.add_run("其中标尺 ")
-    doc.add_inline_math(r"\Delta_{\text{仪}} = 0.5\,\mathrm{mm}")
+    doc.add_inline_math(rf"\Delta_{{\text{{仪}}}} = {DELTA_SCALE_MM:g}\,\mathrm{{mm}}")
     doc.add_run("（均匀分布），电流表 ")
-    doc.add_inline_math(r"\Delta_{\text{仪}} = 1.0\,\mathrm{mA}")
+    doc.add_inline_math(rf"\Delta_{{\text{{仪}}}} = {DELTA_AMMETER_A*1000:g}\,\mathrm{{mA}}")
     doc.add_run("（均匀分布）。")
 
     doc.add_paragraph("A类不确定度：")

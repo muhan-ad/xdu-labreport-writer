@@ -1,0 +1,54 @@
+'use strict';
+const {app,BrowserWindow,nativeImage}=require('electron');
+const fs=require('fs'),path=require('path'),crypto=require('crypto'),assert=require('assert/strict');
+const root='E:/apps/xdu-labreport-writer-master',work='E:/workspace/codex/2026-10-09/jian/work';
+const profile=fs.mkdtempSync(path.join(work,'new-features-profile-'));
+const logfile=path.join(work,'new-features-smoke-result.log'); fs.writeFileSync(logfile,'START\n'); const record=s=>fs.appendFileSync(logfile,s+'\n');
+app.setPath('userData',profile);app.on('browser-window-created',(_,w)=>w.hide());
+require(path.join(process.env.LABREPORT_TEST_APP_ASAR || root,'main.js'));
+const delay=ms=>new Promise(r=>setTimeout(r,ms));
+app.whenReady().then(async()=>{try{
+ let wc;for(let i=0;i<200;i++){wc=BrowserWindow.getAllWindows()[0]?.webContents;if(wc&&await wc.executeJavaScript('typeof experiments!=="undefined"&&experiments.length===27').catch(()=>false))break;await delay(200);}
+ const ev=s=>wc.executeJavaScript(s);wc.setBackgroundThrottling(false);
+ const launchWindow=BrowserWindow.fromWebContents(wc);launchWindow.hide();assert.equal(launchWindow.isVisible(),false);app.emit('second-instance',{},[],root);assert.equal(launchWindow.isVisible(),true);launchWindow.hide();record('PASS second-instance shows hidden window');
+ assert.equal(await ev('loadStudentInfo().date===localToday()'),true);
+ await ev('openModal("studentModal"); document.getElementById("inputExperimentDate").value="2025-12-31"; saveStudent()');
+ assert.equal(await ev('loadStudentInfo().date'),'2025-12-31');
+ await ev('void (appConfirm=async()=>true)');
+ for(const id of await ev('experiments.map(x=>x.id)')){
+  await ev(`selectExperiment(experiments.find(e=>e.id===${JSON.stringify(id)}))`);
+  const before=await ev('window.labAPI.readData(currentExp.path)');
+  await ev('fillTestData()');assert.equal(await ev('dataValidation.validate(currentSchema,currentData).length'),0,id);
+  assert.deepEqual(await ev('window.labAPI.readData(currentExp.path)'),before);
+  await ev('isDataModified=false; notifyDataModified()');
+ }
+ await ev('selectExperiment(experiments.find(e=>e.name==="平凸透镜曲率半径的测量"))');
+ await ev('currentData.wavelength_nm=null; renderForm()');
+ assert.equal(await ev('document.querySelector("input[data-key=wavelength_nm]").value'), '');
+ assert.equal(await ev('document.querySelector("select.parameter-presets").value'), '');
+ await ev('document.querySelector("select.parameter-presets").value="546.1"; document.querySelector("select.parameter-presets").dispatchEvent(new Event("change"))');
+ assert.equal(await ev('readFormData().wavelength_nm'),546.1);assert.equal(await ev('isDataModified'),true);
+ await ev('document.querySelector("input[data-key=wavelength_nm]").value="532.17"; document.querySelector("input[data-key=wavelength_nm]").dispatchEvent(new Event("input"))');
+ assert.equal(await ev('readFormData().wavelength_nm'),532.17);
+ const presetBounds=await ev('(()=>{const p=document.querySelector("select.parameter-presets").getBoundingClientRect(),w=document.getElementById("dataTableWrap").getBoundingClientRect();return {width:p.width,right:p.right,wrapRight:w.right}})()');
+ assert.ok(presetBounds.width>=200);assert.ok(presetBounds.right<=presetBounds.wrapRight);
+ await ev('isDataModified=false; notifyDataModified()');
+ await ev('fillTestData()'); await delay(500);
+ assert.equal(await ev('document.querySelectorAll("input[data-key=wavelength_nm]").length'),1);
+ fs.writeFileSync(path.join(work,'new-features-ui.png'),(await wc.capturePage(undefined,{stayHidden:true,stayAwake:true})).toPNG());
+ await wc.reload();await delay(1800);
+ assert.equal(await ev('loadStudentInfo().date===localToday()'),true);
+ const {prepareReportPhoto,MAX_BYTES}=require(path.join(root,'src/main/report-photo'));
+ const pixels=crypto.randomBytes(1800*1800*4),photo=path.join(profile,'original.png');
+ fs.writeFileSync(photo,nativeImage.createFromBitmap(pixels,{width:1800,height:1800}).toPNG());
+ const hash=crypto.createHash('sha256').update(fs.readFileSync(photo)).digest('hex');
+ assert.ok(fs.statSync(photo).size>MAX_BYTES);
+ const result=prepareReportPhoto(photo,path.join(profile,'cache'),nativeImage);
+ assert.ok(fs.statSync(result).size<MAX_BYTES);assert.ok(!nativeImage.createFromPath(result).isEmpty());
+ assert.equal(crypto.createHash('sha256').update(fs.readFileSync(photo)).digest('hex'),hash);
+ assert.equal(prepareReportPhoto(photo,path.join(profile,'cache'),nativeImage),result);
+ const small=path.join(profile,'small.png');fs.writeFileSync(small,nativeImage.createFromBitmap(Buffer.alloc(40*40*4,255),{width:40,height:40}).toPNG());
+ assert.equal(prepareReportPhoto(small,path.join(profile,'cache'),nativeImage),small);
+ record('PASS explicit presets + manual input + no default + layout / 27 test forms / unsaved original preservation / wavelength field / adjustable date + restart reset / photo <1MB + source preserved + cache');app.exit(0);
+}catch(e){record(e.stack);app.exit(1)}});
+setTimeout(()=>{record("TIMEOUT");app.exit(2)},120000).unref();

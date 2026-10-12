@@ -12,7 +12,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
-from common.data_io import load_data
+from common.data_io import load_data, bind_input_parameters
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
 
@@ -20,9 +20,6 @@ from common.custom_plot import render_custom_plot
 # 物理常数 / 实验参数（按教材）
 # ============================================================
 
-LASER_WAVELENGTH_NM = 650          # 激光波长 λ = 650 nm
-LASER_WAVELENGTH_MM = 6.5e-4       # mm 单位
-GIVEN_SLIT_WIDTH_MM = 0.100        # 给定缝宽 0.100 mm
 
 # 次极大理论相对光强（来自教材：u=±1.43π, ±2.46π, ±3.47π）
 THEORY_SECONDARY_MAX = [0.047, 0.016, 0.008]
@@ -30,8 +27,8 @@ THEORY_SECONDARY_MAX = [0.047, 0.016, 0.008]
 # 不确定度评定的仪器参数（知识库 rag/原理.md 第 5 节）：
 #   光具座底座分度值 1 mm（读 L）、探测器鼓轮分度值 0.01 mm（读 x）；
 #   对连续读数仪器，仪器不确定度取 1/2 分度值，按均匀分布取 C = √3。
-RULER_DIVISION_MM = 1.0      # 光具座分度值 / mm
-DRUM_DIVISION_MM = 0.01      # 探测器鼓轮分度值 / mm
+RULER_DIVISION_MM = None  # 由当前用户仪器参数绑定，无示例兜底
+DRUM_DIVISION_MM = None  # 由当前用户仪器参数绑定，无示例兜底
 
 # 42 个 x 位置，分为 6 个块，每块对应 x 范围和 Excel 列数
 BLOCKS = [
@@ -60,7 +57,7 @@ def _read_data(data: dict):
 
     原实现为 openpyxl 遍历 数据.xlsx 的 6 个横向数据块（x 行 / I 行）与
     底部参数区（L/mm、波长、缝宽），现改为直接读取 schema 定义的 key：
-    x、I、L、lambda_nm、given_a。λ/a 缺省时回退教材给定量（与原逻辑一致）。
+    x、I、L、lambda_nm、given_a。λ/a 必须由当前用户提供，不使用教材兜底。
     """
     x_all = [float(v) for v in data["x"]]
     I_all = [float(v) for v in data["I"]]
@@ -68,8 +65,8 @@ def _read_data(data: dict):
     lambda_val = data.get("lambda_nm")
     given_a_val = data.get("given_a")
     return (x_all, I_all, L_val,
-            lambda_val or LASER_WAVELENGTH_NM,
-            given_a_val or GIVEN_SLIT_WIDTH_MM)
+            float(data["lambda_nm"]),
+            float(data["given_a"]))
 
 
 # ============================================================
@@ -308,6 +305,7 @@ def _compute(x, I, L_mm, lambda_nm, given_a_mm):
 
 def _generate_docx(data: dict, output_path: str):
     """校验 → 读取 data.json 数据 → 计算 → 输出 docx 报告。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
     # 校验必填数据（required 字段为 null 或 array 含 null → 缺失）
     missing = []
     for k in ("L", "x", "I"):
@@ -502,14 +500,14 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_paragraph("B类不确定度：")
     doc.add_paragraph(
-        "光具座底座分度值为 1 mm，探测器鼓轮分度值为 0.01 mm；"
+        f"光具座底座分度值为 {RULER_DIVISION_MM:g} mm，探测器鼓轮分度值为 {DRUM_DIVISION_MM:g} mm；"
         "对连续读数仪器，仪器不确定度取 1/2 分度值，按均匀分布除以 ")
     doc.add_inline_math(r"\sqrt{3}")
     doc.add_run("：")
     doc.add_math(
-        r"\Delta L = \frac{0.5}{\sqrt{3}} \approx "
+        r"\Delta L = \frac{" + format_number(RULER_DIVISION_MM / 2, sig_figs=8) + r"}{\sqrt{3}} \approx "
         + format_number(r["delta_L"], sig_figs=4) + r"\ \mathrm{mm},\quad "
-        r"\Delta x = \frac{0.005}{\sqrt{3}} \approx "
+        r"\Delta x = \frac{" + format_number(DRUM_DIVISION_MM / 2, sig_figs=8) + r"}{\sqrt{3}} \approx "
         + format_number(r["delta_x"], sig_figs=4) + r"\ \mathrm{mm}"
     )
     doc.add_paragraph("暗纹距离 ")

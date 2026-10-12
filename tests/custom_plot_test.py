@@ -16,6 +16,7 @@ import os
 import re
 import sys
 import tempfile
+import shutil
 
 from docx import Document
 
@@ -79,9 +80,17 @@ def run_report(exp, images=None):
             为 None 表示不启用自定义画图（走内置图）。
     """
     mod = load_generator(exp)
-    with open(safe_join(SCRIPTS, exp, "data.json"), encoding="utf-8") as f:
-        data = json.load(f)
+    with open(safe_join(ROOT, "tests", "fixtures", "experiment-data.json"), encoding="utf-8") as f:
+        data = json.load(f)[exp]
     out = safe_join(tempfile.mkdtemp(prefix="custom_plot_"), "report.docx")
+    original_script_dir = mod.SCRIPT_DIR
+    scratch = os.path.dirname(out)
+    for filename in ('schema.json', 'variants.json', 'rag/knowledge.json'):
+        source = os.path.join(original_script_dir, filename)
+        target = os.path.join(scratch, filename)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        if os.path.exists(source): shutil.copy2(source, target)
+    mod.SCRIPT_DIR = scratch
     orig = {k: os.environ.get(k) for k in ("LAB_CUSTOM_PLOT", "LAB_JOB_INPUT")}
     try:
         os.environ.pop("LAB_JOB_INPUT", None)      # 走 legacy 环境变量通路，测试不写任何任务文件
@@ -91,6 +100,7 @@ def run_report(exp, images=None):
             os.environ["LAB_CUSTOM_PLOT"] = json.dumps({"images": images}, ensure_ascii=False)
         mod._generate_docx(data, out)
     finally:
+        mod.SCRIPT_DIR = original_script_dir
         for k, v in orig.items():
             if v is None:
                 os.environ.pop(k, None)

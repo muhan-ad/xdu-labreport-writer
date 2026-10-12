@@ -1,40 +1,41 @@
 {
   "x6": [
-    9.02,
-    8.98,
-    9.05,
-    9.0,
-    8.96,
-    9.03,
-    9.01,
-    8.99
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
   ],
   "x7": [
-    24.03,
-    23.97,
-    24.05,
-    24.0,
-    23.96,
-    24.02,
-    24.01,
-    23.98
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
   ],
-  "u1": 40.0,
+  "u1": null,
   "concave": [
     [
-      24.02,
-      18.0,
-      28.03
+      null,
+      null,
+      null
     ],
     [
-      23.98,
-      18.02,
-      28.1
+      null,
+      null,
+      null
     ],
     [
-      24.05,
-      17.98,
-      27.95
+      null,
+      null,
+      null
     ]
-  ]
+  ],
+  "instrument_delta_instrument": null
 }

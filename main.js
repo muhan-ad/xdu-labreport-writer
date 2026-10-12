@@ -8,6 +8,7 @@ const resourceStore = require('./src/main/resource-store');
 const diagnostics = require('./src/main/diagnostics');
 const atomic = require('./src/main/atomic-store');
 const dataValidation = require('./src/shared/data-validation');
+const reportIntegrity = require('./src/shared/report-integrity');
 const security = require('./src/main/security');
 const network = require('./src/main/network');
 const updatePackage = require('./src/main/update-package');
@@ -131,6 +132,7 @@ const PROJECT_ROOT = findProjectRoot();
 const EXPERIMENTS_DIR = path.join(PROJECT_ROOT, '物理实验', '实验脚本');
 let mainWindow = null;
 const schoolPortal = createSchoolPortal({ electron: require('electron'), root: __dirname, getParent: () => mainWindow,
+  log,
   credentials: createSchoolCredentials(path.join(app.getPath('userData'), 'school-portal'), safeStorage) });
 handle('open-school-portal', () => schoolPortal.open());
 let schoolClipboardQuitting = false;
@@ -250,7 +252,12 @@ listen('app-confirm-close', () => {
 });
 
 if (!app.requestSingleInstanceLock()) { app.exit(0); }
-app.on('second-instance', () => { if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus(); } });
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
+});
 app.whenReady().then(() => {
   log(`app started | packaged=${app.isPackaged} | PROJECT_ROOT=${PROJECT_ROOT} | EXPERIMENTS_DIR=${EXPERIMENTS_DIR}`);
   protocol.handle('labapp', request => {
@@ -741,7 +748,7 @@ handle('read-schema', (_, expPath) => {
 handle('read-sample-data', (_, expPath) => {
   try {
     expPath = experimentPath(expPath);
-    const p = security.inside(path.join(expPath, 'sample.json'), expPath);
+    const p = security.inside(path.join(expPath, 'test-data.json'), expPath);
     if (!fs.existsSync(p)) return { ok: true, data: null };
     return { ok: true, data: atomic.readJson(p) };
   } catch (err) {
@@ -1417,6 +1424,32 @@ handle('show-in-folder', (_, filePath) => {
   } catch (err) {
     return { ok: false, error: err.message };
   }
+});
+
+// Read-only calculation uses the same Python implementation as generation.
+handle('read-calculation-context', async (_, expPath) => {
+  try {
+    expPath = experimentPath(expPath);
+
+    // A newly scanned builtin entry may still point at the installation after writeData
+    // has created the user copy. Always use saved user input when it exists.
+    const userRoot = getDataRoots().udRoot;
+    const saved = security.inside(path.join(userRoot, path.basename(expPath)), userRoot);
+    if (fs.existsSync(saved)) expPath = saved;
+    const isCapacitance = path.basename(expPath) === '电容与高电阻的测量';
+    const script = isCapacitance ? security.inside(path.join(expPath, 'generate.py'), expPath)
+      : security.inside(path.join(path.dirname(expPath), 'common', 'calculation_context.py'), path.dirname(expPath));
+    const context = await new Promise((resolve, reject) => {
+      execFile(resolvePythonExe() || 'python', ['-B', '-X', 'utf8', script, isCapacitance ? '--context' : expPath],
+        { cwd: expPath, windowsHide: true, timeout: 20000, maxBuffer: 512 * 1024,
+          env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' } },
+        (error, stdout, stderr) => {
+          if (error) return reject(Error((stderr || error.message).slice(-2000)));
+          try { resolve(JSON.parse(stdout)); } catch (_) { reject(Error('计算上下文格式无效')); }
+        });
+    });
+    return { ok: true, data: context };
+  } catch (err) { return { ok: false, error: err.message }; }
 });
 
 // ── IPC: 读取实验知识库(原理) —— AI 润色限定依据 ──
@@ -2176,7 +2209,15 @@ handle('run-generate', async (event, expPath, studentInfo, variants, polish, emb
     if (studentInfo.class) env.LAB_STUDENT_CLASS = studentInfo.class;
     if (studentInfo.date) env.LAB_STUDENT_DATE = studentInfo.date;
   }
-  const dataPhoto = embedDataPhoto ? findDataPhoto(expPath) : null;
+  const savedInput = atomic.readJson(path.join(expPath, 'data.json'));
+  if (polish && Object.keys(polish).length) {
+    const snapshot = polish.__sourceData;
+    if (!snapshot || !reportIntegrity.sameData(snapshot, savedInput))
+      throw Error('润色内容对应的测量数据已改变或缺少来源记录，请重新润色后导入');
+    polish = Object.fromEntries(Object.entries(polish).filter(([key]) => key !== '__sourceData'));
+  }
+  const sourcePhoto = embedDataPhoto ? findDataPhoto(expPath) : null;
+  const dataPhoto = sourcePhoto ? require('./src/main/report-photo').prepareReportPhoto(sourcePhoto, path.join(app.getPath('userData'), 'report-photo-cache'), require('electron').nativeImage) : null;
   if (dataPhoto) env.LAB_DATA_PHOTO = dataPhoto;
   else delete env.LAB_DATA_PHOTO;
   const jobInput = JSON.stringify({
@@ -2912,7 +2953,7 @@ handle('ai-chat', async (event, params) => {
     return { ok: true, content, usage: undefined };
   } catch (e) {
     outcome = controller.signal.aborted ? '已取消' : '失败: ' + e.message;
-    return { ok: false, cancelled: controller.signal.aborted, error: controller.signal.aborted ? '已取消生成' : e.message };
+    return { ok: false, cancelled: controller.signal.aborted, error: controller.signal.aborted ? '已取消生成' : (/aborted|ECONNRESET|premature close|terminated|socket hang up/i.test(String(e.code || '') + ' ' + e.message) ? 'AI 响应连接中断，未取得完整回答，请稍后重试（原始错误：' + e.message + '）' : e.message) };
   } finally {
     disarmStall();
     // 排查用：一次请求一行。之前这条链路完全没有日志，出问题（如响应异常偏大/模型空转）无从查证。
@@ -3025,4 +3066,28 @@ handle('section-importable', async (_, expPath, section) => {
   } catch (err) {
     return { ok: false, error: err.message };
   }
+});
+
+// Dedicated IPC routes keep credentials out of renderer history storage.
+const polishHistoryStore = require('./src/main/polish-history').createHistory(app.getPath('userData'));
+let modelDiscoveryBusy = false;
+handle('fetch-api-models', async (_, params) => {
+  if (modelDiscoveryBusy) return {ok:false,error:'正在获取模型，请稍候'};
+  if (!params || typeof params !== 'object' || Buffer.byteLength(JSON.stringify(params)) > 65536) return {ok:false,error:'API 配置无效'};
+  modelDiscoveryBusy = true;
+  try {
+    return await require('./src/main/api-models').fetchModels(params, {endpoint:aiEndpoint,getKey:base=>keyStore.get(base),network});
+  } finally { modelDiscoveryBusy = false; }
+});
+handle('polish-history', (_, action, payload) => {
+  if (Buffer.byteLength(JSON.stringify(payload || {})) > 8*1024*1024) throw Error('润色记录请求过大');
+  return polishHistoryStore.run(action,payload);
+});
+let apiTestBusy = false;
+handle('test-api', async (_, params) => {
+  if (apiTestBusy) return {ok:false,error:'连接测试正在进行'};
+  if (!params || Buffer.byteLength(JSON.stringify(params)) > 65536) return {ok:false,error:'测试配置无效'};
+  apiTestBusy=true;
+  try { return await require('./src/main/api-test').testApi(params,{endpoint:aiEndpoint,defaultModel:provider=>(AI_PROVIDERS[provider] || AI_PROVIDERS.custom).model,getKey:base=>keyStore.get(base),network}); }
+  finally {apiTestBusy=false;}
 });

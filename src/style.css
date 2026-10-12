@@ -3047,3 +3047,13 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   from { transform: translate(-50%, -50%) scale(.92); opacity: 0; }
   to   { transform: translate(-50%, -50%) scale(1); opacity: 1; }
 }
+/* Full polish text stays inside the manager, including unbroken formulas. */
+.polish-history-entry { border:1px solid var(--border, #ddd); border-radius:8px; padding:12px; margin:8px 0; }
+.polish-history-entry summary { cursor:pointer; overflow-wrap:anywhere; }
+.polish-history-entry pre { white-space:pre-wrap; overflow-wrap:anywhere; max-height:360px; overflow:auto; font:inherit; }
+#apiTestStatus { display:block; margin-top:8px; }
+#selectDiscoveredModel { margin-top:8px; max-width:100%; }
+
+/* Common parameter presets require explicit selection; keep labels readable. */
+.form-field-number:has(.parameter-presets) { flex-wrap: wrap; }
+.form-field-number .parameter-presets { width: 220px; max-width: 100%; }

@@ -24,12 +24,12 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
-from common.data_io import load_data
+from common.data_io import load_data, bind_input_parameters
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
 
 # ── 物理常数与仪器参数（按教材与讲义） ──
-DELTA_INSTRUMENT = 0.05          # cm, Δ_仪 = 0.5 × 0.1 cm（钢尺/光具座最小分度 0.1 cm）
+DELTA_INSTRUMENT = None  # 由当前用户仪器参数绑定，无示例兜底
 
 
 # 逐项展开的上限：超过这个项数就改代入「求和值」。
@@ -83,6 +83,7 @@ def _equal_precision(values: list[float]) -> dict:
 
 def _compute(data: dict) -> dict:
     """数据处理：两种测量的结果与不确定度，返回数值字典（正文与变体章节共用）。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
 
     # ── 取出原始数据 ──
     x6 = [float(v) for v in data["x6"]]                # 自准法：凹透镜位置（距凸透镜）
@@ -123,6 +124,7 @@ def _compute(data: dict) -> dict:
 
 def _generate_docx(data: dict, output_path: str):
     """从 data.json 读取数据，计算并生成 Word 实验报告。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
 
     # ═══════════════════════════════════════════
     # 1. 读取数据（含必填空值校验）
@@ -266,10 +268,10 @@ def _generate_docx(data: dict, output_path: str):
         rf" = {uA_ca:.5f} \approx {uA_ca:.3f} \mathrm{{cm}}"
     )
     doc.add_paragraph("B类不确定度：")
-    doc.add_math(r"\Delta_{\text{仪}} = 0.5 \times 0.1 = 0.05 \mathrm{cm}")
+    doc.add_math(rf"\Delta_{{\text{{仪}}}} = {DELTA_INSTRUMENT:g} \mathrm{{cm}}")
     doc.add_math(
         rf"\Delta \left|f\right|_B = \frac{{\Delta_{{\text{{仪}}}}}}{{\sqrt{{3}}}}"
-        rf" = \frac{{0.05}}{{\sqrt{{3}}}} = {uB_ca:.5f} \approx {uB_ca:.3f} \mathrm{{cm}}"
+        rf" = \frac{{{DELTA_INSTRUMENT:g}}}{{\sqrt{{3}}}} = {uB_ca:.5f} \approx {uB_ca:.3f} \mathrm{{cm}}"
     )
     doc.add_paragraph("合成不确定度：")
     doc.add_math(
@@ -386,7 +388,7 @@ def _generate_docx(data: dict, output_path: str):
                           "观察选定边缘的锐利程度，取其最清晰处为该次成像位置。"
                           "这样比笼统地看“像是否清晰”更容易复现，可减小判读的偶然误差。")
         doc.add_paragraph("放大像与缩小像的位置判断：")
-        doc.add_paragraph("(1) 缩小像：物距大于二倍焦距（本实验凸透镜距物屏 40.00 cm 左右），"
+        doc.add_paragraph("(1) 缩小像：物距大于二倍焦距，"
                           "像成在透镜另一侧一倍焦距与二倍焦距之间，像的尺寸小于物，边缘较锐利，易于判读；")
         doc.add_paragraph("(2) 放大像：插入凹透镜后移动凹透镜与像屏，使光束进一步会聚，"
                           "像的尺寸变大、亮度降低、边缘变软，需要更仔细地前后逼近才能确定位置。")

@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import tempfile
+import shutil
 
 from docx import Document
 
@@ -85,10 +86,18 @@ def run_report(exp, polish=None, variants_patch=None, custom_quiz=None):
     from common import variants as variants_mod
 
     mod = load_generator(exp)
-    data_path = safe_join(SCRIPTS, exp, "data.json")
+    data_path = safe_join(ROOT, "tests", "fixtures", "experiment-data.json")
     with open(data_path, encoding="utf-8") as f:
-        data = json.load(f)
+        data = json.load(f)[exp]
     out = os.path.join(tempfile.mkdtemp(prefix="quiz_polish_"), "report.docx")
+    original_script_dir = mod.SCRIPT_DIR
+    scratch = os.path.dirname(out)
+    for filename in ('schema.json', 'variants.json', 'rag/knowledge.json'):
+        source = os.path.join(original_script_dir, filename)
+        target = os.path.join(scratch, filename)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        if os.path.exists(source): shutil.copy2(source, target)
+    mod.SCRIPT_DIR = scratch
     orig_load = variants_mod.load_variants
     orig_env = {k: os.environ.get(k) for k in ("LAB_POLISH", "LAB_JOB_INPUT", "LAB_CUSTOM_QUIZ")}
     try:
@@ -105,6 +114,7 @@ def run_report(exp, polish=None, variants_patch=None, custom_quiz=None):
             os.environ["LAB_POLISH"] = json.dumps(polish, ensure_ascii=False)
         mod._generate_docx(data, out)
     finally:
+        mod.SCRIPT_DIR = original_script_dir
         variants_mod.load_variants = orig_load
         for k, v in orig_env.items():
             if v is None:
@@ -147,7 +157,7 @@ def polished_text(questions):
     lines = ["思考题"]
     for i, q in enumerate(questions, 1):
         lines.append(q)
-        lines.append("答：整段润色回答%d。" % i)
+        lines.append("答：整段润色回答%s。" % chr(0x7531+i))
     return "\n".join(lines)
 
 
@@ -170,7 +180,7 @@ def main():
             n = text.count(q)
             if n != 1:
                 problems.append("%s：题目「%s」出现 %d 次（应为 1）" % (exp, q[:28], n))
-            ans = "整段润色回答%d。" % i
+            ans = "整段润色回答%s。" % chr(0x7531+i)
             if text.count(ans) != 1:
                 problems.append("%s：润色回答 %d 出现 %d 次（应为 1）" % (exp, i, text.count(ans)))
         lost = [h for h in heads if h not in section_heads(out)]
@@ -185,7 +195,7 @@ def main():
 
     text = docx_text(run_report(exp, polish={"思考题": polished_text(qs)}))
     cases.append(("整段覆盖：题目各 1 次", all(text.count(q) == 1 for q in qs)))
-    cases.append(("整段覆盖：润色答案各 1 次", all(text.count("整段润色回答%d。" % i) == 1 for i in range(1, len(qs) + 1))))
+    cases.append(("整段覆盖：润色答案各 1 次", all(text.count("整段润色回答%s。" % chr(0x7531+i)) == 1 for i in range(1, len(qs) + 1))))
     cases.append(("整段覆盖：不再出现硬编码兜底答案", "相同：都是基于声波在空气中传播的原理进行测量" not in text))
 
     text = docx_text(run_report(exp, variants_patch={"思考题": {"1": ["按问回答一"], "2": ["按问回答二"]}}))

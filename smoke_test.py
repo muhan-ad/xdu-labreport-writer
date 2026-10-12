@@ -60,7 +60,7 @@ def main():
         miss = "?"
         try:
             sch = json.load(open(os.path.join(ed, "schema.json"), encoding="utf-8"))
-            dat = json.load(open(os.path.join(ed, "data.json"), encoding="utf-8"))
+            dat = json.load(open(os.path.join(ROOT, "tests", "fixtures", "experiment-data.json"), encoding="utf-8"))[d]
             v = validate(sch, dat)
             miss = len(v["missing"])
             if miss:

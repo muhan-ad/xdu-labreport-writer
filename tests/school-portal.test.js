@@ -4,15 +4,32 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const path = require('node:path');
 const { createSchoolPortal, allowedUrl, SCHOOL_URL, PARTITION, TOOLBAR_HEIGHT } = require('../src/main/school-portal');
+const { blockedTarget } = require('../src/main/school-systems');
+
+test('blocked address diagnostics omit credentials, query tokens and fragment contents', () => {
+  assert.equal(blockedTarget('https://alice:secret@example.com:8080/preview?token=SECRET#PASSWORD'), 'https://example.com:8080/preview');
+  assert.equal(blockedTarget('javascript:alert("SECRET")'), 'javascript:');
+  assert.equal(blockedTarget('data:text/plain,SECRET'), 'data:');
+  assert.equal(blockedTarget('invalid SECRET'), '无效地址');
+});
+
+test('blocked virtual subframe reports its safe target without hiding the current page', async () => {
+  const h = harness(); await h.portal.open();
+  let prevented = false;
+  h.views[0].webContents.emit('will-frame-navigate', {url:'https://other.example/preview?token=SECRET', isMainFrame:false, preventDefault(){prevented=true;} });
+  assert.equal(prevented, true);
+  assert.deepEqual(h.windows[0].webContents.messages.filter(m=>m[0]==='school-portal-blocked').at(-1), ['school-portal-blocked','https://other.example/preview']);
+  assert.equal(h.views[0].visible, true);
+});
 
 function harness() {
-  const windows = [], views = [], ipc = new Map(), dialogs = [], operations = [];
-  let saved = null, copied = null;
+  const windows = [], views = [], ipc = new Map(), dialogs = [], operations = [], external = [];
+  const saved = new Map(); let copied = null;
   const credentials = {
-    status: async () => ({ configured: !!saved, available: true }),
-    save: async value => { saved = { ...value }; return { configured: true, available: true }; },
-    get: async () => { if (!saved) throw Error('请先在账号密码管理中保存账号和密码'); return { ...saved }; },
-    remove: () => { saved = null; return { configured: false }; },
+    status: async (id = 'report') => ({ configured: saved.has(id), available: true }),
+    save: async (value, id = 'report') => { saved.set(id, { ...value }); return { configured: true, available: true }; },
+    get: async (id = 'report') => { if (!saved.has(id)) throw Error('请先在账号密码管理中保存账号和密码'); return { ...saved.get(id) }; },
+    remove: (id = 'report') => { saved.delete(id); return { configured: false }; },
   };
   const credentialClipboard = { write: async value => { copied = value; }, clearOwned: async () => { copied = null; }, hasOwned: () => !!copied };
   const ses = new EventEmitter();
@@ -30,7 +47,7 @@ function harness() {
     isDestroyed() { return this.destroyed; }
     getURL() { return this.url; }
     isLoading() { return false; }
-    async executeJavaScriptInIsolatedWorld() { return { filled: true }; }
+    async executeJavaScriptInIsolatedWorld(_, scripts) { return scripts[0].code.includes(',true,') ? { ready: true } : { filled: true }; }
     async loadURL(url) { this.url = url; this.mainFrame.url = url; operations.push(url); }
     setWindowOpenHandler(fn) { this.popup = fn; }
     send(...args) { this.messages.push(args); }
@@ -44,6 +61,7 @@ function harness() {
     loadURL(url) { return this.webContents.loadURL(url); }
     isDestroyed() { return !!this.destroyed; }
     isMinimized() { return false; }
+    show() { this.visible = true; }
     focus() { this.focused = true; }
     close() { this.destroyed = true; this.emit('closed'); }
   }
@@ -54,14 +72,14 @@ function harness() {
   }
   let decision = async () => ({ response: 0 });
   const portal = createSchoolPortal({ root: path.join(__dirname, '..'), getParent: () => ({ isDestroyed: () => false }), credentials, credentialClipboard,
-    electron: { BrowserWindow: Window, WebContentsView: View,
+    electron: { BrowserWindow: Window, WebContentsView: View, shell: { openExternal: async url => external.push(url) },
       session: { fromPartition: partition => { assert.equal(partition, PARTITION); return ses; } },
       dialog: { showMessageBox: async (_, opts) => { dialogs.push(opts); return decision(opts); } },
       ipcMain: { handle: (key, fn) => ipc.set(key, fn) } } });
   const action = (name, event, payload) => ipc.get('school-portal-action')(event || {
     sender: windows.at(-1).webContents, senderFrame: windows.at(-1).webContents.mainFrame }, name, payload);
   const status = () => windows.at(-1).webContents.messages.filter(m => m[0] === 'school-portal-state').at(-1)[1];
-  return { portal, windows, views, ses, dialogs, operations, action, status, credentials, copied: () => copied, decide: fn => { decision = fn; } };
+  return { portal, windows, views, ses, dialogs, operations, external, action, status, credentials, copied: () => copied, decide: fn => { decision = fn; } };
 }
 
 test('school URL whitelist rejects local, lookalike and credential-bearing addresses', () => {
@@ -72,17 +90,17 @@ test('school URL whitelist rejects local, lookalike and credential-bearing addre
   assert.ok(!PARTITION.startsWith('persist:'));
 });
 
-test('HTTP warning defaults to cancel, cancellation creates no window', async () => {
+test('school opens directly without a confirmation dialog', async () => {
   const h = harness(); h.decide(async () => ({ response: 1 }));
-  assert.equal((await h.portal.open()).cancelled, true);
-  assert.equal(h.windows.length, 0);
-  assert.equal(h.dialogs[0].defaultId, 1);
+  assert.equal((await h.portal.open()).ok, true);
+  assert.equal(h.windows.length, 1);
+  assert.equal(h.dialogs.length, 0);
 });
 
-test('simultaneous open requests create only one warning and isolated window', async () => {
+test('simultaneous open requests create one isolated window without dialogs', async () => {
   const h = harness();
   await Promise.all([h.portal.open(), h.portal.open()]);
-  assert.equal(h.windows.length, 1); assert.equal(h.dialogs.length, 1);
+  assert.equal(h.windows.length, 1); assert.equal(h.dialogs.length, 0);
   assert.equal((await h.portal.open()).reused, true);
   const prefs = h.views[0].options.webPreferences;
   assert.equal(prefs.nodeIntegration, false); assert.equal(prefs.contextIsolation, true);
@@ -138,15 +156,16 @@ test('clear login stops page before clearing only the dedicated session', async 
   assert.equal(h.status().clearing, false);
 });
 
-test('clear login cancellation preserves storage and prevents simultaneous confirmations', async () => {
+test('clear login executes directly and prevents simultaneous clearing', async () => {
   const h = harness(); await h.portal.open(); h.operations.length = 0;
   let resolve;
-  h.decide(() => new Promise(done => { resolve = done; }));
+  h.ses.clearStorageData = () => new Promise(done => { resolve = done; });
   const pending = h.action('clear-login');
+  await new Promise(done => setImmediate(done));
   assert.equal(h.status().clearing, true);
   assert.equal((await h.action('clear-login')).ok, false);
-  resolve({ response: 1 }); assert.equal((await pending).cancelled, true);
-  assert.deepEqual(h.operations, []); assert.equal(h.status().clearing, false);
+  resolve(); assert.equal((await pending).ok, true);
+  assert.equal(h.dialogs.length, 0); assert.equal(h.status().clearing, false);
 });
 
 test('closing window destroys remote contents and late old events do not corrupt new window', async () => {
@@ -158,10 +177,9 @@ test('closing window destroys remote contents and late old events do not corrupt
   assert.equal(h.status().error, ''); assert.equal(h.windows.length, 2);
 });
 
-test('credential manager requires confirmation, hides remote view and never returns plaintext', async () => {
+test('credential manager opens directly, hides remote view and never returns plaintext', async () => {
   const h = harness(); await h.portal.open();
   h.decide(async () => ({ response: 1 }));
-  assert.equal((await h.action('manage-credentials')).cancelled, true); assert.equal(h.views[0].visible, true);
   assert.equal((await h.action('save-credentials', null, { username: 'test', password: 'secret' })).ok, false);
   h.decide(async () => ({ response: 0 }));
   assert.equal((await h.action('manage-credentials')).ok, true); assert.equal(h.views[0].visible, false);
@@ -170,25 +188,126 @@ test('credential manager requires confirmation, hides remote view and never retu
   assert.deepEqual(await h.action('credential-status'), { ok: true, configured: true, available: true });
   await h.action('close-credentials'); assert.equal(h.views[0].visible, true);
   assert.equal((await h.action('get-credentials')).ok, false);
+  assert.equal((await h.action('delete-credentials')).ok, true);
+  assert.equal(h.dialogs.length, 0);
 });
 
-test('copy/fill require separate native confirmation and never return secrets over IPC', async () => {
+test('copy/fill execute without dialogs and never return secrets over IPC', async () => {
   const h = harness(); await h.portal.open(); await h.credentials.save({ username: 'TEST_ACCOUNT', password: 'TEST_PASSWORD' });
   h.decide(async () => ({ response: 1 }));
-  assert.equal((await h.action('copy-password')).cancelled, true); assert.equal(h.copied(), null);
   h.decide(async () => ({ response: 0 }));
   const copied = await h.action('copy-password'); assert.equal(copied.ok, true); assert.equal(h.copied(), 'TEST_PASSWORD');
   assert.doesNotMatch(JSON.stringify(copied), /TEST_PASSWORD/);
   const filled = await h.action('autofill'); assert.equal(filled.ok, true); assert.doesNotMatch(JSON.stringify(filled), /TEST_ACCOUNT|TEST_PASSWORD/);
+  assert.equal((await h.action('copy-account')).ok, true); assert.equal(h.copied(), 'TEST_ACCOUNT');
+  assert.equal(h.dialogs.length, 0);
   const remote = h.views[0].webContents;
   assert.equal((await h.action('copy-password', { sender: remote, senderFrame: remote.mainFrame })).ok, false);
 });
 
-test('navigation during confirmation prevents autofill and errors do not expose credential exceptions', async () => {
+test('navigation while reading credentials prevents autofill and errors do not expose secrets', async () => {
   const h = harness(); await h.portal.open(); await h.credentials.save({ username: 'test', password: 'secret' });
-  h.decide(async () => { h.views[0].webContents.emit('did-start-navigation', { isMainFrame: true, isInPlace: false }); return { response: 0 }; });
+  h.credentials.get = async () => { h.views[0].webContents.emit('did-start-navigation', { isMainFrame: true, isInPlace: false }); return {username:'test',password:'secret'}; };
   assert.equal((await h.action('autofill')).ok, false);
   h.decide(async () => ({ response: 0 }));
   h.credentials.get = async () => { throw Error('secret test leaked by native error'); };
   assert.doesNotMatch(JSON.stringify(await h.action('copy-password')), /secret|leaked/);
+});
+
+
+test('four systems switch by trusted IDs, update current home and reject arbitrary URLs', async () => {
+  const h = harness(); await h.portal.open();
+  const { SYSTEMS } = require('../src/main/school-systems');
+  assert.equal(h.status().systems.length, 4);
+  for (const system of SYSTEMS) {
+    if(['simulation','exam'].includes(system.id)) {
+      const previous=h.status().systemId,previousUrl=h.views[0].webContents.getURL();
+      const result=await h.action('switch-system',null,{systemId:system.id});
+      assert.equal(result.ok,true);assert.equal(result.external,true);
+      assert.equal(h.external.at(-1),system.url);assert.equal(h.status().systemId,previous);
+      assert.equal(h.views[0].webContents.getURL(),previousUrl);continue;
+    }
+    assert.equal((await h.action('switch-system', null, { systemId: system.id })).ok, true);
+    assert.equal(h.status().systemId, system.id);assert.equal(h.views[0].webContents.getURL(), system.url);
+    await h.action('home');assert.equal(h.views[0].webContents.getURL(),system.url);
+    await h.action('clear-login');assert.equal(h.views[0].webContents.getURL(),system.url);
+  }
+  assert.equal((await h.action('switch-system', null, {systemId:'http://evil.test/'})).ok,false);
+  assert.equal((await h.action('switch-system', null, {})).ok,false);
+});
+test('credential actions are scoped to selected system and cannot switch during manager', async () => {
+  const h=harness();await h.portal.open();await h.credentials.save({username:'report-test',password:'report-secret'},'report');
+  await h.action('switch-system',null,{systemId:'course'});
+  assert.equal((await h.action('credential-status')).configured,false);
+  assert.equal((await h.action('copy-password')).ok,false);
+  await h.action('manage-credentials');assert.equal((await h.action('switch-system',null,{systemId:'report'})).ok,false);
+  await h.action('save-credentials',null,{username:'virtual-test',password:'virtual-secret'});await h.action('close-credentials');
+  assert.equal((await h.action('autofill')).ok,true);
+  await h.action('delete-credentials');await h.action('switch-system',null,{systemId:'report'});
+  assert.equal((await h.action('copy-password')).ok,true);assert.equal(h.copied(),'report-secret');
+});
+test('approved popups preserve window semantics and school downloads use a Save dialog',async()=>{
+  const h=harness();await h.portal.open();const remote=h.views[0].webContents;
+  const popup=remote.popup({url:'https://wlxnfzsy.xidian.edu.cn/experiment'});
+  assert.equal(popup.action,'allow');assert.equal(popup.overrideBrowserWindowOptions.webPreferences.sandbox,true);
+  assert.equal(popup.overrideBrowserWindowOptions.webPreferences.nodeIntegration,false);
+  let prevented=false,options;
+  h.ses.emit('will-download',{preventDefault(){prevented=true}},{getURL:()=>SCHOOL_URL,setSaveDialogOptions(value){options=value}},remote);
+  assert.equal(prevented,false);assert.match(options.title,/保存/);
+});
+test('ambiguous or foreign login frames are not filled and frame navigation invalidates pending fill',async()=>{
+  const h=harness();await h.portal.open();await h.credentials.save({username:'test',password:'secret'});
+  const remote=h.views[0].webContents;let filled=0;
+  const frame={url:SCHOOL_URL,executeJavaScriptInIsolatedWorld:async(_,scripts)=>scripts[0].code.includes(',true,')?{ready:true}:(filled++,{filled:true})};
+  remote.mainFrame.framesInSubtree=[frame,{...frame}];assert.equal((await h.action('autofill')).ok,false);assert.equal(filled,0);
+  remote.mainFrame.framesInSubtree=[{...frame,url:'https://wlxnfzsy.xidian.edu.cn/'}];assert.equal((await h.action('autofill')).ok,false);
+  remote.mainFrame.framesInSubtree=[frame];remote.executeJavaScriptInIsolatedWorld=async()=>{remote.emit('did-start-navigation',{isMainFrame:false});return {ready:true}};
+  assert.equal((await h.action('autofill')).ok,false);assert.equal(filled,0);
+});
+test('only observed public CDN assets are allowed, never CDN navigation or plaintext simulation',()=>{
+  const {allowedRequest,systemForUrl}=require('../src/main/school-systems');
+  assert.equal(allowedUrl('https://wlxnfzsy.xidian.edu.cn/'),true);assert.equal(allowedUrl('http://wlxnfzsy.xidian.edu.cn/'),false);
+  assert.equal(systemForUrl('http://wlsy.xidian.edu.cn/PhyEws/default.aspx').id,'course');
+  assert.equal(allowedRequest({url:'https://cdn.falconsistemas.com.br/falcon/js/iziToast.min.js',resourceType:'script'}),true);
+  assert.equal(allowedRequest({url:'https://cdn.falconsistemas.com.br/falcon/js/iziToast.min.js',resourceType:'mainFrame'}),false);
+  assert.equal(allowedRequest({url:'http://localhost/x.js',resourceType:'script'}),false);
+});
+
+test('observed virtual preview site permits frames, requests and popups without becoming a credential target', async () => {
+  const {allowedRequest,systemForUrl}=require('../src/main/school-systems');
+  const target='https://wlsytest.xidian.edu.cn/Student/SNotice/';
+  assert.equal(allowedUrl(target),true);
+  assert.equal(allowedRequest({url:target,resourceType:'subFrame'}),true);
+  assert.equal(allowedRequest({url:'https://wlsytest.xidian.edu.cn/Content/site.css',resourceType:'stylesheet'}),true);
+  assert.equal(systemForUrl(target),null);
+  for(const bad of ['http://wlsytest.xidian.edu.cn/','https://wlsytest.xidian.edu.cn.evil.test/','https://evil.wlsytest.xidian.edu.cn/','https://wlsytest.xidian.edu.cn:8443/','https://u:p@wlsytest.xidian.edu.cn/'])assert.equal(allowedUrl(bad),false);
+  const h=harness();await h.portal.open();await h.action('switch-system',null,{systemId:'simulation'});
+  const contents=h.views[0].webContents;
+  let prevented=false;
+  contents.emit('will-frame-navigate',{url:target,isMainFrame:false,preventDefault(){prevented=true}});
+  contents.emit('will-redirect',{url:target,isMainFrame:false,preventDefault(){prevented=true}});
+  assert.equal(prevented,false);assert.equal(contents.popup({url:target}).action,'allow');
+  await h.credentials.save({username:'fixture',password:'secret'},'simulation');
+  contents.url=target; contents.mainFrame.url=target;
+  let injected=false;contents.executeJavaScriptInIsolatedWorld=async()=>{injected=true;return {filled:true}};
+  assert.equal((await h.action('autofill')).ok,false);assert.equal(injected,false);
+});
+
+test('observed simulation remote login and content load without receiving saved portal credentials', async () => {
+  const {allowedRequest,systemForUrl}=require('../src/main/school-systems');
+  const urls=['https://wlsyinfo.xidian.edu.cn/Login/RemoteUserLogin','https://wlsyinfo.xidian.edu.cn/ReportStudent/SStartPage/'];
+  const h=harness();await h.portal.open();await h.action('switch-system',null,{systemId:'simulation'});
+  const remote=h.views[0].webContents;let prevented=0;
+  for(const url of urls){
+    assert.equal(allowedUrl(url),true);assert.equal(systemForUrl(url),null);
+    for(const resourceType of ['mainFrame','subFrame','xhr','script','stylesheet'])assert.equal(allowedRequest({url,resourceType}),true);
+    remote.emit('will-frame-navigate',{url,isMainFrame:false,preventDefault(){prevented++}});
+    remote.emit('will-redirect',{url,isMainFrame:false,preventDefault(){prevented++}});
+    assert.equal(remote.popup({url}).action,'allow');
+  }
+  assert.equal(prevented,0);
+  for(const url of ['http://wlsyinfo.xidian.edu.cn/','https://wlsyinfo.xidian.edu.cn:8080/','https://wlsyinfo.xidian.edu.cn.evil.test/','https://u:p@wlsyinfo.xidian.edu.cn/'])assert.equal(allowedUrl(url),false);
+  await h.credentials.save({username:'fixture',password:'secret'},'simulation');remote.url=urls[1];remote.mainFrame.url=urls[1];
+  let injected=false;remote.executeJavaScriptInIsolatedWorld=async()=>{injected=true;return {filled:true}};
+  assert.equal((await h.action('autofill')).ok,false);assert.equal(injected,false);
 });

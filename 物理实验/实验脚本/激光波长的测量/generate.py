@@ -8,21 +8,17 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
-from common.data_io import load_data
+from common.data_io import load_data, bind_input_parameters
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
 
 # ── 物理常数与仪器参数（按教材 + 范例） ──
-LAMBDA_0_MM = 632.8e-6          # He-Ne 激光标准波长 mm（632.8 nm）
-DELTA_INST_MM = 5e-5            # 微调手轮 Δ仪 (mm)，可估读到 1e-5 mm
-DELTA_INST_STR = r"5 \times 10^{-5}"  # Δ仪 在公式中的显示形式
-N_ROWS = 8                      # 测量次数（教材表3-12-1）
+DELTA_INST_MM = None  # 由当前用户仪器参数绑定，无示例兜底
+DELTA_INST_STR = ""  # 格式化当前用户仪器参数
 
 # t_0.683 因子表（n ≤ 6 时使用；n > 6 时按范例取 t = 1）
-T_TABLE = {2: 1.84, 3: 1.32, 4: 1.20, 5: 1.14, 6: 1.11}
 
 # 预填已知量（教材实验步骤，用户可按实际修改）
-N_FRINGES = 50                  # 冒出（缩进）条纹数 N
 
 
 # （方式三：_create_template 已移除，数据真相为 data.json）
@@ -46,6 +42,12 @@ def _compute(data: dict) -> dict:
 
     %%DATA:key%% 占位符仅能引用本函数返回的键。
     """
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
+    globals()["DELTA_INST_STR"] = format(DELTA_INST_MM, ".7g")
+    lambda0_nm = data.get("lambda0_nm")
+    if isinstance(lambda0_nm, bool) or not isinstance(lambda0_nm, (int, float)) or not math.isfinite(lambda0_nm) or lambda0_nm <= 0:
+        raise ValueError("激光标称波长 λ₀：请填写有限正数（nm）")
+    lambda0_mm = lambda0_nm * 1e-6
     measurements = [[float(v) for v in row] for row in data["measurements"]]
     l1_vals = [row[0] for row in measurements]
     l2_vals = [row[1] for row in measurements]
@@ -70,7 +72,7 @@ def _compute(data: dict) -> dict:
     # d 的不确定度（一律用剔除坏值后的保留数据评定）
     s_val = ot["std"] if n > 1 else 0.0
     sum_sq_d = sum((x - d_bar) ** 2 for x in d_kept)
-    t_a = 1.0 if n > 6 else T_TABLE.get(n, 1.0)      # A 类评定用的 t（n > 6 取 1）
+    t_a = t_factor(n)      # A 类评定用的 t（n > 6 取 1）
     t_crit = t_factor(n)                             # 3σ 坏值判据用的 t_0.683
     u_A = t_a * s_val / math.sqrt(n) if n > 1 else 0.0
     u_B = type_b(DELTA_INST_MM, "uniform")
@@ -78,11 +80,11 @@ def _compute(data: dict) -> dict:
 
     # 波长、相对误差与波长不确定度
     lam_bar = 2 * d_bar / N
-    eta = abs(LAMBDA_0_MM - lam_bar) / LAMBDA_0_MM * 100
+    eta = abs(lambda0_mm - lam_bar) / lambda0_mm * 100
     u_lam = 2 * u_d / N
     lam_str, u_lam_str = _round_result(lam_bar, u_lam)
-    bias_word = "偏大" if lam_bar > LAMBDA_0_MM else "偏小"
-    in_range = abs(lam_bar - LAMBDA_0_MM) <= u_lam
+    bias_word = "偏大" if lam_bar > lambda0_mm else "偏小"
+    in_range = abs(lam_bar - lambda0_mm) <= u_lam
 
     return {
         "measurements": measurements, "l1_vals": l1_vals, "l2_vals": l2_vals,
@@ -94,7 +96,7 @@ def _compute(data: dict) -> dict:
         "lam_bar": lam_bar, "eta": eta, "u_lam": u_lam,
         "lam_str": lam_str, "u_lam_str": u_lam_str,
         "bias_word": bias_word, "in_range": in_range,
-        "lambda0_nm": LAMBDA_0_MM * 1e6,
+        "lambda0_nm": lambda0_mm * 1e6,
         "lam_bar_nm": lam_bar * 1e6, "u_lam_nm": u_lam * 1e6,
         # 变体文本只能写固定格式（%.5f / %.2e 会写成 4.04e-05 这种机器计数法，
         # 也无法保证末位与不确定度对齐），故在此预格式化，变体用 %s 引用
@@ -105,6 +107,8 @@ def _compute(data: dict) -> dict:
 
 def _generate_docx(data: dict, output_path: str):
     """从 data.json 读取数据，计算并生成 Word 实验报告。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
+    globals()["DELTA_INST_STR"] = format(DELTA_INST_MM, ".7g")
 
     # ═══════════════════════════════════════════════
     # 1. 读取数据（含空值校验）
@@ -264,8 +268,8 @@ def _generate_docx(data: dict, output_path: str):
         r" \approx " + f"{lam_bar:.8f}" + r"\,\mathrm{mm}"
     )
 
-    doc.add_paragraph("与标准值 ")
-    doc.add_inline_math(r"\lambda_{0} = 632.8\,\mathrm{nm}")
+    doc.add_paragraph("与本次光源标称值 ")
+    doc.add_inline_math(rf"\lambda_{{0}} = {r['lambda0_nm']:g}\,\mathrm{{nm}}")
     doc.add_run(" 比较，相对误差为：")
     doc.add_math(
         r"\eta = \frac{|\lambda_{0} - \overline{\lambda}|}{\lambda_{0}}"

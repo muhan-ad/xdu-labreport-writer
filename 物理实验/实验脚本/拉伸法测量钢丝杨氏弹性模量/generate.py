@@ -16,15 +16,15 @@ from common import *
 from common.docx_report import DocxReportWriter
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
-from common.data_io import load_data
+from common.data_io import load_data, bind_input_parameters
 
-T_FACTOR = [0, 0, 1.84, 1.32, 1.2, 1.14, 1.11, 1.09, 1.08]
-G = 9.8  # smartlab_g
+DELTA_L_M = DELTA_H_M = DELTA_D_MM = None
+G = None  # 由当前用户仪器参数绑定，无示例兜底
 
 
 def smartlab_ua(data):
     n = len(data)
-    t = T_FACTOR[n] if n < len(T_FACTOR) else 1.0
+    t = t_factor(n)
     mean_val = sum(data) / n
     variance = sum((x - mean_val) ** 2 for x in data) / ((n - 1) * n)
     return t * math.sqrt(variance)
@@ -41,14 +41,14 @@ def get_n_d(arr):
 
 
 # ── 示例数据（计算器 default）──
-NI_ZHENG_DEFAULT = [2.06, 2.70, 3.32, 3.91, 4.38, 4.95, 5.56, 6.15]  # 增重，cm
-NI_JIAN_DEFAULT = [1.96, 2.58, 3.20, 3.78, 4.44, 5.01, 5.62, 6.23]   # 减重，cm
-D_SHI_DEFAULT = [0.626, 0.625, 0.628, 0.622, 0.625, 0.623]  # 钢丝直径，mm
-D_0_DEFAULT = -0.015  # 零点修正，mm
-L_DEFAULT = 0.973   # 钢丝长度，m
-D_DEFAULT = 45      # 光杠杆常数（后足到前足连线距离），mm
-H_DEFAULT = 0.939   # 镜面到标尺距离，m
-D_INST_ERR = 0.005  # 螺旋测微计仪器误差，mm
+NI_ZHENG_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+NI_JIAN_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+D_SHI_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+D_0_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+L_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+D_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+H_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+D_INST_ERR = None  # 由当前用户仪器参数绑定，无示例兜底
 
 
 # （方式三：_create_template 已移除，数据真相为 data.json）
@@ -56,6 +56,7 @@ D_INST_ERR = 0.005  # 螺旋测微计仪器误差，mm
 
 def _compute(data: dict) -> dict:
     # 读参数
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
     L = float(data["L"])
     D = float(data["D"])
     H = float(data["H"])
@@ -108,10 +109,10 @@ def _compute(data: dict) -> dict:
 
     # 不确定度传递（直径的相对不确定度用修正后的直径作分母）
     Y_u = math.sqrt(
-        (0.003 / L) ** 2
-        + (0.003 / H) ** 2
+        (type_b(DELTA_L_M) / L) ** 2
+        + (type_b(DELTA_H_M) / H) ** 2
         + (2 * d_shi_u / d_shi_corrected) ** 2
-        + (0.003 / (D / 1000)) ** 2
+        + (type_b(DELTA_D_MM) / D) ** 2
         + (delta_n_dev_a / delta_n_a) ** 2
     ) * Y
 
@@ -122,6 +123,7 @@ def _compute(data: dict) -> dict:
     Y_pm = r"%s \pm %s" % (format_number(Y, Y_u), format_number(Y_u, Y_u))
 
     return {
+        "u_L": type_b(DELTA_L_M), "u_H": type_b(DELTA_H_M), "u_D_m": type_b(DELTA_D_MM) / 1000,
         "L": L, "D": D, "H": H, "d_0": d_0,
         "ni_zheng": ni_zheng, "ni_jian": ni_jian, "ni": ni,
         "delta_n": delta_n, "delta_n_a": delta_n_a,
@@ -165,6 +167,7 @@ def _print_results(r: dict):
 
 
 def _generate_docx(data: dict, output_path: str):
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
     r = _compute(data)
     if r is None:
         return
@@ -242,7 +245,7 @@ def _generate_docx(data: dict, output_path: str):
     )
     doc.add_paragraph("B类不确定度：")
     doc.add_math(
-        r"u_B(d) = \frac{\Delta_{\text{仪}}}{\sqrt{3}} = \frac{0.005}{\sqrt{3}}"
+        r"u_B(d) = \frac{\Delta_{\text{仪}}}{\sqrt{3}} = \frac{" + format_number(D_INST_ERR, sig_figs=8) + r"}{\sqrt{3}}"
         r" \approx " + format_number(r["B_d_shi"], sig_figs=4) + r" \text{ mm}"
     )
     doc.add_paragraph("合成不确定度：")
@@ -297,7 +300,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("")
     doc.add_run("代入数据（d 用零点修正后的值）：")
     doc.add_math(
-        r"Y = \frac{32 \times 9.8 \times " + str(r["L"]) + r" \times " + str(r["H"])
+        r"Y = \frac{32 \times " + format_number(G, sig_figs=8) + r" \times " + str(r["L"]) + r" \times " + str(r["H"])
         + r"}{\pi \times (" + r["d_disp"] + r")^2 \times "
         + str(int(r["D"])) + r" \times " + r["delta_n_disp"] + r"}"
         + r" \approx " + format_number(r["Y"], r["Y_u"]) + r" \times 10^{11} \text{ Pa}"
@@ -305,19 +308,19 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_heading("5. 不确定度评定", level=2)
     doc.add_paragraph("")
-    doc.add_run("相对不确定度合成（L、H、D 的仪器允差 Δ仪 = 0.003 m）：")
+    doc.add_run(f"L、H、D 的仪器限差分别为{DELTA_L_M:g} m、{DELTA_H_M:g} m、{DELTA_D_MM:g} mm，按均匀分布除以√3得到标准不确定度，再进行相对传递：")
     doc.add_math(
-        r"\frac{u(Y)}{Y} = \sqrt{\left(\frac{0.003}{L}\right)^2 + \left(\frac{0.003}{H}\right)^2"
-        r" + \left(2\frac{u(d)}{d}\right)^2 + \left(\frac{0.003}{D/1000}\right)^2"
+        r"\frac{u(Y)}{Y} = \sqrt{\left(\frac{u(L)}{L}\right)^2 + \left(\frac{u(H)}{H}\right)^2"
+        r" + \left(2\frac{u(d)}{d}\right)^2 + \left(\frac{u(D)}{D}\right)^2"
         r" + \left(\frac{\delta n_a}{\Delta n_a}\right)^2}"
     )
     doc.add_paragraph("")
     doc.add_run("代入数据（u(d)/d 用去零修正后的直径 d）：")
     doc.add_math(
-        r"\frac{u(Y)}{Y} = \sqrt{\left(\frac{0.003}{" + str(r["L"]) + r"}\right)^2"
-        + r" + \left(\frac{0.003}{" + str(r["H"]) + r"}\right)^2"
+        r"\frac{u(Y)}{Y} = \sqrt{\left(\frac{" + format_number(r["u_L"], sig_figs=8) + r"}{" + str(r["L"]) + r"}\right)^2"
+        + r" + \left(\frac{" + format_number(r["u_H"], sig_figs=8) + r"}{" + str(r["H"]) + r"}\right)^2"
         + r" + \left(\frac{2 \times " + r["d_u_disp"] + r"}{" + r["d_disp"] + r"}\right)^2"
-        + r" + \left(\frac{0.003}{" + format_number(r["D"] / 1000.0, sig_figs=3) + r"}\right)^2"
+        + r" + \left(\frac{" + format_number(r["u_D_m"], sig_figs=8) + r"}{" + format_number(r["D"] / 1000.0, sig_figs=3) + r"}\right)^2"
         + r" + \left(\frac{" + format_number(r["delta_n_dev_a"], r["delta_n_dev_a"]) + r"}{"
         + r["delta_n_disp"] + r"}\right)^2}"
         + r" \approx " + format_percent(r["Y_u"] / r["Y"] * 100) + r"\%"

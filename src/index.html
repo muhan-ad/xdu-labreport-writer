@@ -233,8 +233,8 @@
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="width:14px;height:14px;vertical-align:-2px;margin-right:4px;"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
                       识别图片
                     </button>
-                    <button class="btn btn-sm btn-outline" id="btnClearFormData" disabled>清除数据</button>
-                    <button class="btn btn-sm btn-outline" id="btnFillDefaultData">填入默认数据</button>
+                    <button class="btn btn-sm btn-outline" id="btnFillTestData">填入测试数据</button>
+                    <button class="btn btn-sm btn-outline" id="btnFillDefaultData">初始化空白表单</button>
                     <button class="btn btn-sm btn-primary" id="btnSaveData" disabled>保存修改</button>
                   </div>
                 </div>
@@ -626,6 +626,10 @@
           <label>班级</label>
           <input type="text" id="inputClass" placeholder="请输入班级" />
         </div>
+        <div class="form-group">
+          <label for="inputExperimentDate">实验日期</label>
+          <input type="date" id="inputExperimentDate" />
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-ghost" id="btnCancelStudent">取消</button>
@@ -791,7 +795,7 @@
             <div class="settings-module-tabs" id="aiModuleTabs" role="tablist" aria-label="AI 服务模块">
               <button class="settings-module-tab active" id="btnAiModuleConfig" type="button" role="tab" aria-controls="paneAiConfig" aria-selected="true">服务配置</button>
               <button class="settings-module-tab" id="btnAiModuleSkills" type="button" role="tab" aria-controls="paneSkills" aria-selected="false" tabindex="-1">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 7.7l5.4-.8z"/></svg>技能
+                技能
               </button>
             </div>
             <div class="settings-module-panel" id="paneAiConfig" role="tabpanel" aria-labelledby="btnAiModuleConfig">
@@ -806,6 +810,7 @@
                 <label class="checkbox-label"><input type="checkbox" id="chkEmbedDataPhoto" /> 在报告中插入识别原图</label>
               </div>
             </div>
+<div class="settings-section"><button class="btn btn-outline" id="btnTestApi" type="button">测试连接</button><span id="apiTestStatus" class="form-hint" role="status" aria-live="polite"></span></div>
             <div class="settings-section ai-config-panel" id="panelApiConfig" hidden>
               <h4>API 配置</h4>
               <div class="form-group">
@@ -823,12 +828,16 @@
               </div>
               <div class="form-group">
                 <label>模型名称（留空使用默认）</label>
-                <input type="text" id="inputModel" placeholder="如 mimo-v2.5 / deepseek-v4-pro / qwen-plus" />
+                <input type="text" id="inputModel" list="apiModelOptions" placeholder="如 mimo-v2.5 / deepseek-v4-pro / qwen-plus" />
+                <datalist id="apiModelOptions"></datalist>
                 <div class="model-quick-select" id="modelQuickSelect"></div>
               </div>
               <div class="form-group">
                 <label>API 地址（切换提供商自动填充，可修改）</label>
                 <input type="text" id="inputApiUrl" placeholder="https://api.example.com/v1" />
+                <button class="btn btn-outline btn-sm" id="btnFetchApiModels" type="button">获取模型</button>
+                <select id="selectDiscoveredModel" aria-label="选择获取的模型" hidden><option value="">请选择模型</option></select>
+                <div id="apiModelsStatus" class="form-hint" role="status" aria-live="polite"></div>
               </div>
             </div>
             <div class="settings-section ai-config-panel" id="panelVisionConfig" hidden>
@@ -859,6 +868,7 @@
               <button class="settings-module-tab active" id="btnReportModuleFiles" type="button" role="tab" aria-controls="paneReportFiles" aria-selected="true">已生成报告</button>
               <button class="settings-module-tab" id="btnReportModuleCustom" type="button" role="tab" aria-controls="paneCustomVariants" aria-selected="false" tabindex="-1">自建变体</button>
               <button class="settings-module-tab" id="btnReportModuleSections" type="button" role="tab" aria-controls="paneSectionVariants" aria-selected="false" tabindex="-1">变体管理</button>
+              <button class="settings-module-tab" id="btnReportModulePolish" type="button" role="tab" aria-controls="panePolishHistory" aria-selected="false" tabindex="-1">润色管理</button>
             </div>
             <div class="settings-module-panel" id="paneReportFiles" role="tabpanel" aria-labelledby="btnReportModuleFiles">
             <div class="settings-section">
@@ -884,6 +894,12 @@
                   <button class="btn btn-sm btn-outline" id="btnImportCustomVariants" type="button" style="display:none;">导入（批量）</button>
                 </div>
               </div>
+            </div>
+            <div class="settings-module-panel" id="panePolishHistory" role="tabpanel" aria-labelledby="btnReportModulePolish" hidden>
+              <h4>润色管理</h4><p class="form-hint">按实验保存每次成功结果。删除当前已应用记录会移除对应覆盖；已导入自建变体的思考题仍由自建变体管理。</p>
+              <input id="polishHistorySearch" type="search" class="field-input" placeholder="搜索实验名称" aria-label="搜索润色实验" />
+              <div id="polishHistoryList" class="reports-list"></div>
+              <button class="btn btn-sm btn-danger" id="btnClearPolishHistory" type="button">清空全部润色记录</button>
             </div>
             <div class="settings-module-panel" id="paneSectionVariants" role="tabpanel" aria-labelledby="btnReportModuleSections" hidden>
               <div class="settings-section">
@@ -1255,6 +1271,7 @@
   <div class="toast-container" id="toastContainer"></div>
 
   <script src="shared/data-validation.js"></script>
+  <script src="shared/report-integrity.js"></script>
   <script src="shared/ocr-number.js"></script>
   <script src="renderer.js"></script>
   <script src="ocr.js"></script>

@@ -2,10 +2,12 @@
 const portalApi = window.schoolPortal;
 const el = id => document.getElementById(id);
 let notice = '', configured = false, available = false, corrupt = false, busy = false, loading = false;
+let currentSystemId = 'report', systemsKey = '', credentialRefreshNeeded = false;
 const sensitiveIds = ['autofill', 'copyAccount', 'copyPassword'];
 function updateButtons() {
   for (const id of sensitiveIds) el(id).disabled = busy || !configured || !available || (id === 'autofill' && loading);
   for (const id of ['reload', 'clearLogin', 'retry', 'manageCredentials', 'closeCredentials']) el(id).disabled = busy;
+  el('systemSelect').disabled = busy || el('credentialsDialog').open;
   el('saveCredentials').disabled = busy || !available;
   el('deleteCredentials').disabled = busy || !(configured || corrupt);
 }
@@ -32,13 +34,13 @@ el('manageCredentials').onclick = async () => {
   const result = await run('manage-credentials');
   if (!result.ok || result.cancelled) return;
   credentialStatus(result); clearInputs(); el('credentialMessage').textContent = '';
-  el('credentialsDialog').showModal(); el('credentialAccount').focus();
+  el('credentialsDialog').showModal(); updateButtons(); el('credentialAccount').focus();
 };
 async function closeManager() {
   if (busy) return;
   clearInputs();
   const result = await run('close-credentials');
-  if (result.ok) el('credentialsDialog').close();
+  if (result.ok) { el('credentialsDialog').close(); updateButtons(); }
 }
 el('closeCredentials').onclick = closeManager;
 el('credentialsDialog').addEventListener('cancel', event => { event.preventDefault(); closeManager(); });
@@ -57,8 +59,31 @@ el('deleteCredentials').onclick = async () => {
   if (result.ok && !result.cancelled) { clearInputs(); credentialStatus(await run('credential-status')); }
   el('credentialMessage').textContent = result.message || result.error || '';
 };
+el('systemSelect').onchange = async () => {
+  const result = await run('switch-system', { systemId: el('systemSelect').value });
+  if (!result.ok || result.external) el('systemSelect').value = currentSystemId;
+};
+async function refreshCredentials(id = currentSystemId) {
+  const result = await run('credential-status');
+  if (result.ok && id === currentSystemId) credentialStatus(result);
+}
 portalApi.onState(state => {
+  if (Array.isArray(state.systems)) {
+    const key = JSON.stringify(state.systems);
+    if (key !== systemsKey) {
+      systemsKey = key; el('systemSelect').replaceChildren(...state.systems.map(system => {
+        const option = document.createElement('option'); option.value = system.id; option.textContent = system.name; return option;
+      }));
+    }
+  }
+  const changed = !!state.systemId && state.systemId !== currentSystemId;
+  if (state.systemId) { currentSystemId = state.systemId; el('systemSelect').value = currentSystemId; }
+  el('domain').textContent = state.domain || '';
+  el('credentialSystem').textContent = el('systemSelect').selectedOptions[0]?.textContent || '学校系统';
+  if (changed) { configured = false; corrupt = false; clearInputs(); credentialRefreshNeeded = true; }
+
   busy = !!state.busy; loading = !!state.loading;
+  if (credentialRefreshNeeded && !busy) { credentialRefreshNeeded = false; refreshCredentials(currentSystemId); }
   if (state.loading || state.busy || state.error) notice = '';
   el('back').disabled = !state.canBack || busy;
   updateButtons();
@@ -68,8 +93,8 @@ portalApi.onState(state => {
   el('errorPanel').hidden = !state.error;
   el('errorText').textContent = state.error || '';
 });
-portalApi.onBlocked(() => setStatus('已阻止访问其他站点或本地地址。'));
+portalApi.onBlocked(target => setStatus(target ? `已阻止访问：${target}` : '已阻止访问其他站点或本地地址。'));
 portalApi.onDownloadBlocked(() => setStatus('当前内置窗口不支持下载文件，请在浏览器中完成下载。'));
 run('state');
-run('credential-status').then(result => { if (result.ok) credentialStatus(result); });
+refreshCredentials();
 window.addEventListener('pagehide', clearInputs);

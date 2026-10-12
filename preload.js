@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld('labAPI', {
   readData: (expPath) => ipcRenderer.invoke('read-data', expPath),
   readSampleData: (expPath) => ipcRenderer.invoke('read-sample-data', expPath),
   writeData: (expPath, data) => ipcRenderer.invoke('write-data', expPath, data),
+  readCalculationContext: (expPath) => ipcRenderer.invoke('read-calculation-context', expPath),
   readRag: (expPath) => ipcRenderer.invoke('read-rag', expPath),
   readSections: (expPath) => ipcRenderer.invoke('read-sections', expPath),
   // 感谢声明名单（common/credits.json，随实验数据更新推送）
@@ -94,6 +95,9 @@ contextBridge.exposeInMainWorld('labAPI', {
     ipcRenderer.on('data-update-progress', (_, data) => callback(data));
   },
   // AI 对话（requestId 支持取消：ai-chat-cancel 中止对应请求；onAiChunk 实时增量显示）
+  polishHistory: (action, payload) => ipcRenderer.invoke('polish-history', action, payload),
+  testApi: params => ipcRenderer.invoke('test-api', params),
+  fetchApiModels: params => ipcRenderer.invoke('fetch-api-models', params),
   aiChat: (params) => ipcRenderer.invoke('ai-chat', params),
   aiChatCancel: (requestId) => ipcRenderer.send('ai-chat-cancel', requestId),
   ocrCancel: (requestId) => ipcRenderer.send('ocr-cancel', requestId),

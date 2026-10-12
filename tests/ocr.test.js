@@ -54,7 +54,7 @@ test('OCR number parsing is strict about the whole string', () => {
 test('gravity photo average is recognized and the 8-by-9 photo table is transposed without dropping hole 9', () => {
   const schema = JSON.parse(fs.readFileSync(path.join(root, '物理实验', '实验脚本', '重力加速度的测量', 'schema.json'), 'utf8'));
   const fields = schema.groups.flatMap(group => group.fields);
-  assert.equal(fields.find(field => field.key === 'delta_instr').default, 0.01);
+  assert.equal(fields.find(field => field.key === 'delta_instr').default, null);
   assert.equal(fields.find(field => field.key === 'T_avg').length, 9);
   assert.ok(!fields.some(field => ['T0', 'h1', 'h2'].includes(field.key)), '交点是生成时计算值，不应在表单或识图核对页显示');
 
@@ -84,7 +84,7 @@ test('gravity photo average is recognized and the 8-by-9 photo table is transpos
   assert.deepEqual(JSON.parse(JSON.stringify(trials.value[8])), photoRows.map(row => row[8]));
   assert.equal(averages.value.length, 9);
   assert.equal(recognized.find(field => field.key === 'delta_instr').value, null,
-    '照片上的质心位置不得误识别为秒表精度并覆盖 0.01 默认值');
+    '照片上的质心位置不得误识别为秒表精度；精度须由用户填写');
 });
 
 test('AI 服务页：两个配置入口就地展开，小米默认模型为 mimo-v2.5', () => {

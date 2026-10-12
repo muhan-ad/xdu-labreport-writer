@@ -11,15 +11,15 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
-from common.data_io import load_data
+from common.data_io import load_data, bind_input_parameters
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
 
 # ── 物理常数与仪器参数（按教材） ──
 V0 = 331.45           # 0°C 时空气中声速 (m/s)
 T0_K = 273.15         # 0°C 对应的开尔文温度 (K)
-DELTA_F = 0.001       # 频率分辨率 (kHz)
-DELTA_X_INST = 0.02   # 声速测定仪（游标卡尺）Δ_仪 (mm)
+DELTA_F = None  # 由当前用户仪器参数绑定，无示例兜底
+DELTA_X_INST = None  # 由当前用户仪器参数绑定，无示例兜底
 N_HALF = 6            # 逐差法半组数 (12 个测量值分 6+6)
 N_LAMBDA = 6          # λ_i 个数
 
@@ -111,6 +111,7 @@ def _compute_method(L_values: list[float], f: float, t_celsius: float) -> dict:
 
 def _compute(data: dict) -> dict:
     """由 data.json 计算两法结果并汇总，返回供变体注入的扁平结果字典 r。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
     f_khz = float(data["f"])
     t_celsius = float(data["t"])
     L1 = [float(v) for v in data["L1"]]
@@ -191,7 +192,8 @@ def _write_method_section(doc, r: dict, table_label: str):
     doc.add_table(headers, rows, col_widths=[1.5, 5.0, 6.0])
 
     # ── 理论声速 ──
-    doc.add_paragraph("开尔文温度及当前理论声速：")
+    doc.add_paragraph("空气参考声速按温度模型计算：以0 ℃时331.45 m/s为参考起点，适用于课程采用的空气条件；湿度和气体组成变化可能造成偏差。")
+    doc.add_paragraph("开尔文温度及模型参考声速：")
     doc.add_inline_math(
         rf"T = {r['T_kelvin']:.3f}\,\mathrm{{K}}"
     )
@@ -291,6 +293,7 @@ def _write_method_section(doc, r: dict, table_label: str):
 
 def _generate_docx(data: dict, output_path: str):
     """读取 data.json 数据，计算并生成 Word 实验报告。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
 
     # ── 1. 读取数据（含必填空值校验） ──
     labels = {

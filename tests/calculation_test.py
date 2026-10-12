@@ -20,7 +20,7 @@ exec(compile(ast.Module(body=[n for n in tree.body if isinstance(n, ast.Function
 
 class CalculationTests(unittest.TestCase):
     def setUp(self):
-        self.data = json.loads((EXP / 'data.json').read_text(encoding='utf-8'))
+        self.data = json.loads((ROOT / 'tests/fixtures/experiment-data.json').read_text(encoding='utf-8'))[EXP.name]
         self.schema = json.loads((EXP / 'schema.json').read_text(encoding='utf-8'))
 
     def test_shared_thickness_analytical_oracle(self):

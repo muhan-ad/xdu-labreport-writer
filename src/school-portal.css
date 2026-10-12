@@ -34,3 +34,8 @@ button:disabled { cursor: default; opacity: .45; }
 .portal-error h1 { font-size: 20px; }
 .portal-error p { color: #57534e; line-height: 1.8; overflow-wrap: anywhere; }
 .portal-error button { background: #15803d; color: #fff; border-color: #15803d; }
+
+.portal-system { max-width: min(360px, 55vw); padding: 5px 30px 5px 9px; font: 600 16px 'Microsoft YaHei', sans-serif; border: 1px solid #d6d3d1; border-radius: 6px; color: #1c1917; background: #fff; }
+.portal-system:focus-visible { outline: 2px solid #15803d; outline-offset: 2px; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+@media (max-width: 900px) { .portal-domain { max-width: 190px; overflow: hidden; text-overflow: ellipsis; } }

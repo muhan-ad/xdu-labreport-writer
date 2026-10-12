@@ -37,6 +37,8 @@ validate = _module.validate
 
 
 def main():
+    import sys
+    fixtures = _load_json(os.path.join(PROJECT_ROOT, "tests", "fixtures", "experiment-data.json")) if "--fixtures" in sys.argv else None
     exp_dirs = sorted(
         os.path.join(BASE, d) for d in os.listdir(BASE)
         if os.path.isdir(os.path.join(BASE, d)) and d != "common" and not d.startswith(".")
@@ -46,7 +48,7 @@ def main():
         schema = _load_json(os.path.join(d, "schema.json"))
         if schema is None:
             continue  # 未迁移（无 schema.json）的实验跳过
-        data = _load_json(os.path.join(d, "data.json")) or {}
+        data = fixtures[os.path.basename(d)] if fixtures is not None else (_load_json(os.path.join(d, "data.json")) or {})
         results[os.path.basename(d)] = validate(schema, data)
     print(json.dumps(results, ensure_ascii=False, indent=1))
     return 1 if any(not r["ok"] for r in results.values()) else 0

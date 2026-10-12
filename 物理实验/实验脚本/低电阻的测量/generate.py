@@ -19,13 +19,12 @@ from common.custom_plot import render_custom_plot
 from common.data_io import load_data
 
 # ── t 因子表（与计算器一致）──
-T_FACTOR = [0, 0, 1.84, 1.32, 1.2, 1.14, 1.11, 1.09, 1.08]
 
 
 def smartlab_ua(data):
     """A 类不确定度：t 因子 * std/sqrt(n)。"""
     n = len(data)
-    t = T_FACTOR[n] if n < len(T_FACTOR) else 1.0
+    t = t_factor(n)
     mean_val = sum(data) / n
     variance = sum((x - mean_val) ** 2 for x in data) / ((n - 1) * n)
     return t * math.sqrt(variance)
@@ -38,15 +37,15 @@ def smartlab_u(data, inst_err):
 
 
 # ── 示例数据（计算器 default）──
-R_1_DEFAULT = 1000.0  # Ω
-R_3_DEFAULT = 100.0   # Ω
-D_DEFAULT = [3.958, 3.955, 3.956, 3.951, 3.953, 3.952]  # mm
-L_DEFAULT = [100, 140, 180, 220, 260, 300, 340, 380]     # mm
-R_N_ZHENG_DEFAULT = [0.00558, 0.00775, 0.01, 0.01224, 0.01446, 0.0167, 0.01891, 0.02127]
-R_N_FAN_DEFAULT = [0.00565, 0.00787, 0.0115, 0.01236, 0.01466, 0.01686, 0.01916, 0.02139]
+R_1_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+R_3_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+D_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+L_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+R_N_ZHENG_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+R_N_FAN_DEFAULT = None  # 无示例兜底；参数必须由用户填写
 # 螺旋测微计仪器误差的默认值（0.001 mm，螺旋测微计允差）；实际取值由用户在数据表单里填，
 # 对应 schema 字段 d_inst，这里只作为来源说明保留。
-D_INST_ERR_DEFAULT = 0.001  # mm
+D_INST_ERR_DEFAULT = None  # 无示例兜底；参数必须由用户填写
 
 
 # （方式三：_create_template 已移除，数据真相为 data.json）
@@ -57,7 +56,7 @@ def _compute(data: dict) -> dict:
     r1 = float(data["R_1"])
     r3 = float(data["R_3"])
     # 仪器误差（用户填；缺省时退回默认值，见文件头说明）
-    d_inst = float(data["d_inst"]) if data.get("d_inst") is not None else D_INST_ERR_DEFAULT
+    d_inst = float(data["d_inst"])
     # 读直径（6 次，过滤未填项）
     d = [float(v) for v in data.get("d", []) if v is not None]
     # 读电阻测量（8 个长度点，L 与正反向读数配对，过滤未填项）
@@ -77,7 +76,7 @@ def _compute(data: dict) -> dict:
     # （迭代剔除），再用保留值重算平均值、标准差与不确定度。
     _ot = outlier_test(d)
     d_kept = _ot["kept"]
-    d_t = T_FACTOR[len(d_kept)] if len(d_kept) < len(T_FACTOR) else 1.0
+    d_t = t_factor(len(d_kept))
     d_a = sum(d_kept) / len(d_kept)
     d_sumsq = sum((x - d_a) ** 2 for x in d_kept)
     d_std = std_dev(d_kept)
@@ -94,7 +93,7 @@ def _compute(data: dict) -> dict:
     R_x_a = sum(R_x) / n_l
     R_x_std = std_dev(R_x)
     R_x_ua = smartlab_ua(R_x)
-    R_x_t = T_FACTOR[n_l] if n_l < len(T_FACTOR) else 1.0
+    R_x_t = t_factor(n_l)
 
     # 电阻率 ρ = π*d_a²*R_x*100/(4*L)
     rho = [math.pi * d_a ** 2 * rx * 100 / (4 * li) for rx, li in zip(R_x, L)]

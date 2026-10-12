@@ -142,12 +142,18 @@ const CATEGORY_NAMES = {
 };
 
 // ── 学生信息（localStorage）──
+function localToday() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+let experimentDate = localToday();
 function loadStudentInfo() {
   try {
-    return JSON.parse(localStorage.getItem('studentInfo') || '{}');
-  } catch { return {}; }
+    return { ...JSON.parse(localStorage.getItem('studentInfo') || '{}'), date: experimentDate };
+  } catch { return {date: experimentDate}; }
 }
 function saveStudentInfo(info) {
+  experimentDate = info.date || experimentDate;
   localStorage.setItem('studentInfo', JSON.stringify(info));
 }
 
@@ -587,6 +593,7 @@ async function pumpQueue() {
     $('batchLog').textContent += `\n▶ ${getDisplayName(q.exp)}\n`;
     try {
       // 自定义思考题：生成前用 AI 生成答案（每次重新请求，不缓存）；用户选择停止则中止整个队列
+      const polish = await generationPolish(q.exp, 'batchLog');
       const cq = await ensureCustomQuizAnswers(q.exp);
       if (cq.stop) {
         q.status = 'failed'; q.error = '已停止（自定义思考题答案未生成）';
@@ -596,10 +603,10 @@ async function pumpQueue() {
         break;
       }
       const customQuiz = cq.none ? null : { questions: cq.questions, answers: cq.answers };
-      const r = await window.labAPI.runGenerate(q.exp.path, studentInfo, null, expOverrides(q.exp.id), loadSettings().embedDataPhoto !== false, loadSettings().customReportDir || '', customQuiz);
+      const r = await window.labAPI.runGenerate(q.exp.path, studentInfo, null, polish, loadSettings().embedDataPhoto !== false, loadSettings().customReportDir || '', customQuiz);
       q.elapsed = (Date.now() - q.startedAt) / 1000;
       q.status = r.ok ? 'done' : (r.cancelled ? 'cancelled' : 'failed');
-      if (!r.ok) q.error = r.error || ('exit ' + r.exitCode);
+      if (!r.ok) q.error = r.error || (r.exitCode == null ? '生成器未能启动或返回结果' : 'exit ' + r.exitCode);
       else await maybeInsertChart(q.exp, r);   // 批量也按「插入图表」开关插图
     } catch (err) {
       q.elapsed = (Date.now() - q.startedAt) / 1000;
@@ -748,8 +755,8 @@ async function loadExperimentData(exp) {
     currentData = null;
     $('dataTableWrap').innerHTML = '<div class="data-table-empty">该实验尚未迁移，暂不能在应用内填写</div>';
     $('sheetTabs').style.display = 'none';
-    $('btnClearFormData').disabled = true;
     $('btnFillDefaultData').disabled = true;
+    $('btnFillTestData').disabled = true;
   }
 }
 
@@ -783,8 +790,9 @@ async function loadFormData(exp) {
   }
   isDataModified = false;
   $('btnSaveData').disabled = true;
-  $('btnClearFormData').disabled = false;
   $('btnFillDefaultData').disabled = false;
+  $('btnFillTestData').disabled = false;
+  $('btnFillDefaultData').textContent = '初始化空白表单';
   notifyDataModified();
   $('sheetTabs').style.display = 'none';   // 表单模式无 sheet 切换
   $('dataIssueBar').style.display = 'none';
@@ -793,61 +801,36 @@ async function loadFormData(exp) {
   await loadChartConfig(exp);
 }
 
-// 清除表单全部可输入数据（置空，便于从头填写；需点"保存修改"才写入 data.json）
-async function clearFormData() {
+async function fillTestData() {
   if (!currentSchema || !currentExp) return;
-  if (!(await appConfirm('清除当前实验表单中已填写的全部数据？\n所有字段将置为空值，清除后需点击「保存修改」才会写入数据文件。', { danger: true }))) return;
-  for (const group of (currentSchema.groups || [])) {
-    for (const fld of (group.fields || [])) {
-      if (fld.type === 'array') {
-        currentData[fld.key] = new Array(fld.length || 0).fill(null);
-      } else if (fld.type === 'matrix') {
-        currentData[fld.key] = Array.from({ length: fld.rows || 0 }, () => new Array(fld.cols || 0).fill(null));
-      } else {
-        currentData[fld.key] = null;
-      }
-    }
-  }
-  renderForm();
-  isDataModified = true;
-  notifyDataModified();
-  $('btnSaveData').disabled = false;
-  refreshFormCheck();
-  showToast('info', '已清除', '全部字段已置空，填写后请点击「保存修改」');
+  const exp = currentExp;
+  if (!(await appConfirm('填入测试数据将覆盖当前表单。数据仅用于测试，请勿作为真实测量记录提交；点击保存修改后才写入文件。'))) return;
+  const result = await window.labAPI.readSampleData(exp.path);
+  if (currentExp?.id !== exp.id) return;
+  if (!result.ok || !result.data) { showToast('error', '无法填入测试数据', result.error || '未找到测试数据'); return; }
+  const errors = dataValidation.validate(currentSchema, result.data);
+  if (errors.length) { showToast('error', '测试数据不完整', errors.join('；')); return; }
+  for (const group of currentSchema.groups || []) for (const field of group.fields || [])
+    currentData[field.key] = structuredClone(result.data[field.key]);
+  renderForm(); isDataModified = true; notifyDataModified();
+  $('btnSaveData').disabled = false; refreshFormCheck();
+  showToast('success', '已填入测试数据', '仅用于功能测试，请勿作为真实实验数据提交');
 }
 
-// 填入默认数据：整表恢复为实验内置的测试数据（sample.json 快照；缺失时回退 schema 默认值），需二次确认
+// 按 schema 初始化空白表单，仅保存修改时写入文件。
 async function fillDefaultData() {
   if (!currentSchema || !currentExp) return;
-  if (!(await appConfirm('将当前实验表单整表恢复为实验内置的测试数据？\n您已填写的字段将被测试数据覆盖！', { danger: true }))) return;
-  if (!(await appConfirm('最后确认：恢复后当前填写内容将丢失，确定继续？', { danger: true }))) return;
-  let sample = null;
-  try {
-    const r = await window.labAPI.readSampleData(currentExp.path);
-    if (r.ok && r.data) sample = r.data;
-  } catch (e) { /* 读取失败时回退 schema 默认值 */ }
-  for (const group of (currentSchema.groups || [])) {
-    for (const fld of (group.fields || [])) {
-      const hasSample = sample && sample[fld.key] !== undefined;
-      if (fld.type === 'array') {
-        currentData[fld.key] = hasSample
-          ? sample[fld.key].slice()
-          : (Array.isArray(fld.default) ? fld.default.slice() : new Array(fld.length || 0).fill(null));
-      } else if (fld.type === 'matrix') {
-        currentData[fld.key] = hasSample
-          ? sample[fld.key].map(r => r.slice())
-          : (Array.isArray(fld.default) ? fld.default.map(r => r.slice()) : Array.from({ length: fld.rows || 0 }, () => new Array(fld.cols || 0).fill(null)));
-      } else {
-        currentData[fld.key] = hasSample ? sample[fld.key] : (fld.default !== undefined ? fld.default : null);
-      }
-    }
+  if (!(await appConfirm('将当前实验表单初始化为空白？填写的数据将清空，点击保存修改后才写入文件。', {danger:true}))) return;
+  for (const group of currentSchema.groups || []) for (const field of group.fields || []) {
+    currentData[field.key] = field.type === 'array' ? Array(field.length || 0).fill(null)
+      : field.type === 'matrix' ? Array.from({length:field.rows || 0},()=>Array(field.cols || 0).fill(null)) : null;
   }
   renderForm();
   isDataModified = true;
   notifyDataModified();
   $('btnSaveData').disabled = false;
   refreshFormCheck();
-  showToast('success', '已填入', '全表已恢复为测试数据，点击「保存修改」后生效');
+  showToast('success', '已初始化空白表单', '请自行填写实验数据并保存');
 }
 
 function renderForm() {
@@ -859,11 +842,21 @@ function renderForm() {
   for (const group of (currentSchema.groups || [])) {
     html += '<div class="form-group">';
     if (group.name) html += `<div class="form-group-title">${escapeHtml(group.name)}</div>`;
-    for (const fld of (group.fields || [])) html += renderField(fld);
+    for (const fld of (group.fields || [])) {
+      html += renderField(fld);
+      if (fld.hint) html += `<div class="field-hint" style="color:var(--text-secondary);font-size:13px;margin:4px 0 12px">${escapeHtml(fld.hint)}</div>`;
+    }
     html += '</div>';
   }
   html += '</div>';
   wrap.innerHTML = html;
+  wrap.querySelectorAll('select.parameter-presets').forEach(select => {
+    select.addEventListener('change', () => {
+      if (!select.value) return;
+      const input = Array.from(wrap.querySelectorAll('input[data-key]')).find(el => el.dataset.key === select.dataset.targetKey);
+      if (input) { input.value = select.value; onFormInput(); input.focus(); }
+    });
+  });
   wrap.querySelectorAll('input[data-key]').forEach(inp => {
     inp.addEventListener('input', onFormInput);
     // 禁止鼠标滚轮改变 number 输入框的值（聚焦时滚轮应滚动页面而非改数）
@@ -900,10 +893,11 @@ function renderField(fld, dataOverride) {
 
   if (fld.type === 'number') {
     const v = hasVal(val) ? val : '';   // 无默认回退：清除后保持空白（默认值已在 loadFormData 阶段填入）
+    const presets = Array.isArray(fld.presets) ? `<select class="field-input parameter-presets" data-target-key="${escapeHtml(key)}" aria-label="${label}常用值"><option value="">选择常用值（可手动输入）</option>${fld.presets.map(p => `<option value="${escapeHtml(p.value)}">${escapeHtml(p.label)}</option>`).join('')}</select>` : '';
     return `<div class="form-field form-field-number">`
       + `<label class="field-label">${label}</label>`
       + `<input type="number" step="any" class="field-input" data-key="${escapeHtml(key)}" value="${escapeHtml(v)}">`
-      + unit + `</div>`;
+      + unit + presets + `</div>`;
   }
   if (fld.type === 'science') {
     // 科学计数法双框：尾数 × 10^指数（指数可自由输入，附预设建议；清除后指数框保持空白）
@@ -1142,12 +1136,138 @@ function getAiStylePrompt(style) {
 let currentSections = null;      // .lab_sections.json 内容 {章节: 原文(含 $ 公式)}
 let lastPolishResults = [];      // 本轮润色结果 [{section, displayScope, original, polished} | {error}]
 
+let polishHistoryState = {records:[],applied:[]}, polishHistoryData = new Map();
+async function markPolishApplied(result, variant = false) {
+  if (!result.historyId) return;
+  const response=await window.labAPI.polishHistory('apply',{id:result.historyId,variant});
+  if (!response.ok) showToast('warning','历史关联未保存',response.error,8000);
+}
+async function loadPolishHistory() {
+  const names=Object.fromEntries(experiments.map(exp=>[exp.id,exp.name]));
+  const migration=await window.labAPI.polishHistory('migrate',{overrides:loadAllOverrides(),names});
+  if (!migration.ok) throw Error(migration.error);
+  const response=await window.labAPI.polishHistory('list');
+  if (!response.ok) throw Error(response.error);
+  polishHistoryState=response;polishHistoryData=new Map();
+  await Promise.all([...new Set(response.records.map(r=>r.expId))].map(async id=>{
+    const exp=experiments.find(e=>e.id===id);
+    if (!exp) return;
+    const saved=await window.labAPI.readData(exp.path);
+    if (currentExp?.id === id) polishHistoryData.set(id,JSON.parse(JSON.stringify(currentData || {})));
+    else if (saved.ok) polishHistoryData.set(id,saved.data);
+  }));
+  renderPolishHistory();
+}
+function renderPolishHistory() {
+  const list=$('polishHistoryList');list.replaceChildren();
+  const search=$('polishHistorySearch').value.trim().toLowerCase();
+  const records=polishHistoryState.records.filter(r=>r.expName.toLowerCase().includes(search));
+  $('btnClearPolishHistory').disabled=!polishHistoryState.records.length;
+  if (!records.length) {list.textContent=search ? '没有匹配的润色记录' : '暂无润色记录';return;}
+  const grouped=new Map();
+  for (const r of records) {if (!grouped.has(r.expId)) grouped.set(r.expId,[]);grouped.get(r.expId).push(r);}
+  const button=(text,action)=>{const b=document.createElement('button');b.type='button';b.className='btn btn-sm btn-outline';b.textContent=text;b.onclick=action;return b;};
+  for (const [expId,group] of grouped) {
+    const heading=document.createElement('h4');heading.textContent=group[0].expName;
+    heading.append(button('删除此实验全部记录',()=>deletePolishHistory({expId},`删除「${group[0].expName}」的全部润色记录及对应覆盖？`)));list.append(heading);
+    for (const r of [...group].reverse()) {
+      const details=document.createElement('details');details.className='polish-history-entry';
+      const summary=document.createElement('summary');
+      const overrides=expOverrides(r.expId);
+      const active=polishHistoryState.applied.some(x=>x.id===r.id) && overrides[r.section]===r.polished && reportIntegrity.sameData(overrides.__sourceData || null,r.sourceData);
+      let status=active ? '当前已应用' : r.imported ? '历史版本' : '未导入';
+      if (!r.sourceData) status='来源缺失';
+      else if (!polishHistoryData.has(r.expId) || !reportIntegrity.sameData(r.sourceData,polishHistoryData.get(r.expId))) status='数据已变化';
+      summary.textContent=`${r.section} · ${r.createdAt ? new Date(r.createdAt).toLocaleString() : '时间未知（旧记录）'} · ${status}`;
+      details.append(summary);
+      const original=document.createElement('pre'), body=document.createElement('pre');
+      original.textContent='原文：\n'+(r.original || '旧记录未保存原文');body.textContent='润色正文：\n'+r.polished;
+      details.append(original,body,button('复制正文',()=>window.labAPI.copyText(r.polished)),button('删除此条',()=>deletePolishHistory({id:r.id},'删除这条润色记录？若当前已应用，同时移除对应覆盖。')));list.append(details);
+    }
+  }
+}
+async function deletePolishHistory(selection,message) {
+  if (!(await appConfirm(message,{danger:true}))) return;
+  const response=await window.labAPI.polishHistory('delete',selection);
+  if (!response.ok) {showToast('error','删除失败',response.error);return;}
+  const overrides=loadAllOverrides();
+  for (const entry of response.detached || []) {
+    const target=overrides[entry.expId];
+    if (target && target[entry.section]===entry.polished && reportIntegrity.sameData(target.__sourceData || null,entry.sourceData)) {
+      delete target[entry.section];
+      if (!Object.keys(target).some(key=>key!=='__sourceData')) delete overrides[entry.expId];
+    }
+  }
+  saveAllOverrides(overrides);
+  lastPolishResults=lastPolishResults.filter(r=>!response.removed.includes(r.historyId));
+  updateOverrideBar();await loadPolishHistory();
+  showToast('success','润色记录已删除',`共 ${response.removed.length} 条`);
+}
+function resetDiscoveredModels() {
+  $('apiModelOptions').replaceChildren();
+  $('selectDiscoveredModel').replaceChildren(new Option('请选择模型', ''));
+  $('selectDiscoveredModel').hidden = true;
+  $('apiModelsStatus').textContent = '';
+}
+
+async function fetchApiModels() {
+  const button = $('btnFetchApiModels'), status = $('apiModelsStatus');
+  if (button.disabled) return;
+  resetDiscoveredModels(); button.disabled = true; status.textContent = '正在获取模型…';
+  const params = {provider:$('selectProvider').value,apiUrl:$('inputApiUrl').value.trim(),key:$('inputApiKey').value.trim()};
+  try {
+    const result = await window.labAPI.fetchApiModels(params);
+    if (params.provider !== $('selectProvider').value || params.apiUrl !== $('inputApiUrl').value.trim() || params.key !== $('inputApiKey').value.trim()) {
+      status.textContent = '配置已变化，请重新获取模型'; return;
+    }
+    if (!result.ok) { status.textContent = result.error; return; }
+    for (const model of result.models) {
+      $('apiModelOptions').append(new Option(model, model));
+      $('selectDiscoveredModel').append(new Option(model, model));
+    }
+    $('selectDiscoveredModel').hidden = false;
+    $('selectDiscoveredModel').value = result.models.includes($('inputModel').value) ? $('inputModel').value : '';
+    status.textContent = `已获取 ${result.models.length} 个模型，请选择或手动填写。`;
+  } catch { status.textContent = '获取模型失败，请稍后重试或手动填写'; }
+  finally { button.disabled = false; }
+}
+
+async function testApiConnection() {
+  const button=$('btnTestApi'), status=$('apiTestStatus');
+  button.disabled=true;status.textContent='正在测试当前配置…';
+  try {
+    const result=await window.labAPI.testApi({provider:$('selectProvider').value,apiUrl:$('inputApiUrl').value.trim(),model:$('inputModel').value.trim(),key:$('inputApiKey').value.trim()});
+    status.textContent=`${result.ok ? result.message : result.error}${Number.isFinite(result.elapsedMs) ? `（${(result.elapsedMs/1000).toFixed(1)}秒）` : ''}`;
+  } catch (error) {status.textContent='测试失败，请检查配置或网络';}
+  finally {button.disabled=false;}
+}
 function loadAllOverrides() { try { return JSON.parse(localStorage.getItem('polishOverrides') || '{}'); } catch { return {}; } }
 function saveAllOverrides(all) { localStorage.setItem('polishOverrides', JSON.stringify(all)); }
 function expOverrides(expId) { return loadAllOverrides()[expId] || {}; }
+async function generationPolish(exp, logId = 'logContent') {
+  const overrides = expOverrides(exp.id);
+  if (!Object.keys(overrides).some(key => key !== '__sourceData')) return {};
+  const saved = await window.labAPI.readData(exp.path);
+  if (!saved?.ok) throw Error(saved?.error || '无法读取本次测量数据');
+  const selected = window.reportIntegrity.selectOverrides(overrides, saved.data);
+  if (selected.status === 'missing-source' || selected.status === 'stale') {
+    const reason = selected.status === 'missing-source' ? '缺少数据来源记录' : '对应的测量数据已改变';
+    const message = `已跳过旧润色：${reason}。旧内容已保留，请重新润色后导入；本次报告使用当前数据和原有章节。`;
+    if ($(logId)) $(logId).textContent += `\n⚠ ${message}\n`;
+    showToast('warning', '旧润色未用于本次报告', message, 8000);
+  }
+  return selected.polish;
+}
 function setPolishOverride(expId, section, text) {
   const all = loadAllOverrides();
-  (all[expId] = all[expId] || {})[section] = text;
+  const target = all[expId] = all[expId] || {};
+  const snapshot = JSON.stringify(currentData || {});
+  if (Object.keys(target).length && !target.__sourceData)
+    throw Error('旧润色缺少实验数据来源，请清除旧润色后重新导入');
+  if (target.__sourceData && JSON.stringify(target.__sourceData) !== snapshot)
+    throw Error('测量数据已改变，旧润色不能与本次内容混合，请先清除旧润色');
+  target.__sourceData = JSON.parse(snapshot);
+  target[section] = text;
   saveAllOverrides(all);
 }
 function clearPolishOverrides(expId) {
@@ -1231,6 +1351,14 @@ function openCustomQuizModal() {
 // 返回 {none:true}（未启用）/ {stop:true}（用户选择停止）/ {questions, answers}
 let customQuizRequestIds = new Set();
 
+async function getExperimentCalculationContext(exp) {
+  if (typeof reportIntegrity === 'undefined' || !reportIntegrity.applies(exp)) return null;
+  if (isDataModified) throw Error('实验数据尚未保存，请保存修改后再生成答案或润色');
+  const result = await window.labAPI.readCalculationContext(exp.path);
+  if (!result || !result.ok) throw Error((result && result.error) || '请先填写并保存完整实验数据');
+  return result.data;
+}
+
 async function ensureCustomQuizAnswers(exp) {
   const questions = exp ? expCustomQuiz(exp.id) : [];
   if (!questions.length) return { none: true };
@@ -1241,6 +1369,10 @@ async function ensureCustomQuizAnswers(exp) {
       { title: '无法生成思考题答案', okText: '知道了', danger: true });
     return { stop: true };
   }
+  let calculationContext;
+  try { calculationContext = typeof reportIntegrity !== 'undefined' && reportIntegrity.applies(exp) ? await getExperimentCalculationContext(exp) : null; }
+  catch (error) { showToast('error', '实验数据未就绪', error.message, 8000); return { stop: true }; }
+  const dataBlock = calculationContext ? reportIntegrity.prompt(calculationContext) : '';
   logLine('正在用 AI 生成自定义思考题的回答…');
   // 知识库（与润色同一套：读不到就降级为软约束）
   let ragText = '';
@@ -1252,7 +1384,7 @@ async function ensureCustomQuizAnswers(exp) {
     } catch (e) { /* 降级为软约束 */ }
   }
   const kbBlock = kbOnly
-    ? `\n\n【知识库硬性约束——本实验教材原理是唯一权威依据】\n${ragText ? ragText.slice(0, 8000) : '（本实验未提供知识库文本）'}\n只能使用知识库与题目中有依据的表述：不得新增两者中不存在的公式、数据、常数或结论，不得凭常识臆造。${ragText ? '' : '当前无知识库：只做语言层面的表述，禁止编造物理内容。'}`
+    ? `\n\n【知识库硬性约束——知识库提供原理，具体数值只取本次用户计算结果】\n${ragText ? ragText.slice(0, 8000) : '（本实验未提供知识库文本）'}\n只能使用知识库与题目中有依据的表述：不得新增两者中不存在的公式、数据、常数或结论，不得凭常识臆造。${ragText ? '' : '当前无知识库：只做语言层面的表述，禁止编造物理内容。'}`
     : '';
   const skillStates = (settings.skillStates && typeof settings.skillStates === 'object') ? settings.skillStates : {};
   const skillBlock = (skillsCache || [])
@@ -1264,7 +1396,7 @@ async function ensureCustomQuizAnswers(exp) {
   const messages = [
     {
       role: 'system',
-      content: `你是一个大学物理实验报告写作助手。${getAiStylePrompt(style)}${skillBlock}${userPrompt ? `\n\n【用户自定义要求（优先遵循，但不得违反下方格式与知识库硬性约束）】\n${userPrompt}` : ''}请为下面给出的思考题写出回答，内容要科学准确、有依据，符合大学物理实验报告的规范。${kbBlock}\n\n【输出格式硬性要求】每题先原样抄一遍题目（题号与文字必须与给定题目逐字一致，不得增删改题目），下一行以「答：」开头写回答；数学表达一律用 $...$ 包裹，独立公式用单行 $$...$$；不要输出任何解释或额外内容。`,
+      content: `你是一个大学物理实验报告写作助手。以完成本次实验的学生视角撰写报告正文，使用“本实验”“测得”等客观表达；不虚构操作或观察。不得把用户填写、知识库、AI、应用、占位符及内部校验规则等软件说明写入正文。${getAiStylePrompt(style)}${skillBlock}${userPrompt ? `\n\n【用户自定义要求（优先遵循，但不得违反下方格式与知识库硬性约束）】\n${userPrompt}` : ''}请为下面给出的思考题写出回答，内容要科学准确、有依据，符合大学物理实验报告的规范。${kbBlock}${dataBlock}\n\n【输出格式硬性要求】每题先原样抄一遍题目（题号与文字必须与给定题目逐字一致，不得增删改题目），下一行以「答：」开头写回答；数学表达一律用 $...$ 包裹，独立公式用单行 $$...$$；不要输出任何解释或额外内容。`,
     },
     {
       role: 'user',
@@ -1300,6 +1432,10 @@ async function ensureCustomQuizAnswers(exp) {
     if (!m) continue;
     const body = part.split('\n').slice(1).join('\n').trim().replace(/^答\s*[:：]\s*/, '');
     if (body) answers[m[1]] = [body];
+  }
+  if (calculationContext) {
+    try { for (const texts of Object.values(answers)) for (const text of texts) reportIntegrity.validateText(text, calculationContext); }
+    catch (error) { showToast('error', '思考题数值校验失败', error.message, 8000); return { stop: true }; }
   }
   const got = Object.keys(answers).length;
   logLine(got ? `✔ 已生成 ${got} 道思考题的回答` : '⚠ 模型没有按要求返回回答（报告里答案将留空）');
@@ -1435,7 +1571,7 @@ async function generateCustomChartPreview(exp) {
     } catch (e) { /* 降级为软约束 */ }
   }
   const kbBlock = kbOnly
-    ? `\n\n【知识库硬性约束——本实验教材原理是唯一权威依据】\n${ragText ? ragText.slice(0, 8000) : '（本实验未提供知识库文本）'}\n图上出现的物理量、符号、单位必须与知识库一致；不得新增知识库与数据中都不存在的结论。`
+    ? `\n\n【知识库硬性约束——知识库提供原理，具体数值只取本次用户计算结果】\n${ragText ? ragText.slice(0, 8000) : '（本实验未提供知识库文本）'}\n图上出现的物理量、符号、单位必须与知识库一致；不得新增知识库与数据中都不存在的结论。`
     : '';
   const skillStates = (settings.skillStates && typeof settings.skillStates === 'object') ? settings.skillStates : {};
   const skillBlock = (skillsCache || [])
@@ -1528,9 +1664,10 @@ async function generateCustomChartPreview(exp) {
 function updateOverrideBar() {
   const bar = $('aiOverrideBar');
   if (!bar) return;
-  const keys = currentExp ? Object.keys(expOverrides(currentExp.id)) : [];
+  const keys = currentExp ? Object.keys(expOverrides(currentExp.id)).filter(k => k !== '__sourceData') : [];
   if (!keys.length) { bar.style.display = 'none'; return; }
-  $('aiOverrideText').textContent = `已导入润色章节：${keys.join('、')} —— 重新生成报告时将直接采用润色文本`;
+  const status = window.reportIntegrity.selectOverrides(expOverrides(currentExp.id), currentData).status;
+  $('aiOverrideText').textContent = `已保存润色章节：${keys.join('、')} —— ${status === 'valid' ? '生成时校验数据来源后采用' : '来源缺失或数据已改变，生成时将跳过，请重新润色'}`;
   bar.style.display = 'flex';
 }
 
@@ -1917,6 +2054,7 @@ function promptAiStall(requestId, label) {
 
 async function runAiPolish(onlyScopeVal) {
   if (isAiPolishing || isSwitchingExperiment) return;
+  const polishSourceData = JSON.stringify(currentData || {});
   aiPolishCancelled = false;   // 本轮润色未被取消
   aiPolishRequestIds.clear();
   aiFlightOrder.clear();
@@ -1997,6 +2135,10 @@ async function runAiPolish(onlyScopeVal) {
     showToast('warning', '未选择润色对象', '请至少勾选一个章节或范围');
     return;
   }
+  let calculationContext = null;
+  try { calculationContext = typeof reportIntegrity !== 'undefined' && reportIntegrity.applies(sourceExp) ? await getExperimentCalculationContext(sourceExp) : null; }
+  catch (error) { showToast('error', '实验数据未就绪', error.message, 8000); return; }
+  const dataBlock = calculationContext ? reportIntegrity.prompt(calculationContext) : '';
   isAiPolishing = true;
   try {
   // 启用技能由「设置 → AI 服务 → 技能」的开关决定（skillStates）；面板只读展示
@@ -2014,7 +2156,7 @@ async function runAiPolish(onlyScopeVal) {
     } catch (e) { /* 读取失败时降级为软约束 */ }
   }
   const kbBlock = kbOnly
-    ? `\n\n【知识库硬性约束——本实验教材原理是唯一权威依据】\n${ragText ? ragText.slice(0, 8000) : '（本实验未提供知识库文本）'}\n只能使用知识库与原文中有依据的表述：不得新增两者中不存在的公式、数据、常数或结论，不得凭常识臆造。${ragText ? '' : '当前无知识库：只做语言层面的改写，禁止补充任何物理内容。'}`
+    ? `\n\n【知识库硬性约束——知识库提供原理，具体数值只取本次用户计算结果】\n${ragText ? ragText.slice(0, 8000) : '（本实验未提供知识库文本）'}\n只能使用知识库与原文中有依据的表述：不得新增两者中不存在的公式、数据、常数或结论，不得凭常识臆造。${ragText ? '' : '当前无知识库：只做语言层面的改写，禁止补充任何物理内容。'}`
     : '';
   const skillBlock = skillIds
     .map(id => skillsCache.find(s => s.id === id))
@@ -2088,6 +2230,11 @@ async function runAiPolish(onlyScopeVal) {
           sectionText = extractSection(fullText, scopeVal);
         }
 
+        if (calculationContext) {
+          sectionText = reportIntegrity.parameterizeText(sectionText, calculationContext);
+          reportIntegrity.validateText(sectionText, calculationContext);
+        }
+
         // 失败反馈：把上一次被拒绝的原因交给模型（公式删改→缺失公式清单+上次输出；题目修改→上次输出），
         // 让重试有针对性而不是原样重试。API/网络类失败无内容可反馈。
         let feedback = '';
@@ -2101,7 +2248,7 @@ async function runAiPolish(onlyScopeVal) {
         const messages = [
           {
             role: 'system',
-            content: `你是一个大学物理实验报告润色助手。${getAiStylePrompt(style)}${skillBlock}${userPromptBlock}请对用户提供的实验报告内容进行个性化改写，保持科学准确性和数据真实性，避免与原文措辞重复，使报告更具个人特色，降低重复检测风险。只输出改写后的内容，不要输出解释或说明。${formatBlock}${kbBlock}${scopeVal === 'quiz' ? '\n\n【思考题润色规则·最高优先级】题目（含题号，如"1. …"）是固定内容：必须逐字保留在输出中，严禁修改、删除或新增任何题目；只改写"答："之后的回答内容。输出格式：每问一行题目（与原文逐字一致）+ 下一行改写后的回答，按题号顺序排列。' : ''}`,
+            content: `你是一个大学物理实验报告润色助手。以完成本次实验的学生视角撰写报告正文，使用“本实验”“测得”等客观表达；不虚构操作或观察。不得把用户填写、知识库、AI、应用、占位符及内部校验规则等软件说明写入正文。${getAiStylePrompt(style)}${skillBlock}${userPromptBlock}请对用户提供的实验报告内容进行个性化改写，保持科学准确性和数据真实性，避免与原文措辞重复，使报告更具个人特色，降低重复检测风险。只输出改写后的内容，不要输出解释或说明。${formatBlock}${kbBlock}${dataBlock}${scopeVal === 'quiz' ? '\n\n【思考题润色规则·最高优先级】题目（含题号，如"1. …"）是固定内容：必须逐字保留在输出中，严禁修改、删除或新增任何题目；只改写"答："之后的回答内容。输出格式：每问一行题目（与原文逐字一致）+ 下一行改写后的回答，按题号顺序排列。' : ''}`,
           },
           {
             role: 'user',
@@ -2128,6 +2275,7 @@ async function runAiPolish(onlyScopeVal) {
         });
         if (aiPolishCancelled) return null;   // 取消后丢弃当前项结果
         if (result.ok) {
+          if (calculationContext) reportIntegrity.validateText(result.content, calculationContext);
           // 公式强约束：AI 输出中的公式一律替换回原文公式（文字保留 AI 改写）；
           // 仅当原文公式被 AI 删除/改写时拒绝，并给出诊断（具体缺失的公式与 AI 输出公式）
           const restored = restoreFormulas(sectionText, result.content || '');
@@ -2145,7 +2293,7 @@ async function runAiPolish(onlyScopeVal) {
               failInfo: { output: result.content || '' },
               error: 'AI 修改了思考题题目，已拒绝该结果（题目必须原样保留，可重试）' };
           }
-          return { section, displayScope, scopeVal, original: sectionText, polished: content };
+          return { section, displayScope, scopeVal, original: sectionText, polished: content, sourceData: polishSourceData };
         } else if (result.cancelled) {
           // 用户在静默提示里点了「暂停」：这一路明确标成失败（带「重新润色」），
           // 不能像整轮取消那样静默丢弃，否则用户会觉得章节凭空消失。
@@ -2197,6 +2345,15 @@ async function runAiPolish(onlyScopeVal) {
       const sameItem = (a, b) => a.expId === b.expId && a.scopeVal === b.scopeVal;
       finalResults = lastPolishResults.map(r => results.find(x => sameItem(x, r)) || r);
       for (const x of results) if (!finalResults.some(r => sameItem(r, x))) finalResults.push(x);
+    }
+    for (const result of results) {
+      if (!result.polished || result.historyId) continue;
+      result.expId = sourceExp.id;
+      try {
+        const stored = await window.labAPI.polishHistory('append', {...result,expId:sourceExp.id,expName:sourceExp.name,sourceData:JSON.parse(result.sourceData)});
+        if (!stored.ok) throw Error(stored.error);
+        result.historyId = stored.record.id;
+      } catch (error) { showToast('error','润色历史未保存',error.message,8000); }
     }
     lastPolishResults = finalResults;
     renderAiResults();
@@ -2267,6 +2424,7 @@ async function importQuizAnswers(exp, polished) {
     if (!sr.ok) { showToast('error', '导入失败', sr.error, 5000); return; }
     showToast('success', '已追加变体', `已为 ${added} 道思考题追加新回答变体，下次生成自动随机`);
     if (currentExp && currentExp.id === exp.id) await loadVariantsUI(exp);
+    return true;
   } catch (e) {
     showToast('error', '导入异常', e.message, 5000);
   }
@@ -2375,12 +2533,17 @@ async function renderAiResults() {
           showToast('warning', '无法导入', `该结果来自实验「${r.expId}」，请先切回该实验再导入`);
           return;
         }
+        if (!r.sourceData || r.sourceData !== JSON.stringify(currentData || {})) {
+          showToast('error', '无法导入', '测量数据已改变或结果缺少来源记录，请重新润色', 8000);
+          return;
+        }
         if (r.section === '思考题') {
           // 思考题导入=按题号追加回答变体，自动参与生成时的随机组合
-          await importQuizAnswers(currentExp, r.polished);
+          if (await importQuizAnswers(currentExp, r.polished)) await markPolishApplied(r,true);
           return;
         }
         setPolishOverride(currentExp.id, r.section, r.polished);
+        await markPolishApplied(r);
         updateOverrideBar();
         showToast('info', '已导入', `「${r.section}」将在下次生成报告时生效`);
       };
@@ -2878,6 +3041,7 @@ function bindEvents() {
   };
   $('btnSaveSecCfg').onclick = saveSecCfg;
   $('btnFillDefaultData').onclick = fillDefaultData;
+  $('btnFillTestData').onclick = fillTestData;
   $('btnCheckUpdate').onclick = checkForUpdate;
   $('btnCheckDataUpdate').onclick = checkDataUpdate;
   $('btnRestoreBuiltinResources').onclick = restoreBuiltinResources;
@@ -2907,6 +3071,13 @@ function bindEvents() {
   $('btnCloseSettings').onclick = () => closeModal('settingsModal');
   $('btnCancelSettings').onclick = () => closeModal('settingsModal');
   $('btnSaveSettings').onclick = saveAppSettings;
+  $('btnTestApi').onclick = testApiConnection;
+  $('btnFetchApiModels').onclick = fetchApiModels;
+  $('selectDiscoveredModel').onchange = () => {
+    if ($('selectDiscoveredModel').value) $('inputModel').value = $('selectDiscoveredModel').value;
+  };
+  $('polishHistorySearch').oninput = renderPolishHistory;
+  $('btnClearPolishHistory').onclick = () => deletePolishHistory({all:true},'删除全部润色历史及对应已应用的润色？');
   $('btnClearApiKey').onclick = async () => {
     const r = await window.labAPI.saveCredential({ key: '' });
     if (!r.ok) { showToast('error', '清除失败', r.error); return; }
@@ -2916,6 +3087,7 @@ function bindEvents() {
   };
   $('btnAiConfig').onclick = () => { closeModal('studentModal'); openModal('settingsModal'); loadSettingsForm(); switchSettingsPane('ai'); };
   $('selectProvider').onchange = () => {
+    resetDiscoveredModels();
     renderModelChips();
     autoFillApiUrl();
     // 识图处于"继承"时，地址栏跟着主 API 地址走
@@ -2925,8 +3097,10 @@ function bindEvents() {
   $('btnOpenApiConfig').onclick = () => toggleAiConfigPanel('api');
   $('btnOpenVisionConfig').onclick = () => toggleAiConfigPanel('vision');
   if ($('inputApiUrl')) $('inputApiUrl').addEventListener('input', () => {
+    resetDiscoveredModels();
     if (typeof refreshVisionInheritedUrl === 'function') refreshVisionInheritedUrl();
   });
+  $('inputApiKey').addEventListener('input', resetDiscoveredModels);
 
   // 批量生成（预留）
   $('btnBatch').onclick = runBatchGenerate;
@@ -2979,7 +3153,6 @@ function bindEvents() {
 
   // 数据录入
   $('btnSaveData').onclick = saveExcelData;
-  $('btnClearFormData').onclick = clearFormData;
 
   // 报告预览
   $('btnRefreshPreview').onclick = () => { previewLoaded = false; loadPreview(); };
@@ -3099,7 +3272,14 @@ function bindEvents() {
   $('btnChartRefresh').onclick = () => applyChartConfigToUi();
 }
 
-function openModal(id) { $(id).classList.add('show'); }
+function openModal(id) {
+  if (id === 'studentModal') {
+    const info = loadStudentInfo();
+    $('inputName').value = info.name || ''; $('inputId').value = info.id || ''; $('inputClass').value = info.class || '';
+    $('inputExperimentDate').value = info.date;
+  }
+  $(id).classList.add('show');
+}
 function closeModal(id) { $(id).classList.remove('show'); }
 
 // ── 通用确认弹窗（Promise 化）：替代 window.confirm——原生对话框在 Windows 上会破坏
@@ -3175,7 +3355,7 @@ function saveStudent() {
     name: $('inputName').value.trim(),
     id: $('inputId').value.trim(),
     class: $('inputClass').value.trim(),
-    date: new Date().toLocaleDateString('zh-CN'),
+    date: $('inputExperimentDate').value || localToday(),
   };
   saveStudentInfo(info);
   updateStudentDisplay();
@@ -3213,6 +3393,7 @@ const SETTINGS_MODULES = {
     { name: 'files', button: 'btnReportModuleFiles', panel: 'paneReportFiles' },
     { name: 'custom', button: 'btnReportModuleCustom', panel: 'paneCustomVariants' },
     { name: 'sections', button: 'btnReportModuleSections', panel: 'paneSectionVariants' },
+    { name: 'polish', button: 'btnReportModulePolish', panel: 'panePolishHistory' },
   ],
 };
 
@@ -3253,6 +3434,7 @@ async function switchSettingsModule(group, name) {
     if (group === 'reports' && name === 'files') await loadReportsList();
     if (group === 'reports' && name === 'custom') await loadCustomVariantsPane();
     if (group === 'reports' && name === 'sections') await loadSecCfgExpList();
+    if (group === 'reports' && name === 'polish') await loadPolishHistory();
   } catch (error) { showToast('error', '模块加载失败', error.message || String(error), 5000); }
 }
 
@@ -4256,13 +4438,20 @@ async function importPolishAndRegenerate() {
     showToast('warning', '无法导入', '本次结果中没有可导入的章节（仅"可导入"章节支持注入重生成）');
     return;
   }
-  for (const r of ok) setPolishOverride(currentExp.id, r.section, r.polished);
+  try {
+    if (ok.some(r => !r.sourceData || r.sourceData !== JSON.stringify(currentData || {})))
+      throw Error('测量数据已改变或润色缺少来源记录，请重新润色');
+    const context = await getExperimentCalculationContext(currentExp);
+    if (context) for (const r of ok) reportIntegrity.validateText(r.polished, context);
+  } catch (error) { showToast('error', '无法导入', error.message, 8000); return; }
+  for (const r of ok) { setPolishOverride(currentExp.id, r.section, r.polished); await markPolishApplied(r); }
   updateOverrideBar();
   showToast('info', '已导入 ' + ok.length + ' 个章节', ok.map(r => r.section).join('、') + ' —— 正在重新生成报告…');
   await runGenerate();
 }
 
 function loadSettingsForm() {
+  resetDiscoveredModels();
   const s = loadSettings();
   // 旧版本曾提供豆包/通义千问，现已下架：存量设置自动重置为 DeepSeek
   if (s.provider === 'doubao' || s.provider === 'qwen') {
@@ -4448,13 +4637,14 @@ async function runGenerateReport(btn, genExpId) {
     }
   });
   // 自定义思考题：生成前用 AI 生成答案（每次重新请求，不缓存）
+  const polish = await generationPolish(genExp);
   const cq = await ensureCustomQuizAnswers(genExp);
   if (cq.stop) {
     $('logContent').textContent += '\n⏹ 已按你的选择停止生成（自定义思考题答案未生成）\n';
     return false;
   }
   const customQuiz = cq.none ? null : { questions: cq.questions, answers: cq.answers };
-  const result = await window.labAPI.runGenerate(genExp.path, studentInfo, variantChoices, expOverrides(genExp.id), loadSettings().embedDataPhoto !== false, loadSettings().customReportDir || '', customQuiz);
+  const result = await window.labAPI.runGenerate(genExp.path, studentInfo, variantChoices, polish, loadSettings().embedDataPhoto !== false, loadSettings().customReportDir || '', customQuiz);
   if (result.cancelled) {
     $('logContent').textContent += '\n⏹ 生成已取消\n';
     showToast('info', '生成已取消', getDisplayName(genExp));
@@ -4489,9 +4679,9 @@ async function runGenerateReport(btn, genExpId) {
     updateOverrideBar();
     return true;
   } else {
-    $('logContent').textContent += `\n❌ 生成失败（退出码 ${result.exitCode}）\n`;
+    $('logContent').textContent += `\n❌ 生成失败${result.exitCode == null ? '' : `（退出码 ${result.exitCode}）`}\n`;
     if (result.error) $('logContent').textContent += `错误: ${result.error}\n`;
-    const reason = result.error || `退出码 ${result.exitCode}`;
+    const reason = result.error || (result.exitCode == null ? '生成器未能启动或返回结果' : `退出码 ${result.exitCode}`);
     showToast('error', '生成失败', reason, 6000);
     return false;
   }
@@ -4650,7 +4840,7 @@ async function runVariantAI() {
     const messages = [
       {
         role: 'system',
-        content: '你是大学物理实验报告写作助手。根据用户的调整指令，对给定的实验章节文本进行改写：保持物理原理与实验事实正确；必须原样保留 $...$ 公式和 %%DATA:xxx%% 数据占位符；使表达更具个人特色、避免与原文措辞重复。只输出改写后的完整文本，不要输出任何解释或前后缀说明。',
+        content: '你是大学物理实验报告写作助手。以完成本次实验的学生视角撰写报告正文，使用“本实验”“测得”等客观表达；不虚构操作或观察。不得把用户填写、知识库、AI、应用、占位符及内部校验规则等软件说明写入正文。根据用户的调整指令，对给定的实验章节文本进行改写：保持物理原理与实验事实正确；必须原样保留 $...$ 公式和 %%DATA:xxx%% 数据占位符；使表达更具个人特色、避免与原文措辞重复。只输出改写后的完整文本，不要输出任何解释或前后缀说明。',
       },
       {
         role: 'user',

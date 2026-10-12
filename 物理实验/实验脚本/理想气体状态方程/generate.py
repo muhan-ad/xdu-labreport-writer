@@ -16,13 +16,10 @@ from common.custom_plot import render_custom_plot
 # 实验参数
 # ============================================================
 
-R_THEORY = 8.31      # 普适气体常数 J/(mol·K)（照范例）
+from common.constants import MOLAR_GAS_CONSTANT as R_THEORY, CELSIUS_OFFSET
 N_POINTS = 10        # 每张表的测量点数（照范例）
 
 # 实验协议设定值（模板预填，用户可按实际修改）
-PROTOCOL_V = [220, 215, 210, 205, 200, 195, 190, 185, 180, 175]   # 可视体积 V′/mL
-PROTOCOL_T = [18.0, 21.0, 24.0, 27.0, 30.0, 33.0, 36.0, 39.0, 42.0, 45.0]  # 升温温度 t/℃
-PROTOCOL_VP = 220    # 等容过程体积视值 V′/mL
 
 # 模板单元格布局（仅 _create_template 使用；数据读取已迁移到 data.json）
 ROW_P0, ROW_T_ISO, ROW_VP = 3, 4, 5          # 给定量 B 列
@@ -201,28 +198,28 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     # 1) 波义耳—马略特定律：p(V′+V₀) = nRT = k → V′ = k·(1/p) − V₀
     #    以 1/p 为横轴、V′ 为纵轴作图：斜率 = k，截距 = −V₀
     #    **两点法（首末两点，照范例做法）**取斜率与截距；最小二乘只作 r² 对照（见控制台）
-    T_iso = round(t_iso + 273.15, 2)
-    ta_p = [round(p0 + dp, 2) for dp in data["ta_dp"]]
+    T_iso = t_iso + CELSIUS_OFFSET
+    ta_p = [p0 + dp for dp in data["ta_dp"]]
     inv_p = [1.0 / p for p in ta_p]
     v_vals = data["ta_v"]
     fit1 = linear_regression(inv_p, v_vals)              # 仅用于 r² 对照
     k1_raw = (v_vals[-1] - v_vals[0]) / (inv_p[-1] - inv_p[0])
     b1_raw = v_vals[0] - k1_raw * inv_p[0]
-    k1 = round(k1_raw)                 # kPa·mL（1 kPa·mL = 10⁻³ J）
-    V0 = round(-b1_raw, 2)             # mL
+    k1 = k1_raw                 # kPa·mL（1 kPa·mL = 10⁻³ J）
+    V0 = -b1_raw             # mL
     # n = k/(R·T)，k 换算 10⁻³ J 后结果即为 10⁻³ mol
-    n_mmol = round(k1 / (R_THEORY * T_iso), 2)
+    n_mmol = k1_raw / (R_THEORY * (t_iso + CELSIUS_OFFSET))
 
     # 2) 查理定律：p = k₂·T，k₂ = nR/(V′+V₀) → R = k₂(V′+V₀)/n
-    tb_p = [round(p0 + dp, 2) for dp in data["tb_dp"]]
-    tb_T = [round(t + 273.15, 2) for t in data["tb_t"]]
+    tb_p = [p0 + dp for dp in data["tb_dp"]]
+    tb_T = [t + CELSIUS_OFFSET for t in data["tb_t"]]
     fit2 = linear_regression(tb_T, tb_p)                 # 仅用于 r² 对照
     k2_raw = (tb_p[-1] - tb_p[0]) / (tb_T[-1] - tb_T[0])
-    k2 = round(k2_raw, 2)              # kPa/K
-    R_exp = round(k2 * (vp + V0) / n_mmol, 2)   # kPa·mL/K / 10⁻³ mol = J/(mol·K)
-    E = round(abs(R_exp - R_THEORY) / R_THEORY * 100, 1)
+    k2 = k2_raw              # kPa/K
+    R_exp = k2_raw * (vp - b1_raw) / n_mmol   # kPa·mL/K / 10⁻³ mol = J/(mol·K)
+    E = abs(R_exp - R_THEORY) / R_THEORY * 100
 
-    cooling_tp = [(round(t + 273.15, 2), round(p0 + dp, 2))
+    cooling_tp = [(t + CELSIUS_OFFSET, p0 + dp)
                   for t, dp in data["cooling"]]
 
     # ---------- 3. 控制台输出 ----------
@@ -412,7 +409,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
             doc.add_math(r"\frac{pV}{T} = \text{恒量}")
             doc.add_paragraph("（气体质量一定）")
             doc.add_paragraph("又由 R 的定义：")
-            doc.add_math(r"R = \frac{p_{0}V_{m}}{T_{0}} = 8.31\ \mathrm{J/(mol·K)}")
+            doc.add_math(rf"R = {R_THEORY:.8f}\ \mathrm{{J/(mol\cdot K)}}")
             doc.add_paragraph("式中 R 称为普适气体常数。对于任一物质的量为 n mol 的理想气体，有")
             doc.add_math(r"\frac{pV}{T} = \frac{p_{0}nV_{m}}{T_{0}} = nR")
             doc.add_paragraph("即")

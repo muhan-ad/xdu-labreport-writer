@@ -1,31 +1,34 @@
 {
   "t_disk": [
-    60.025,
-    59.981,
-    60.047,
-    60.008,
-    59.939
+    null,
+    null,
+    null,
+    null,
+    null
   ],
   "t_ring": [
-    90.048,
-    89.962,
-    90.021,
-    90.075,
-    89.894
+    null,
+    null,
+    null,
+    null,
+    null
   ],
-  "d_zero": 0.002,
+  "d_zero": null,
   "d_horiz": [
-    1.181,
-    1.183,
-    1.18
+    null,
+    null,
+    null
   ],
   "d_vert": [
-    1.182,
-    1.179,
-    1.183
+    null,
+    null,
+    null
   ],
-  "l_mm": 700.0,
-  "D1_mm": 130.0,
-  "D2_mm": 170.0,
-  "m_g": 480.0
+  "l_mm": null,
+  "D1_mm": null,
+  "D2_mm": null,
+  "m_g": null,
+  "instrument_delta_timer": null,
+  "instrument_delta_micrometer": null,
+  "instrument_delta_ruler": null
 }

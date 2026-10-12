@@ -16,7 +16,6 @@ from common.custom_plot import render_custom_plot
 # 实验参数
 # ============================================================
 
-N_POINTS = 13        # 模板频率点行数（照范例）
 MIN_POINTS = 5       # 每张表至少填写的频率点数
 
 # 模板单元格布局（方式三：仅供 _create_template 生成空白模板；数据真相为 data.json）

@@ -1,97 +1,96 @@
 {
- "实验": "衍射光强分布的测量",
- "groups": [
-  {
-   "name": "实验参数",
-   "fields": [
+  "实验": "衍射光强分布的测量",
+  "groups": [
     {
-     "key": "L",
-     "label": "单缝到探测器距离 L",
-     "type": "number",
-     "unit": "mm",
-     "required": true
+      "name": "实验参数",
+      "fields": [
+        {
+          "key": "L",
+          "label": "单缝到探测器距离 L",
+          "type": "number",
+          "unit": "mm",
+          "required": true,
+          "default": null
+        },
+        {
+          "key": "lambda_nm",
+          "label": "激光标称波长 λ",
+          "type": "number",
+          "unit": "nm",
+          "default": null,
+          "required": true,
+          "exclusiveMinimum": 0,
+          "hint": "按实际光源的标称或校准值填写；可主动选择常用值，也可直接输入。",
+          "presets": [
+            {
+              "label": "红光激光器 650 nm",
+              "value": 650
+            },
+            {
+              "label": "He–Ne 红光 632.8 nm",
+              "value": 632.8
+            }
+          ]
+        },
+        {
+          "key": "given_a",
+          "label": "给定缝宽 a",
+          "type": "number",
+          "unit": "mm",
+          "default": null,
+          "required": true,
+          "hint": "按实际狭缝的标称或校准值填写；不是本次反算得到的缝宽。"
+        }
+      ]
     },
     {
-     "key": "lambda_nm",
-     "label": "激光波长 λ",
-     "type": "number",
-     "unit": "nm",
-     "default": 650,
-     "required": false
+      "name": "光强分布扫描数据（42 点，每 1mm 一点）",
+      "fields": [
+        {
+          "key": "x",
+          "label": "探测器位置 x",
+          "type": "array",
+          "length": 42,
+          "unit": "mm",
+          "required": true,
+          "default": null
+        },
+        {
+          "key": "I",
+          "label": "探测器测得光强 I",
+          "type": "array",
+          "length": 42,
+          "required": true,
+          "default": null
+        }
+      ]
     },
     {
-     "key": "given_a",
-     "label": "给定缝宽 a",
-     "type": "number",
-     "unit": "mm",
-     "default": 0.1,
-     "required": false
+      "name": "实际仪器参数（不使用教材或示例数值）",
+      "fields": [
+        {
+          "key": "instrument_ruler_division_mm",
+          "label": "光具座分度值（按实际仪器填写）",
+          "type": "number",
+          "unit": "mm",
+          "required": true,
+          "default": null,
+          "exclusiveMinimum": 0,
+          "bindConstant": "RULER_DIVISION_MM"
+        },
+        {
+          "key": "instrument_drum_division_mm",
+          "label": "鼓轮分度值（按实际仪器填写）",
+          "type": "number",
+          "unit": "mm",
+          "required": true,
+          "default": null,
+          "exclusiveMinimum": 0,
+          "bindConstant": "DRUM_DIVISION_MM"
+        }
+      ]
     }
-   ]
-  },
-  {
-   "name": "光强分布扫描数据（42 点，每 1mm 一点）",
-   "fields": [
-    {
-     "key": "x",
-     "label": "探测器位置 x",
-     "type": "array",
-     "length": 42,
-     "unit": "mm",
-     "required": true,
-     "default": [
-      0,
-      1,
-      2,
-      3,
-      4,
-      5,
-      6,
-      7,
-      8,
-      9,
-      10,
-      11,
-      12,
-      13,
-      14,
-      15,
-      16,
-      17,
-      18,
-      19,
-      20,
-      21,
-      22,
-      23,
-      24,
-      25,
-      26,
-      27,
-      28,
-      29,
-      30,
-      31,
-      32,
-      33,
-      34,
-      35,
-      36,
-      37,
-      38,
-      39,
-      40,
-      41
-     ]
-    },
-    {
-     "key": "I",
-     "label": "探测器测得光强 I",
-     "type": "array",
-     "length": 42,
-     "required": true
-    }
-   ]
-  }
- ]
+  ],
+  "schemaVersion": 1,
+  "userInputOnly": true
 }

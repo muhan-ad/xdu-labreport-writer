@@ -1,0 +1,68 @@
+'use strict';
+// Real Electron IPC and renderer checks, with an isolated profile and deterministic AI stub.
+const {app,BrowserWindow,ipcMain}=require('electron');
+const fs=require('fs'),path=require('path'),assert=require('node:assert/strict');
+const JSZip=require('jszip');
+const logPath='E:/workspace/codex/2026-10-09/jian/work/desktop-results.log';
+fs.writeFileSync(logPath,'DESKTOP START\n');
+console.log=(...args)=>fs.appendFileSync(logPath,args.map(String).join(' ')+'\n');
+console.error=(...args)=>fs.appendFileSync(logPath,args.map(String).join(' ')+'\n');
+const profile=fs.mkdtempSync('E:/workspace/codex/2026-10-09/jian/work/capacitance-profile-');
+app.setPath('userData',profile);
+app.on('browser-window-created',(_,w)=>w.hide());
+require(process.env.LABREPORT_TEST_APP_ASAR ? path.join(process.env.LABREPORT_TEST_APP_ASAR,'main.js') : '../main');
+const delay=ms=>new Promise(r=>setTimeout(r,ms));
+async function until(fn){const end=Date.now()+60000;while(Date.now()<end){if(await fn())return;await delay(200);}throw Error('UI timeout');}
+app.whenReady().then(async()=>{
+ try{
+  await until(()=>BrowserWindow.getAllWindows().length);
+  const wc=BrowserWindow.getAllWindows()[0].webContents,ev=s=>wc.executeJavaScript(s);
+  await until(()=>ev('typeof experiments!=="undefined" && experiments.length>0').catch(()=>false));
+  await ev("selectExperiment(experiments.find(e=>e.name==='电容与高电阻的测量'))");
+  await until(()=>ev('currentSchema && currentSchema.userInputOnly'));
+  assert.equal(await ev('currentData.r_0'),null);
+  assert.equal(await ev("document.getElementById('btnFillDefaultData').textContent"),'初始化空白表单');
+  assert.equal(await ev("currentSchema.groups.flatMap(g=>g.fields).find(f=>f.key==='r_0').default"),undefined);
+  assert.equal((await ev('window.labAPI.readCalculationContext(currentExp.path)')).ok,false);
+  console.log('PASS: cold profile has no sample values or nominal resistance default');
+  const data=JSON.parse(fs.readFileSync('C:/Users/13238/AppData/Roaming/labreport-writer/实验数据/实验脚本/电容与高电阻的测量/data.json','utf8'));
+  assert.equal((await ev(`window.labAPI.writeData(currentExp.path,${JSON.stringify(data)})`)).ok,true);
+  await ev('loadFormData(currentExp)');
+  const ctx=await ev('window.labAPI.readCalculationContext(currentExp.path)');
+  assert.equal(ctx.ok,true,ctx.error);assert.equal(ctx.data.r_0,100);assert.ok(Math.abs(ctx.data.r_mohm-94.01958751480782)<1e-10);
+  console.log('PASS: calculation IPC uses the saved user input and full precision');
+  const selections={'实验原理':0,'实验方法':0,'误差分析':0,'结论':0};
+  const result=await ev(`window.labAPI.runGenerate(currentExp.path,{name:'测试',id:'TEST',class:'TEST',date:'2026-10-09'},${JSON.stringify(selections)},{},false,'',null)`);
+  assert.equal(result.ok,true,JSON.stringify(result));
+  const zip=await JSZip.loadAsync(fs.readFileSync(result.reportFile)),xml=await zip.file('word/document.xml').async('string');
+  for(const val of ['0.0986','94.02','5.98','93.95','6.05'])assert.ok(xml.includes(val),val);
+  await ev(`currentExp.path=${JSON.stringify(path.dirname(result.reportFile))}; loadFormData(currentExp)`);
+  const sections=await ev('window.labAPI.readSections(currentExp.path)');
+  assert.match(sections.sections['结论'],/%%DATA:r_0:%g%%/);
+  console.log('PASS: real report generation and cache rebinding');
+  const before=fs.readFileSync(result.reportFile);
+  const stale=await ev(`window.labAPI.runGenerate(currentExp.path,{},${JSON.stringify(selections)},{'结论':'R=10.48 MΩ'},false,'',null)`);
+  assert.equal(stale.ok,false);assert.deepEqual(fs.readFileSync(result.reportFile),before);
+  await ev(`window.labAPI.writeData(currentExp.path,${JSON.stringify({...data,r_0:null})})`);
+  const missing=await ev('window.labAPI.runGenerate(currentExp.path,{},{},{},false,"",null)');
+  assert.equal(missing.ok,false);assert.deepEqual(fs.readFileSync(result.reportFile),before);
+  await ev(`window.labAPI.writeData(currentExp.path,${JSON.stringify(data)})`);
+  console.log('PASS: missing nominal value and stale polish cannot overwrite or reuse old report as success');
+  let captured=[];
+  ipcMain.removeHandler('ai-chat');
+  ipcMain.handle('ai-chat',(_,request)=>{captured=request.messages;return{ok:true,content:'1. 请说明本次高阻测量结果\n答：本次为 %%DATA:r_mohm:%.2f%% MΩ，误差 %%DATA:delta_e:%.2f%%%。'};});
+  await ev("saveSettings({...loadSettings(),hasApiKey:true,kbOnly:true});setCustomQuiz(currentExp.id,['请说明本次高阻测量结果'])");
+  const quiz=await ev('ensureCustomQuizAnswers(currentExp)');
+  assert.match(quiz.answers['1'][0],/%%DATA:r_mohm/);
+  assert.ok(captured[0].content.includes('本次用户数据与计算结果'));assert.ok(captured[0].content.includes('"r_0":100'));
+  assert.ok(!captured[0].content.includes('10.48'));
+  ipcMain.removeHandler('ai-chat');ipcMain.handle('ai-chat',()=>({ok:true,content:'1. 请说明本次高阻测量结果\n答：R=10.48 MΩ。'}));
+  assert.equal((await ev('ensureCustomQuizAnswers(currentExp)')).stop,true);
+  console.log('PASS: AI gets current input and rejects numeric sample contamination');
+  await ev("lastPolishResults=[{section:'结论',polished:'R=10.48 MΩ',expId:currentExp.id}]; importPolishAndRegenerate()");
+  assert.deepEqual(await ev('expOverrides(currentExp.id)'),{});
+  console.log('PASS: renderer refuses stale import before saving overrides');
+  const shot=await wc.capturePage(undefined,{stayHidden:true,stayAwake:true});fs.writeFileSync(path.join(profile,'capacitance-form.png'),shot.toPNG());
+  console.log('PROFILE',profile);console.log('PASS: capacitance desktop verification');app.exit(0);
+ }catch(error){console.error(error.stack);app.exit(1);}
+});

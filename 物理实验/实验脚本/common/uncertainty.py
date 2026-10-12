@@ -28,11 +28,67 @@ def std_dev(data: list[float], ddof: int = 1) -> float:
 T_FACTOR_0683 = {2: 1.84, 3: 1.32, 4: 1.20, 5: 1.14, 6: 1.11, 7: 1.09, 8: 1.08}
 
 
-def t_factor(n: int) -> float:
-    """t_{0.683} 因子：n > 6 取 1（σ ≈ s），n ≤ 6 取表值。"""
-    if n > 6:
-        return 1.0
-    return T_FACTOR_0683.get(n, 1.0)
+def _beta_fraction(a, b, x):
+    # Continued fraction for regularized incomplete beta (no scipy dependency).
+    tiny = 1e-300
+    qab, qap, qam = a + b, a + 1, a - 1
+    c = 1.0
+    d = 1 - qab * x / qap
+    if abs(d) < tiny: d = tiny
+    d = 1 / d
+    h = d
+    for m in range(1, 301):
+        aa = m * (b - m) * x / ((qam + 2*m) * (a + 2*m))
+        d = 1 + aa*d
+        if abs(d) < tiny: d = tiny
+        c = 1 + aa/c
+        if abs(c) < tiny: c = tiny
+        d = 1/d
+        h *= d*c
+        aa = -(a+m)*(qab+m)*x / ((a+2*m)*(qap+2*m))
+        d = 1 + aa*d
+        if abs(d) < tiny: d = tiny
+        c = 1 + aa/c
+        if abs(c) < tiny: c = tiny
+        d = 1/d
+        change = d*c
+        h *= change
+        if abs(change-1) < 3e-14: return h
+    raise ValueError("t分布统计系数未收敛")
+
+
+def _regularized_beta(x, a, b):
+    if x <= 0: return 0.0
+    if x >= 1: return 1.0
+    scale = math.exp(math.lgamma(a+b)-math.lgamma(a)-math.lgamma(b)
+                     + a*math.log(x)+b*math.log1p(-x))
+    if x < (a+1)/(a+b+2): return scale*_beta_fraction(a,b,x)/a
+    return 1-scale*_beta_fraction(b,a,1-x)/b
+
+
+def t_factor(n: int, confidence: float = 0.683) -> float:
+    """Two-sided t coefficient. 68.3% follows the course's n>6 approximation.
+
+    95% uses the actual retained sample count; it is not a standard error.
+    """
+    if isinstance(n, bool) or not isinstance(n, int) or n < 2:
+        raise ValueError("统计评定至少需要2个有效测量值")
+    if confidence == 0.683:
+        return 1.0 if n > 6 else T_FACTOR_0683[n]
+    if not isinstance(confidence, (int, float)) or isinstance(confidence, bool) or not 0 < confidence < 1:
+        raise ValueError("置信水平应介于0和1之间")
+    df = n-1
+    def tail(value):
+        return _regularized_beta(df/(df+value*value), df/2, .5)
+    low, high = 0.0, 1.0
+    while tail(high) > 1-confidence:
+        high *= 2
+        if high > 1e12: raise ValueError("置信水平超出有效计算范围")
+    for _ in range(90):
+        middle = (low+high)/2
+        if tail(middle) > 1-confidence: low = middle
+        else: high = middle
+    return (low+high)/2
 
 
 def type_a(data: list[float]) -> float:
@@ -42,7 +98,7 @@ def type_a(data: list[float]) -> float:
     """
     n = len(data)
     if n < 2:
-        return 0.0
+        raise ValueError("统计评定至少需要2个有效测量值")
     return t_factor(n) * std_dev(data) / math.sqrt(n)
 
 

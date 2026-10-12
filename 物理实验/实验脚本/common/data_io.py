@@ -8,9 +8,9 @@ import os
 
 
 def load_data(path):
-    """读取 data.json，返回 dict。文件不存在返回空 dict。"""
+    """读取并校验当前用户 data.json；缺失或无效时停止生成。"""
     if not os.path.exists(path):
-        return {}
+        raise ValueError("未找到用户数据文件，请先填写并保存实验数据")
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     schema_path = os.path.join(os.path.dirname(path), "schema.json")
@@ -22,3 +22,19 @@ def load_data(path):
             errors = result["missing"] + result["invalid"]
             raise ValueError("实验数据无效：" + "；".join(e["label"] + "：" + e.get("reason", "未填写") for e in errors))
     return data
+
+
+def bind_input_parameters(data, namespace, script_dir):
+    """绑定实际仪器参数；不允许以示例或教材仪器数值补齐。"""
+    import math
+    with open(os.path.join(script_dir, "schema.json"), encoding="utf-8") as f:
+        schema = json.load(f)
+    for group in schema.get("groups", []):
+        for field in group.get("fields", []):
+            name = field.get("bindConstant")
+            if not name:
+                continue
+            value = data.get(field["key"])
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError(field["label"] + "：请填写有限正数")
+            namespace[name] = float(value)

@@ -28,34 +28,29 @@ from common.custom_plot import render_custom_plot
 from common.data_io import load_data
 
 # t 因子（置信概率 0.683，与全项目口径一致）：下标 = 测量次数 n
-T_FACTOR = [0, 0, 1.84, 1.32, 1.2, 1.14, 1.11, 1.09, 1.08]
 SQRT3 = math.sqrt(3)
 
 # ── 示例数据（计算器 default，量级参照教材表 3-1-6）──
-L_DEFAULT = 60.0        # 板长，mm（直尺，1 次）
-W_DEFAULT = 40.0        # 板宽，mm（直尺，1 次）
-D_DEFAULT = [8.02, 8.00, 8.03, 8.01, 8.02]   # 孔径，mm（游标卡尺，5 次）
-D_SHI_DEFAULT = [2.006, 2.004, 2.005, 2.007, 2.006]  # 板厚，mm（千分尺，5 次）
-X0_DEFAULT = [10.000, 10.000, 10.001, 10.000, 10.000]  # 缝长起点读数，mm
-X1_DEFAULT = [30.014, 30.010, 30.012, 30.013, 30.011]  # 缝长终点读数，mm
-Y0_DEFAULT = [12.000, 12.001, 12.000, 12.000, 12.001]  # 缝宽起点读数，mm
-Y1_DEFAULT = [13.002, 13.000, 13.001, 13.003, 13.001]  # 缝宽终点读数，mm
-D0_DEFAULT = -0.005     # 螺旋测微计零点读数，mm
-D0_CARD_DEFAULT = 0.000  # 游标卡尺零点读数，mm
+L_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+W_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+D_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+D_SHI_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+X0_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+X1_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+Y0_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+Y1_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+D0_DEFAULT = None  # 无示例兜底；参数必须由用户填写
+D0_CARD_DEFAULT = None  # 无示例兜底；参数必须由用户填写
 
 # 仪器误差（教材表 3-1-1/3-1-3/3-1-4 及分度值）
-DL_INST = 0.2    # 米尺允许误差，mm（500~1000 mm 档 ±0.20）
-DD_INST = 0.02   # 游标卡尺分度值（50 分度），mm
-DD_SHI_INST = 0.004  # 一级千分尺 0~100 mm 示值误差，mm
-DX_INST = 0.01   # 测量显微镜测微器分度值，mm
 
 
 def smartlab_ua(data):
     """A 类不确定度：t 因子 × 均值标准误。"""
     n = len(data)
     if n < 2:
-        return 0.0
-    t = T_FACTOR[n] if n < len(T_FACTOR) else 1.0
+        raise ValueError("统计评定至少需要2个有效测量值")
+    t = t_factor(n)
     mean_val = sum(data) / n
     variance = sum((x - mean_val) ** 2 for x in data) / ((n - 1) * n)
     return t * math.sqrt(variance)
@@ -137,10 +132,10 @@ def _compute(data: dict) -> dict:
     uA_D = smartlab_ua(D_kept); uB_D = dd_inst / SQRT3
     uA_d = smartlab_ua(d_kept); uB_d = dd_shi_inst / SQRT3
     uA_Lx = smartlab_ua(Lx_kept); uA_Ly = smartlab_ua(Ly_kept)
-    t_D = T_FACTOR[len(D_kept)] if len(D_kept) < len(T_FACTOR) else 1.0
-    t_d = T_FACTOR[len(d_kept)] if len(d_kept) < len(T_FACTOR) else 1.0
-    t_Lx = T_FACTOR[len(Lx_kept)] if len(Lx_kept) < len(T_FACTOR) else 1.0
-    t_Ly = T_FACTOR[len(Ly_kept)] if len(Ly_kept) < len(T_FACTOR) else 1.0
+    t_D = t_factor(len(D_kept))
+    t_d = t_factor(len(d_kept))
+    t_Lx = t_factor(len(Lx_kept))
+    t_Ly = t_factor(len(Ly_kept))
 
     if min(D_corrected, d_corrected, Lx_a, Ly_a) <= 0:
         raise ValueError("零点修正后孔径、板厚及缝尺寸必须大于零")
@@ -533,10 +528,9 @@ def _generate_docx(data: dict, output_path: str):
         else:
 
             doc.add_paragraph(
-                "答：米尺最小分度为 1 mm，测量时可精确读到毫米位。估读到分度值的 1/10（即 0.1 mm）"
-                "可以在不降低可靠性的前提下充分利用仪器信息，减小读数随机误差。估读本身就是一次"
-                "在相邻刻线之间的内插，是人为判断的结果，其不确定度约为最小分度的 1/10，故读数结果"
-                "记为 L ± 0.1 mm 量级。"
+                "答：估读是在相邻刻线之间作内插，可充分利用仪器刻度信息。是否估读到分度值的1/10，"
+                "应结合实际米尺分度、刻线清晰度和课程要求判断；估读位数不等于仪器准确度。"
+                "本次测量的不确定度还需结合重复读数的离散程度和实际仪器限差评定。"
             )
 
         doc.add_heading("2. 游标卡尺为什么能准确读出分度值的 1/n？", level=2)

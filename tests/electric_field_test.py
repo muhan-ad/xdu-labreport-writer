@@ -20,7 +20,7 @@ spec.loader.exec_module(module)
 
 class ElectricFieldTemplateTest(unittest.TestCase):
     def setUp(self):
-        self.data = json.loads((EXP / "sample.json").read_text(encoding="utf-8"))
+        self.data = json.loads((ROOT / "tests/fixtures/experiment-data.json").read_text(encoding="utf-8"))[EXP.name]
 
     def test_source_table_shapes_and_key_values(self):
         self.assertEqual(len(self.data["coax_radii"]), 7)

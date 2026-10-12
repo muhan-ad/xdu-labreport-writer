@@ -2,17 +2,77 @@
   "实验": "劈尖干涉",
   "groups": [
     {
+      "name": "光源给定参数",
+      "fields": [
+        {
+          "key": "wavelength_nm",
+          "label": "光源波长 λ",
+          "type": "number",
+          "unit": "nm",
+          "required": true,
+          "default": null,
+          "exclusiveMinimum": 0,
+          "hint": "按实际光源的标称或校准值填写；可主动选择常用值，也可直接输入。",
+          "presets": [
+            {
+              "label": "钠光（实验常用给定值）589.3 nm",
+              "value": 589.3
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "暗纹位置读数（8 次，k = 0~70）",
       "fields": [
-        {"key": "x_k", "label": "暗纹位置读数 x_k", "type": "array", "length": 8, "unit": "mm", "required": true}
+        {
+          "key": "x_k",
+          "label": "暗纹位置读数 x_k",
+          "type": "array",
+          "length": 8,
+          "unit": "mm",
+          "required": true,
+          "default": null
+        }
       ]
     },
     {
       "name": "劈尖长度测量",
       "fields": [
-        {"key": "X1", "label": "劈尖棱边读数 X₁", "type": "number", "unit": "mm", "required": true},
-        {"key": "X2", "label": "细丝位置读数 X₂", "type": "number", "unit": "mm", "required": true}
+        {
+          "key": "X1",
+          "label": "劈尖棱边读数 X₁",
+          "type": "number",
+          "unit": "mm",
+          "required": true,
+          "default": null
+        },
+        {
+          "key": "X2",
+          "label": "细丝位置读数 X₂",
+          "type": "number",
+          "unit": "mm",
+          "required": true,
+          "default": null
+        }
+      ]
+    },
+    {
+      "name": "实际仪器参数（不使用教材或示例数值）",
+      "fields": [
+        {
+          "key": "instrument_delta_instrument",
+          "label": "测量仪器限差（按实际仪器填写）",
+          "type": "number",
+          "unit": "mm",
+          "required": true,
+          "default": null,
+          "exclusiveMinimum": 0,
+          "bindConstant": "DELTA_INSTRUMENT"
+        }
       ]
     }
-  ]
+  ],
+  "schemaVersion": 1,
+  "userInputOnly": true
 }

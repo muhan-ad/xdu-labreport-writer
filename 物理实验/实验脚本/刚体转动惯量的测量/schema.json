@@ -1,55 +1,105 @@
 {
- "实验": "刚体转动惯量的测量",
- "groups": [
-  {
-   "name": "已知量",
-   "fields": [
+  "实验": "刚体转动惯量的测量",
+  "groups": [
     {
-     "key": "m0_g",
-     "label": "下盘质量 m₀",
-     "type": "number",
-     "unit": "g",
-     "default": 622.0,
-     "required": true
+      "name": "已知量",
+      "fields": [
+        {
+          "key": "m0_g",
+          "label": "下盘质量 m₀（实测或器材标定值）",
+          "type": "number",
+          "unit": "g",
+          "default": null,
+          "required": true,
+          "hint": "按本次称量结果或当前器材标定值填写，不使用教材示例质量。"
+        },
+        {
+          "key": "m_g",
+          "label": "圆环质量 m（实测或器材标定值）",
+          "type": "number",
+          "unit": "g",
+          "default": null,
+          "required": true,
+          "hint": "按本次称量结果或当前器材标定值填写，不使用教材示例质量。"
+        }
+      ]
     },
     {
-     "key": "m_g",
-     "label": "圆环质量 m",
-     "type": "number",
-     "unit": "g",
-     "default": 447.5,
-     "required": true
-    }
-   ]
-  },
-  {
-   "name": "测量数据（7 量 × 5 次）",
-   "fields": [
+      "name": "测量数据（7 量 × 5 次）",
+      "fields": [
+        {
+          "key": "measurements",
+          "label": "测量值（行序：r/cm、R/cm、T₀/s、H/cm、d/cm、D/cm、T/s）",
+          "type": "matrix",
+          "rows": 7,
+          "cols": 5,
+          "rowLabels": [
+            "r/cm",
+            "R/cm",
+            "T₀/s",
+            "H/cm",
+            "d/cm",
+            "D/cm",
+            "T/s"
+          ],
+          "colLabels": [
+            "第1次",
+            "第2次",
+            "第3次",
+            "第4次",
+            "第5次"
+          ],
+          "required": true,
+          "default": null
+        }
+      ]
+    },
     {
-     "key": "measurements",
-     "label": "测量值（行序：r/cm、R/cm、T₀/s、H/cm、d/cm、D/cm、T/s）",
-     "type": "matrix",
-     "rows": 7,
-     "cols": 5,
-     "rowLabels": [
-      "r/cm",
-      "R/cm",
-      "T₀/s",
-      "H/cm",
-      "d/cm",
-      "D/cm",
-      "T/s"
-     ],
-     "colLabels": [
-      "第1次",
-      "第2次",
-      "第3次",
-      "第4次",
-      "第5次"
-     ],
-     "required": true
+      "name": "实际仪器参数（不使用教材或示例数值）",
+      "fields": [
+        {
+          "key": "instrument_g",
+          "label": "当地重力加速度（按实际仪器填写）",
+          "type": "number",
+          "unit": "m/s²",
+          "required": true,
+          "default": null,
+          "exclusiveMinimum": 0,
+          "bindConstant": "g"
+        },
+        {
+          "key": "instrument_delta_ruler",
+          "label": "长度量具仪器限差（按实际仪器填写）",
+          "type": "number",
+          "unit": "cm",
+          "required": true,
+          "default": null,
+          "exclusiveMinimum": 0,
+          "bindConstant": "DELTA_RULER"
+        },
+        {
+          "key": "instrument_delta_timer",
+          "label": "计时器仪器限差（按实际仪器填写）",
+          "type": "number",
+          "unit": "s",
+          "required": true,
+          "default": null,
+          "exclusiveMinimum": 0,
+          "bindConstant": "DELTA_TIMER"
+        },
+        {
+          "key": "instrument_delta_balance",
+          "label": "天平仪器限差（按实际仪器填写）",
+          "type": "number",
+          "unit": "g",
+          "required": true,
+          "default": null,
+          "exclusiveMinimum": 0,
+          "bindConstant": "DELTA_BALANCE"
+        }
+      ]
     }
-   ]
-  }
- ]
+  ],
+  "schemaVersion": 1,
+  "userInputOnly": true
 }

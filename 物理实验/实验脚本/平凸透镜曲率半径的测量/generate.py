@@ -10,13 +10,12 @@ from common import *
 from common.docx_report import DocxReportWriter
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
-from common.data_io import load_data
+from common.data_io import load_data, bind_input_parameters
 
 # ── 物理常数 ──
-LAMBDA = 589.3e-6         # 钠光波长 (mm)，589.3 nm
-DELTA_INSTRUMENT = 0.004   # 测量显微镜仪器误差 (mm)
+LAMBDA = None  # 由当前用户填写的波长换算为 mm
+DELTA_INSTRUMENT = None  # 由当前用户仪器参数绑定，无示例兜底
 SKIP_N = 5                 # 逐差法间隔
-T_FACTOR = 1.14            # t 因子 (n=5, df=4, P=0.683) —— 教材表 2-2-1
 
 
 # （方式三：_create_template 已移除，数据真相为 data.json）
@@ -24,6 +23,12 @@ T_FACTOR = 1.14            # t 因子 (n=5, df=4, P=0.683) —— 教材表 2-2-
 
 def _compute(data: dict) -> dict:
     """由左右读数计算各暗环直径、逐差与不确定度，返回结果字典 r。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
+    global LAMBDA
+    wavelength = data.get("wavelength_nm")
+    if isinstance(wavelength, bool) or not isinstance(wavelength, (int, float)) or not math.isfinite(wavelength) or wavelength <= 0:
+        raise ValueError("光源波长 λ：请填写有限正数（nm）")
+    LAMBDA = wavelength * 1e-6
     rings = [int(v) for v in data["rings"]]          # 20, 19, ..., 11
     d_left = [float(v) for v in data["d_left"]]       # 左侧读数
     d_right = [float(v) for v in data["d_right"]]     # 右侧读数
@@ -60,7 +65,7 @@ def _compute(data: dict) -> dict:
     s_R = std_dev(R_kept)
     sigma_R = ot["sigma"]                       # σ = s × t_{0.683}(n)
     sigma3_R = ot["sigma3"]                     # 3σ 检验判据
-    t_used = T_FACTOR if n_pairs == 5 else t_factor(n_pairs)   # n=5 用教材值 1.14
+    t_used = t_factor(n_pairs)   # n=5 用教材值 1.14
     R_bar = mean(R_kept)
     sum_sq_R = sum((x - R_bar) ** 2 for x in R_kept)
 
@@ -96,6 +101,12 @@ def _compute(data: dict) -> dict:
 
 def _generate_docx(data: dict, output_path: str):
     """从 data.json 读取数据，计算并生成 Word 实验报告。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
+    global LAMBDA
+    wavelength = data.get("wavelength_nm")
+    if isinstance(wavelength, bool) or not isinstance(wavelength, (int, float)) or not math.isfinite(wavelength) or wavelength <= 0:
+        raise ValueError("光源波长 λ：请填写有限正数（nm）")
+    LAMBDA = wavelength * 1e-6
 
     # ═══════════════════════════════════════════════
     # 1. 读取数据（含空值校验）
@@ -168,7 +179,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_math(
         r"\bar{R} = \frac{\overline{D_{m}^{2} - D_{m-5}^{2}}}{4 \cdot 5 \cdot \lambda} = "
         r"\frac{" + format_number(avg_diff, sig_figs=7) + r"}"
-        r"{4 \times 5 \times 589.3 \times 10^{-6}}"
+        r"{4 \times 5 \times " + format_number(LAMBDA * 1e6, sig_figs=8) + r" \times 10^{-6}}"
         r" \approx " + format_number(R_bar, sig_figs=6) + r"\,\mathrm{mm}"
     )
 
@@ -210,11 +221,11 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("B类不确定度：")
     doc.add_math(
         r"u(x) = \frac{\Delta_{\text{仪}}}{\sqrt{3}} = "
-        r"\frac{0.004}{\sqrt{3}} \approx 0.0023\,\mathrm{mm}"
+        r"\frac{" + format_number(DELTA_INSTRUMENT, sig_figs=6) + r"}{\sqrt{3}} \approx " + format_number(DELTA_INSTRUMENT / math.sqrt(3), sig_figs=6) + r"\,\mathrm{mm}"
     )
     doc.add_math(
         r"\Delta R_{B} = \frac{4 u(x) \bar{R}}{\bar{D}} = "
-        r"\frac{4 \times 0.0023 \times " + format_number(R_bar, sig_figs=6) + r"}"
+        r"\frac{4 \times " + format_number(DELTA_INSTRUMENT / math.sqrt(3), sig_figs=6) + r" \times " + format_number(R_bar, sig_figs=6) + r"}"
         r"{" + format_number(avg_D, sig_figs=5) + r"}"
         r" \approx " + format_number(u_B, sig_figs=3) + r"\,\mathrm{mm}"
     )

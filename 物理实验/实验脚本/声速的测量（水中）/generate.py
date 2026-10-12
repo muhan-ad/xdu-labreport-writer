@@ -2,12 +2,8 @@
 
 方法：共振干涉法（驻波法） + 位相比较法（李萨如图形法）
 
-理论模型（来源：rag/原理.md 水中声速实验数据报告）：纯水中的声速
-随水温在极大值附近呈抛物型经验关系
-    v = 1557 - 0.0245 * (75 - t)^2   (m/s)
-常温段随水温单调上升，t = 20 °C 时 v ≈ 1482.9 m/s（与纯水常用值
-约 1482 m/s 一致），约为空气中声速的 4.3 倍。相对误差以该水中
-理论值为基准计算。
+参考声速由用户依据实际水温、介质条件与模型或标定来源填写。
+不再使用旧示例报告的经验模型。
 """
 
 import math
@@ -20,14 +16,11 @@ from common import *
 from common.docx_report import DocxReportWriter
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
-from common.data_io import load_data
+from common.data_io import load_data, bind_input_parameters
 
 # ── 物理常数与仪器参数 ──
-V_PEAK = 1557.0     # 水中声速峰值 (m/s)，出现在 t ≈ 75 °C 附近
-T_PEAK = 75.0       # 水中声速极大值对应的水温 (°C)
-K_WATER = 0.0245    # 抛物型经验公式曲率系数 (m/s/°C^2)
-DELTA_F = 0.001     # 频率分辨率 (kHz)
-DELTA_X_INST = 0.02 # 声速测定仪（游标卡尺）Δ_仪 (mm)
+DELTA_F = None  # 由当前用户仪器参数绑定，无示例兜底
+DELTA_X_INST = None  # 由当前用户仪器参数绑定，无示例兜底
 N_HALF = 6          # 逐差法半组数 (12 个测量值分 6+6)
 N_LAMBDA = 6        # λ_i 个数
 
@@ -39,12 +32,7 @@ N_LAMBDA = 6        # λ_i 个数
 # 计算核心
 # ═══════════════════════════════════════════════════
 
-def _v_theory_water(t_celsius: float) -> float:
-    """水中声速随水温的抛物型经验公式：v = 1557 - 0.0245(75 - t)^2。"""
-    return V_PEAK - K_WATER * (T_PEAK - t_celsius) ** 2
-
-
-def _compute_method(L_values: list[float], f: float, t_celsius: float) -> dict:
+def _compute_method(L_values: list[float], f: float, t_celsius: float, v_reference: float) -> dict:
     """对一个方法的 12 个位置测量值进行完整计算。
 
     返回包含所有中间和最终结果的字典。
@@ -89,7 +77,9 @@ def _compute_method(L_values: list[float], f: float, t_celsius: float) -> dict:
     )
 
     # 水中理论声速（抛物型经验公式）
-    v_theory = _v_theory_water(t_celsius)
+    v_theory = float(v_reference)
+    if not math.isfinite(v_theory) or v_theory <= 0:
+        raise ValueError("参考声速必须是有来源的有限正数")
 
     # 相对误差
     relative_error = abs(v_meas - v_theory) / v_theory * 100
@@ -118,16 +108,17 @@ def _compute_method(L_values: list[float], f: float, t_celsius: float) -> dict:
 
 def _compute(data: dict) -> dict:
     """由 data.json 计算两法结果并汇总，返回供变体注入的扁平结果字典 r。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
     f_khz = float(data["f"])
     t_celsius = float(data["t"])
     L1 = [float(v) for v in data["L1"]]
     L2 = [float(v) for v in data["L2"]]
 
-    r1 = _compute_method(L1, f_khz, t_celsius)
+    r1 = _compute_method(L1, f_khz, t_celsius, data["v_reference"])
     if r1 is None:
         print("[错误] 共振干涉法（L1）数据异常，已终止，未生成报告。")
         return None
-    r2 = _compute_method(L2, f_khz, t_celsius)
+    r2 = _compute_method(L2, f_khz, t_celsius, data["v_reference"])
     if r2 is None:
         print("[错误] 位相比较法（L2）数据异常，已终止，未生成报告。")
         return None
@@ -197,11 +188,9 @@ def _write_method_section(doc, r: dict, table_label: str):
     doc.add_table(headers, rows, col_widths=[1.5, 5.0, 6.0])
 
     # ── 理论声速 ──
-    doc.add_paragraph("该水温下纯水声速理论值（抛物型经验公式）：")
+    doc.add_paragraph("本实验条件下的参考声速：")
     doc.add_math(
-        rf"v = {V_PEAK} - {K_WATER}\left( {T_PEAK} - t \right)^{{2}} = "
-        rf"{V_PEAK} - {K_WATER} \times \left( {T_PEAK} - {r['t']:g} \right)^{{2}}"
-        rf" \approx {r['v_theory']:.3f}\,\mathrm{{m/s}}"
+        rf"v_{{\mathrm{{ref}}}} = {r['v_theory']:.3f}\,\mathrm{{m/s}}"
     )
 
     # ── 平均波长与声速 ──
@@ -294,6 +283,7 @@ def _write_method_section(doc, r: dict, table_label: str):
 
 def _generate_docx(data: dict, output_path: str):
     """读取 data.json 数据，计算并生成 Word 实验报告。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
 
     # ── 1. 读取数据（含必填空值校验） ──
     labels = {
@@ -383,12 +373,8 @@ def _generate_docx(data: dict, output_path: str):
     # 理论值
     doc.add_paragraph("在水温 ")
     doc.add_inline_math(rf"t = {r['t']}\,^\circ\mathrm{{C}}")
-    doc.add_run(" 条件下，取水中声速抛物型经验公式 ")
-    doc.add_inline_math(
-        rf"v = {V_PEAK} - {K_WATER}( {T_PEAK} - t )^{{2}}"
-    )
-    doc.add_run("，理论声速为 ")
-    doc.add_inline_math(rf"v_{{\text{{理论}}}} = {r['v_theory']:.1f}\,\mathrm{{m/s}}")
+    doc.add_run(" 条件下，采用用户提供的参考声速 ")
+    doc.add_inline_math(rf"v_{{\mathrm{{ref}}}} = {r['v_theory']:.3f}\,\mathrm{{m/s}}")
     doc.add_run("。")
 
     # 共振干涉法结果
@@ -527,12 +513,9 @@ def _generate_docx(data: dict, output_path: str):
         else:
 
             doc.add_paragraph(
-                "水中声速对水温敏感：对经验公式 v = 1557 − 0.0245(75 − t)² 求导，"
-                "在 20 °C 附近水温每变化 1 °C，声速变化约 2.7 m/s（约 0.2%）。"
-                "频率不变时波长随声速同步改变，若测量过程中水温漂移或不均匀，"
-                "12 个位置读数不再等间距，逐差结果出现额外涨落，A 类不确定度被"
-                "抬高，且与理论值比较时产生系统偏差。因此实验应尽快完成、避免"
-                "手长时间浸入水槽，并记录测量时的水温。"
+                "水中声速随温度及介质条件变化。频率不变时波长随声速改变，"
+                "水温漂移或不均匀会影响位置间隔及逐差结果。应保持水温稳定并记录温度，"
+                "参考声速应来自适用于该温度和介质的模型或标定，不能套用示例条件。"
             )
 
             # ── 保存 ──

@@ -10,17 +10,15 @@ from common import *
 from common.docx_report import DocxReportWriter
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
-from common.data_io import load_data
+from common.data_io import load_data, bind_input_parameters
 
 # ── 物理常数与仪器参数（按教材） ──
 N_CYCLES = 30              # 每次测量的周期数
 N_TRIALS = 5               # 周期重复测量次数
-DELTA_TIMER = 0.01         # 周期测定仪 Δ_仪 (s)
-DELTA_MICROMETER = 0.004   # 一级千分尺 Δ_仪 (mm)
-DELTA_CALIPER = 0.02       # 游标卡尺 Δ_仪 (mm)，直接作 ΔD1/ΔD2
-DELTA_RULER = 0.5          # 米尺 Δ_仪 (mm) → Δl = 0.5/√3 ≈ 0.3 mm
+DELTA_TIMER = None  # 由当前用户仪器参数绑定，无示例兜底
+DELTA_MICROMETER = None  # 由当前用户仪器参数绑定，无示例兜底
+DELTA_RULER = None  # 由当前用户仪器参数绑定，无示例兜底
 
-RING_MASS_G = 480          # 圆环质量 (g)，教材给定量，预填入模板
 
 
 # （方式三：_create_template 已移除，数据真相为 data.json）
@@ -33,6 +31,7 @@ def _compute(data: dict) -> dict:
     variants.json 中 %%DATA:<key>%% 占位符的数据源。除各中间量外，另以
     ×10¹⁰ 量纲提供 G_10、uG_10，并以百分数提供 E_pct，便于结论/误差章节引用。
     """
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
     t_disk = [float(v) for v in data["t_disk"]]     # 摆盘 5 次总时间/s
     t_ring = [float(v) for v in data["t_ring"]]     # 摆盘+圆环 5 次总时间/s
     d_zero = float(data["d_zero"])                  # 千分尺零误差/mm
@@ -141,6 +140,7 @@ def _compute(data: dict) -> dict:
 
 def _generate_docx(data: dict, output_path: str):
     """从 data.json 读取数据，计算并生成 Word 实验报告。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
 
     # ═══════════════════════════════════════════════
     # 1. 读取数据（含空值校验）
@@ -290,7 +290,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("B类不确定度：")
     doc.add_math(
         r"\Delta l = \Delta l_{B} = \frac{\Delta_{\text{仪}}}{\sqrt{3}} = "
-        r"\frac{0.5}{\sqrt{3}} \approx " + format_number(u_l, sig_figs=4) + r"\,\mathrm{mm}"
+        r"\frac{" + format_number(DELTA_RULER, sig_figs=8) + r"}{\sqrt{3}} \approx " + format_number(u_l, sig_figs=4) + r"\,\mathrm{mm}"
     )
 
     # T₀：摆盘周期由 5 次 30 个周期的总时间求得，先对 5 次总时间作 3σ 检验

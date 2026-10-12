@@ -98,3 +98,21 @@ test('old timer cannot clear a newer copy; close cleanup waits for pending write
   const pendingClear = h.guard.clearOwned(); release(); await pendingWrite; await pendingClear;
   assert.equal(await h.clipboard.readText(), ''); assert.equal(h.guard.hasOwned(), false);
 });
+
+test('four vault entries survive restart independently and legacy report credentials migrate without decrypting',async()=>{
+  const h=fixture(),report={username:'REPORT_TEST',password:'REPORT_SECRET'},course={username:'COURSE_TEST',password:'COURSE_SECRET'};
+  const old=await h.storage.encryptStringAsync(JSON.stringify({site:'wlsy.xidian.edu.cn',...report}));
+  fs.writeFileSync(h.file,JSON.stringify({version:1,encrypted:old.toString('base64')}));
+  assert.deepEqual(await h.vault.get('report'),report);assert.equal((await h.vault.status('course')).configured,false);
+  await h.vault.save(course,'course');await h.vault.save({username:'EXAM_TEST',password:'EXAM_SECRET'},'exam');await h.vault.save({username:'VIRTUAL_TEST',password:'VIRTUAL_SECRET'},'simulation');
+  const restarted=createSchoolCredentials(h.dir,h.storage,'win32');assert.deepEqual(await restarted.get('report'),report);assert.deepEqual(await restarted.get('course'),course);
+  assert.equal((await restarted.status('simulation')).configured,true);
+  restarted.remove('course');assert.equal((await restarted.status('course')).configured,false);assert.deepEqual(await restarted.get('report'),report);
+  assert.doesNotMatch(fs.readFileSync(h.file,'utf8'),/REPORT_SECRET|VIRTUAL_SECRET|username|password/);
+  await assert.rejects(restarted.get('invalid'));await assert.rejects(restarted.save(course,'invalid'));
+});
+test('ciphertext copied to another system is rejected despite a shared hostname',async()=>{
+  const h=fixture();await h.vault.save({username:'EXAM_TEST',password:'EXAM_SECRET'},'exam');
+  const state=JSON.parse(fs.readFileSync(h.file));state.systems.course=state.systems.exam;fs.writeFileSync(h.file,JSON.stringify(state));
+  await assert.rejects(h.vault.get('course'),/无法解密/);assert.equal((await h.vault.get('exam')).username,'EXAM_TEST');
+});

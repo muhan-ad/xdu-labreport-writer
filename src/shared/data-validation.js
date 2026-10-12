@@ -39,7 +39,7 @@
           if (field.minimum != null && v < field.minimum) errors.push(label + '：不能小于 ' + field.minimum);
           if (field.exclusiveMinimum != null && v <= field.exclusiveMinimum) errors.push(label + '：必须大于 ' + field.exclusiveMinimum);
           if (field.maximum != null && v > field.maximum) errors.push(label + '：不能大于 ' + field.maximum);
-        } else if (typeof v !== 'string' || v.length > 4096) errors.push(label + '：文本无效或过长');
+        } else if (typeof v !== 'string' || v.length > 4096 || (required && field.required && !v.trim())) errors.push(label + '：文本无效或过长');
       }
     }
     return [...new Set(errors)];

@@ -9,7 +9,7 @@
 </head>
 <body>
   <header class="portal-controls">
-    <div class="portal-topline"><strong>学校实验系统</strong><span class="portal-domain">wlsy.xidian.edu.cn</span><span class="portal-connection" id="connection">HTTP · 未加密</span></div>
+    <div class="portal-topline"><label class="visually-hidden" for="systemSelect">选择学校系统</label><select id="systemSelect" class="portal-system" aria-label="选择学校系统"><option value="report">物理实验报告提交系统</option></select><span class="portal-domain" id="domain">wlsy.xidian.edu.cn</span><span class="portal-connection" id="connection">HTTP · 未加密</span></div>
     <nav class="portal-actions" aria-label="学校网站操作">
       <button id="back" disabled>返回</button><button id="reload">刷新</button>
       <span class="portal-status" id="status" role="status">正在打开学校网站…</span>
@@ -20,12 +20,12 @@
     </nav>
   </header>
   <dialog id="credentialsDialog" class="credential-dialog" aria-labelledby="credentialsTitle">
-    <div class="credential-heading"><div><span class="credential-eyebrow">学校系统 · 本机保存</span><h1 id="credentialsTitle">账号密码管理</h1></div><button id="closeCredentials" aria-label="关闭账号密码管理">关闭</button></div>
+    <div class="credential-heading"><div><span class="credential-eyebrow"><span id="credentialSystem">物理实验报告提交系统</span> · 本机保存</span><h1 id="credentialsTitle">账号密码管理</h1></div><button id="closeCredentials" aria-label="关闭账号密码管理">关闭</button></div>
     <p id="credentialState" class="credential-state" role="status">正在检查加密存储…</p>
     <form id="credentialForm" autocomplete="off">
       <label for="credentialAccount">账号</label><input id="credentialAccount" type="password" autocomplete="off" spellcheck="false" maxlength="512" placeholder="输入学校账号（掩码显示）" required />
       <label for="credentialPassword">密码</label><input id="credentialPassword" type="password" autocomplete="off" spellcheck="false" maxlength="4096" placeholder="输入学校密码（掩码显示）" required />
-      <p class="credential-note">已保存内容不回显；修改时请重新输入账号和密码。保存仅用于本机管理，不会发送到学校网站。</p>
+      <p class="credential-note">已保存内容不回显；修改时请重新输入账号和密码。各系统分别保存，不会覆盖其他系统的账号密码。保存仅用于本机管理，不会发送到学校网站。</p>
       <p id="credentialMessage" class="credential-message" role="status"></p>
       <div class="credential-footer"><button id="deleteCredentials" type="button" disabled>删除已保存账号</button><button id="saveCredentials" class="credential-save" type="submit">加密保存</button></div>
     </form>

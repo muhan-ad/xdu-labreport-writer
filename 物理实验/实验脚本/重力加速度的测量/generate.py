@@ -13,13 +13,10 @@ from common.custom_plot import render_custom_plot
 from common.data_io import load_data
 
 # ── 物理常数与仪器参数（按教材） ──
-G0_XIAN = 9.797               # 西安标准重力加速度 m/s²
-DELTA_TIMER = 0.01            # 秒表 Δ_仪 (s)
 N_HOLES = 9                   # 测量孔数
 N_TRIALS = 8                  # 每孔 10 周期重复测量次数
 
 # 支点位置预填值（范例，用户可按需修改，单位 cm）
-DEFAULT_PIVOT_POSITIONS = [17.5, 15.5, 13.5, 11.5, 9.5, 7.5, 5.5, 3.5, 1.5]
 
 
 def _plot_axis_limits(h_values, periods):
@@ -268,6 +265,7 @@ def _generate_docx(data: dict, output_path: str):
     # ── 零、实验标题 ──
     doc.add_title("重力加速度的测量")
     doc.add_student_info()
+    doc.add_paragraph("重力参考值来源及适用地点：" + str(data["g0_source"]))
 
     # ── 变体组合：实验原理 / 实验方法（存在 variants.json 且应用传入选择时生效）──
     variants = compose(SCRIPT_DIR, r)
@@ -372,7 +370,7 @@ def _generate_docx(data: dict, output_path: str):
         doc.add_paragraph_rich(variants["结果分析"])
     doc.add_paragraph(
         f"通过复摆实验测量重力加速度 g，实验结果得到 g = {g_calc:.3f} m/s²，"
-        f"与西安标准值 g₀ = {g0} m/s² 相比，相对误差为 {format_percent(delta_E)}%。"
+        f"与当地参考值 g₀ = {g0} m/s² 相比，相对误差为 {format_percent(delta_E)}%。"
     )
     doc.add_paragraph(
         "误差来源主要包括：（1）从 T-h 曲线上读取对称点坐标时引入的读数误差，"

@@ -1,34 +1,39 @@
 {
-  "L": 0.973,
-  "D": 45.0,
-  "H": 0.939,
-  "d_0": -0.015,
+  "L": null,
+  "D": null,
+  "H": null,
+  "d_0": null,
   "d_shi": [
-    0.626,
-    0.625,
-    0.628,
-    0.622,
-    0.625,
-    0.623
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
   ],
   "ni_zheng": [
-    2.06,
-    2.7,
-    3.32,
-    3.91,
-    4.38,
-    4.95,
-    5.56,
-    6.15
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
   ],
   "ni_jian": [
-    1.96,
-    2.58,
-    3.2,
-    3.78,
-    4.44,
-    5.01,
-    5.62,
-    6.23
-  ]
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "instrument_g": null,
+  "instrument_d_inst_err": null,
+  "instrument_delta_L": null,
+  "instrument_delta_H": null,
+  "instrument_delta_D": null
 }

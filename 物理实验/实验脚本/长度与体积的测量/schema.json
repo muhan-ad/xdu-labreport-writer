@@ -9,7 +9,7 @@
           "label": "米尺允许误差 ΔL",
           "type": "number",
           "unit": "mm",
-          "default": 0.2,
+          "default": null,
           "required": true,
           "minimum": 0
         },
@@ -18,7 +18,7 @@
           "label": "游标卡尺分度值 ΔD",
           "type": "number",
           "unit": "mm",
-          "default": 0.02,
+          "default": null,
           "required": true,
           "minimum": 0
         },
@@ -27,7 +27,7 @@
           "label": "千分尺示值误差 Δd",
           "type": "number",
           "unit": "mm",
-          "default": 0.004,
+          "default": null,
           "required": true,
           "minimum": 0
         },
@@ -36,7 +36,7 @@
           "label": "测量显微镜分度值 Δx",
           "type": "number",
           "unit": "mm",
-          "default": 0.01,
+          "default": null,
           "required": true,
           "minimum": 0
         }
@@ -50,16 +50,16 @@
           "label": "螺旋测微计零点读数 d₀",
           "type": "number",
           "unit": "mm",
-          "default": -0.005,
-          "required": false
+          "default": null,
+          "required": true
         },
         {
           "key": "d0_card",
           "label": "游标卡尺零点读数 D₀",
           "type": "number",
           "unit": "mm",
-          "default": 0.0,
-          "required": false
+          "default": null,
+          "required": true
         }
       ]
     },
@@ -71,7 +71,7 @@
           "label": "板长 L",
           "type": "number",
           "unit": "mm",
-          "default": 60.0,
+          "default": null,
           "required": true,
           "exclusiveMinimum": 0
         },
@@ -80,7 +80,7 @@
           "label": "板宽 W",
           "type": "number",
           "unit": "mm",
-          "default": 40.0,
+          "default": null,
           "required": true,
           "exclusiveMinimum": 0
         }
@@ -96,13 +96,7 @@
           "length": 5,
           "unit": "mm",
           "required": true,
-          "default": [
-            8.02,
-            8.0,
-            8.03,
-            8.01,
-            8.02
-          ],
+          "default": null,
           "exclusiveMinimum": 0
         },
         {
@@ -112,13 +106,7 @@
           "length": 5,
           "unit": "mm",
           "required": true,
-          "default": [
-            2.006,
-            2.004,
-            2.005,
-            2.007,
-            2.006
-          ],
+          "default": null,
           "exclusiveMinimum": 0
         }
       ]
@@ -133,13 +121,7 @@
           "length": 5,
           "unit": "mm",
           "required": true,
-          "default": [
-            10.0,
-            10.0,
-            10.001,
-            10.0,
-            10.0
-          ]
+          "default": null
         },
         {
           "key": "X1",
@@ -148,13 +130,7 @@
           "length": 5,
           "unit": "mm",
           "required": true,
-          "default": [
-            30.014,
-            30.01,
-            30.012,
-            30.013,
-            30.011
-          ]
+          "default": null
         },
         {
           "key": "Y0",
@@ -163,13 +139,7 @@
           "length": 5,
           "unit": "mm",
           "required": true,
-          "default": [
-            12.0,
-            12.001,
-            12.0,
-            12.0,
-            12.001
-          ]
+          "default": null
         },
         {
           "key": "Y1",
@@ -178,15 +148,11 @@
           "length": 5,
           "unit": "mm",
           "required": true,
-          "default": [
-            13.002,
-            13.0,
-            13.001,
-            13.003,
-            13.001
-          ]
+          "default": null
         }
       ]
     }
-  ]
+  ],
+  "schemaVersion": 1,
+  "userInputOnly": true
 }

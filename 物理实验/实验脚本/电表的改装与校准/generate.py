@@ -25,7 +25,6 @@ CURRENT_RANGE_MULT = 9
 # 电压表改装：改装为 10V 量程，串联分压电阻使总内阻 10 kΩ
 VOLT_RH_TOTAL = 10000.0        # Ω
 # R_g 测量（数字万用表）B 类不确定度简化：不编造仪表规格，仅统计 A 类 + 说明
-T_FACTOR_RG = 1.32             # t 因子 (n=3, df=2, P=0.683)
 
 
 # （方式三：_create_template 已移除，数据真相为 data.json）
@@ -57,13 +56,13 @@ def _compute(data: dict) -> dict:
     # 5. 不确定度（统计口径，公式自动算）
     n = len(rg)
     s_rg = std_dev(rg)                                  # 实验标准差 s
-    u_A_rg = T_FACTOR_RG * s_rg / math.sqrt(n)          # A 类（t 因子修正）
+    u_A_rg = t_factor(n) * s_rg / math.sqrt(n)          # A 类（t 因子修正）
     u_r_s = r_s_calc * (u_A_rg / rg_mean)               # R_s 相对传递
     u_r_h = u_A_rg                                      # R_h = const - R_g → 不确定度同 R_g
 
     return {
         "rg": rg, "rg_mean": rg_mean, "u_A_rg": u_A_rg,
-        "ot_rg": ot_rg, "s_rg": s_rg, "n_rg": n, "t_rg": T_FACTOR_RG,
+        "ot_rg": ot_rg, "s_rg": s_rg, "n_rg": n, "t_rg": t_factor(n),
         "r_s_calc": r_s_calc, "u_r_s": u_r_s,
         "r_h_calc": r_h_calc, "u_r_h": u_r_h,
         "i_x": i_x, "i_s": i_s, "i_corr": i_corr,

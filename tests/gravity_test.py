@@ -15,7 +15,7 @@ spec.loader.exec_module(gravity)
 
 class GravityTests(unittest.TestCase):
     def setUp(self):
-        self.data = json.loads((EXP / "sample.json").read_text(encoding="utf-8"))
+        self.data = json.loads((ROOT / "tests/fixtures/experiment-data.json").read_text(encoding="utf-8"))[EXP.name]
 
     def test_horizontal_line_crosses_both_measured_branches(self):
         result = gravity._compute(self.data)

@@ -15,15 +15,14 @@ from common import *
 from common.docx_report import DocxReportWriter
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
-from common.data_io import load_data
+from common.data_io import load_data, bind_input_parameters
 
 # ============================================================
 # 实验参数（按教材）
 # ============================================================
 
 N_MEAS = 4               # 测量组数（教材表 3-9-2）
-T_FACTOR = 1.20          # t_0.683 因子（n=4，见迈克尔逊脚本 T_TABLE）
-DELTA_INSTR_MIN = 1.0    # JJY 分光计分度值 1′（仪器误差限）
+DELTA_INSTR_MIN = None  # 由当前用户仪器参数绑定，无示例兜底
 
 # data.json 中 readings 矩阵（4 组 × 8 列）的列名，顺序与原表 B~I 列一致
 COL_LABELS = ["θA 度", "θA 分", "θB 度", "θB 分",
@@ -218,6 +217,7 @@ def _subst_latex(i: int, t, corr_a: int, corr_b: int, alpha: float) -> str:
 
 def _generate_docx(data: dict, output_path: str) -> bool:
     """从 data.json 读取 → 计算 → 输出 docx 报告。成功返回 True，数据缺失返回 False。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
     # 校验必填数据（required 字段为 null 或 matrix 含 null → 缺失）
     v = data.get("readings")
     flat = ([x for row in v for x in row]
@@ -335,7 +335,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
                  f" \\approx {r['delta_A_min']:.1f}′")
     doc.add_paragraph("B类不确定度：")
     doc.add_math(f"\\Delta_{{B}} = \\frac{{\\Delta_{{\\text{{仪}}}}}}{{\\sqrt{{3}}}}"
-                 f" = \\frac{{1′}}{{\\sqrt{{3}}}}"
+                 f" = \\frac{{{DELTA_INSTR_MIN:g}′}}{{\\sqrt{{3}}}}"
                  f" \\approx {r['delta_B_min']:.2f}′")
     doc.add_paragraph("合成不确定度：")
     doc.add_math(f"\\Delta\\alpha = \\sqrt{{\\Delta_{{A}}^{{2}} + \\Delta_{{B}}^{{2}}}}"

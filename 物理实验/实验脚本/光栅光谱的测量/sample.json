@@ -1,56 +1,57 @@
 {
   "angles": [
     [
-      170,
-      0,
-      350,
-      0,
-      190,
-      2,
-      9,
-      58
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
     ],
     [
-      169,
-      59,
-      349,
-      59,
-      189,
-      58,
-      9,
-      54
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
     ],
     [
-      170,
-      35,
-      350,
-      35,
-      189,
-      27,
-      9,
-      23
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
     ],
     [
-      170,
-      28,
-      350,
-      28,
-      189,
-      24,
-      9,
-      20
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
     ],
     [
-      170,
-      24,
-      350,
-      24,
-      189,
-      18,
-      9,
-      14
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
     ]
   ],
-  "lambda_green": 546.1,
-  "kmax_obs": 4
+  "lambda_green": null,
+  "kmax_obs": null,
+  "instrument_delta_instr_min": null
 }

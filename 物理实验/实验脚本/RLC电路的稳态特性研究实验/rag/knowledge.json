@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "experiment": "RLC电路的稳态特性研究实验",
+  "source": {
+    "kind": "existing-symbolic-model",
+    "document": "原有RLC符号原理",
+    "chapter": null,
+    "pageStart": null,
+    "sha256": null,
+    "adaptation": false
+  },
+  "purpose": "研究RLC串联电路的幅频与相频特性。",
+  "principle": "在正弦稳态下，阻值为 $R$ 的电阻、电感 $L$ 与电容 $C$ 串联接于有效值恒定的交流电源，回路总阻抗为 $Z = R + j\\left(\\omega L - \\frac{1}{\\omega C}\\right)$，其模为 $|Z| = \\sqrt{R^{2} + \\left(\\omega L - \\frac{1}{\\omega C}\\right)^{2}}$，总电压与电流的相位差为 $\\varphi = \\arctan\\frac{\\omega L - 1/(\\omega C)}{R}$。当感抗与容抗相等，即 $\\omega L = \\frac{1}{\\omega C}$ 时电路发生串联谐振，谐振角频率 $\\omega_{0} = \\frac{1}{\\sqrt{LC}}$，对应谐振频率 $f_{0} = \\frac{1}{2\\pi\\sqrt{LC}}$。谐振时阻抗取最小值 $R$，电流达到最大并与总电压同相；偏离谐振频率后电流逐渐下降，形成以 $f_{0}$ 为峰的幅频特性曲线。幅频与相频两条特性曲线共同刻画了串联回路的稳态响应与选频作用。",
+  "formulas": [
+    "Z=R+\\mathrm{j}(\\omega L-1/(\\omega C));\\quad f_0=\\frac{1}{2\\pi\\sqrt{LC}}"
+  ],
+  "method": "按实际元件参数连接串联回路，保持输入幅值稳定，逐点记录频率、输入电压、电阻电压及相位测量数据。",
+  "conditions": "实验条件应满足相应物理模型的适用要求；仪器量程、分辨力与标定参数以实际使用的仪器为准。",
+  "uncertainty": "误差应结合本次数据和仪器说明评定。重复测量的随机分散用于A类不确定度，分辨力、零点、标定等用于B类不确定度；独立分量按平方和开方合成，相关量应考虑协方差。不能把多次平均视为消除系统误差，也不能仅凭结果接近就判定测量准确。仪器误差限按所用仪器的说明评定，参考值应与实验条件相符。",
+  "questions": [],
+  "dataPolicy": {
+    "userInputOnly": true,
+    "examplesAreMeasurements": false,
+    "resultSource": "current-user-calculation",
+    "rules": "本库只提供原理、符号公式和操作条件。所有测量值、仪器参数、参考输入及派生结果必须来自当前用户数据与计算结果；缺失则提示补填，禁止以教材举例或示例报告替代。实验报告示例只作为格式参考。具体结果用%%DATA:键:格式%%占位符注入，结论不得预先宣称准确、合理或一致。"
+  },
+  "reviewStatus": "textbook-source-missing"
+}

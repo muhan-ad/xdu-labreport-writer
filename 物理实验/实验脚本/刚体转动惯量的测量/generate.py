@@ -10,18 +10,15 @@ from common import *
 from common.docx_report import DocxReportWriter
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
-from common.data_io import load_data
+from common.data_io import load_data, bind_input_parameters
 
 # ── 物理常数与仪器参数（按教材 + 范例） ──
-g = 9.8                         # 重力加速度 m/s²
-T_FACTOR = 1.14                 # n=5 时 t_0.683 因子
-DELTA_RULER = 0.05              # 卷尺 Δ仪 (cm) — r, R, H
-DELTA_TIMER = 0.01              # 数字毫秒计 Δ仪 (s) — T₀, T
-DELTA_BALANCE = 0.5             # 物理天平 Δ仪 (g) — m₀, m
+g = None  # 由当前用户仪器参数绑定，无示例兜底
+DELTA_RULER = None  # 由当前用户仪器参数绑定，无示例兜底
+DELTA_TIMER = None  # 由当前用户仪器参数绑定，无示例兜底
+DELTA_BALANCE = None  # 由当前用户仪器参数绑定，无示例兜底
 
 # 预填已知量（教材值，用户可按实物修改）
-M0_G = 622.0                    # 下盘质量/g
-M_G = 447.5                     # 圆环质量/g
 
 
 # （方式三：_create_template 已移除，数据真相为 data.json）
@@ -98,6 +95,7 @@ def _compute(data: dict) -> dict:
 
     默认（无变体选择）时其全部数值与原 _generate_docx 内联计算完全一致。
     """
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
     # 已知量
     m0_g = float(data["m0_g"])
     m_g = float(data["m_g"])
@@ -191,6 +189,7 @@ def _compute(data: dict) -> dict:
 
 def _generate_docx(data: dict, output_path: str):
     """从 data.json 读取数据，计算并生成 Word 实验报告。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
 
     # ═══════════════════════════════════════════════
     # 1. 读取数据（含空值校验）
@@ -313,10 +312,10 @@ def _generate_docx(data: dict, output_path: str):
 
     # (1) 已知 Δ仪
     doc.add_paragraph("(1) 已知：")
-    doc.add_run("Δm₀ = 0.5 g，卷尺 ")
-    doc.add_inline_math(r"\Delta_{\text{仪}} = 0.5\,\mathrm{mm}")
+    doc.add_run(f"Δm₀ = {DELTA_BALANCE:g} g，长度量具 ")
+    doc.add_inline_math(rf"\Delta_{{\text{{仪}}}} = {DELTA_RULER*10:g}\,\mathrm{{mm}}")
     doc.add_run("，秒表 ")
-    doc.add_inline_math(r"\Delta_{\text{仪}} = 0.01\,\mathrm{s}")
+    doc.add_inline_math(rf"\Delta_{{\text{{仪}}}} = {DELTA_TIMER:g}\,\mathrm{{s}}")
     doc.add_paragraph("")
 
     # (2) Δr
@@ -581,7 +580,7 @@ def _write_deviation_section(doc, data, avg, u, u_A, u_B, s_val, sigma,
     # σ
     doc.add_math(
         r"\sigma = s_{(" + symbol + r")} \times t_{0.683} = "
-        + format_number(s_val, sig_figs=3) + r" \times " + f"{T_FACTOR}"
+        + format_number(s_val, sig_figs=3) + r" \times " + f"{t_factor(n):g}"
         + r" \approx " + format_number(sigma, sig_figs=3) + r"\,\mathrm{" + unit + r"}"
     )
 

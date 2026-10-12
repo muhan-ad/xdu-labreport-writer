@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import shutil
 
 from docx import Document
 from docx.oxml.ns import qn
@@ -80,6 +81,14 @@ def image_paragraph_indexes(path):
 def main():
     problems = []
     work = tempfile.mkdtemp(prefix='chart_helper_')
+    global EXP_PATH, SCRIPTS_ROOT
+    fixture_dir = os.path.join(work, EXP_NAME)
+    os.makedirs(fixture_dir)
+    shutil.copytree(os.path.join(SCRIPTS_ROOT, 'common'), os.path.join(work, 'common'))
+    shutil.copy2(os.path.join(EXP_PATH, 'schema.json'), os.path.join(fixture_dir, 'schema.json'))
+    with open(os.path.join(ROOT, 'tests/fixtures/experiment-data.json'), encoding='utf-8') as f: fixture_data = json.load(f)[EXP_NAME]
+    with open(os.path.join(fixture_dir, 'data.json'), 'w', encoding='utf-8') as f: json.dump(fixture_data, f)
+    EXP_PATH, SCRIPTS_ROOT = fixture_dir, work
 
     # ── 1) 预览：真实实验数据出图 ──
     out_png = os.path.join(work, 'preview.png')

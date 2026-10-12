@@ -1,50 +1,95 @@
 {
- "实验": "声速的测量（水中）",
- "groups": [
-  {
-   "name": "实验参数",
-   "fields": [
+  "实验": "声速的测量（水中）",
+  "groups": [
     {
-     "key": "f",
-     "label": "谐振频率 f",
-     "type": "number",
-     "unit": "kHz",
-     "required": true
+      "name": "实验参数",
+      "fields": [
+        {
+          "key": "f",
+          "label": "谐振频率 f",
+          "type": "number",
+          "unit": "kHz",
+          "required": true,
+          "default": null
+        },
+        {
+          "key": "t",
+          "label": "水温 t",
+          "type": "number",
+          "unit": "°C",
+          "required": true,
+          "default": null
+        }
+      ]
     },
     {
-     "key": "t",
-     "label": "水温 t",
-     "type": "number",
-     "unit": "°C",
-     "required": true
-    }
-   ]
-  },
-  {
-   "name": "共振干涉法（驻波法）— 振幅极大值位置（12 次）",
-   "fields": [
+      "name": "共振干涉法（驻波法）— 振幅极大值位置（12 次）",
+      "fields": [
+        {
+          "key": "L1",
+          "label": "位置 L_i",
+          "type": "array",
+          "length": 12,
+          "unit": "mm",
+          "required": true,
+          "default": null
+        }
+      ]
+    },
     {
-     "key": "L1",
-     "label": "位置 L_i",
-     "type": "array",
-     "length": 12,
-     "unit": "mm",
-     "required": true
-    }
-   ]
-  },
-  {
-   "name": "位相比较法（李萨如图形法）— 同/反相点位置（12 次）",
-   "fields": [
+      "name": "位相比较法（李萨如图形法）— 同/反相点位置（12 次）",
+      "fields": [
+        {
+          "key": "L2",
+          "label": "位置 L_i",
+          "type": "array",
+          "length": 12,
+          "unit": "mm",
+          "required": true,
+          "default": null
+        }
+      ]
+    },
     {
-     "key": "L2",
-     "label": "位置 L_i",
-     "type": "array",
-     "length": 12,
-     "unit": "mm",
-     "required": true
+      "name": "实际仪器参数（不使用教材或示例数值）",
+      "fields": [
+        {
+          "key": "instrument_delta_f",
+          "label": "频率仪器限差（按实际仪器填写）",
+          "type": "number",
+          "unit": "kHz",
+          "required": true,
+          "default": null,
+          "exclusiveMinimum": 0,
+          "bindConstant": "DELTA_F"
+        },
+        {
+          "key": "instrument_delta_x_inst",
+          "label": "位置仪器限差（按实际仪器填写）",
+          "type": "number",
+          "unit": "mm",
+          "required": true,
+          "default": null,
+          "exclusiveMinimum": 0,
+          "bindConstant": "DELTA_X_INST"
+        }
+      ]
+    },
+    {
+      "name": "参考值来源",
+      "fields": [
+        {
+          "key": "v_reference",
+          "label": "对应水温与介质条件的参考声速（须有模型或标定依据）",
+          "type": "number",
+          "unit": "m/s",
+          "required": true,
+          "default": null,
+          "exclusiveMinimum": 0
+        }
+      ]
     }
-   ]
-  }
- ]
+  ],
+  "schemaVersion": 1,
+  "userInputOnly": true
 }

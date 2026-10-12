@@ -13,10 +13,6 @@ from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
 
 # 给定量（教材/仪器标称，预填入模板）
-I_WORK_MA = 10.0    # 表1 固定工作电流 I/mA
-IM_FIXED_MA = 500.0  # 表2 固定励磁电流 Im/mA
-IM_LIST_MA = [200, 300, 400, 500, 600, 700, 800, 900, 1000]  # 表1 励磁电流 Im/mA
-I_LIST_MA = [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]   # 表2 工作电流 I/mA
 
 # ---- 数据.xlsx 模板布局（仅供 _create_template 生成模板使用，读取已改为 data.json）----
 ROW_KH = 3        # B3: 霍尔片灵敏度 K_H/(V/(A·T))，用户按元件标称值填写
@@ -26,7 +22,6 @@ ROW_IM_FIXED = 5  # B5: 表2 励磁电流 Im/mA（预填 500）
 T1_TITLE, T1_IM, T1_U1, T1_U2, T1_UH, T1_B = 7, 8, 9, 10, 11, 12
 T2_TITLE, T2_I, T2_U1, T2_U2, T2_UH, T2_B = 14, 15, 16, 17, 18, 19
 DATA_START_COL, DATA_END_COL = "B", "J"  # 每表 9 个数据列
-N_POINTS = 9
 
 
 # （方式三：_create_template 已移除，数据真相为 data.json）

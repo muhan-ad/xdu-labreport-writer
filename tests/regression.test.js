@@ -28,8 +28,8 @@ test('settings navigation SVGs retain complete heads, dots and refresh arrow', (
     return svg[0];
   };
   assert.match(icon('btnNavAi'), /<circle cx="12" cy="6" r="4"\/>/);
-  assert.doesNotMatch(icon('btnAiModuleSkills'), /<polyline\b/);
-  assert.match(icon('btnAiModuleSkills'), /<path\b/);
+  const skillsStart = html.indexOf('id="btnAiModuleSkills"');
+  assert.doesNotMatch(html.slice(skillsStart, html.indexOf('</button>', skillsStart)), /<svg\b/);
   for (const id of ['btnNavHelp', 'btnNavNotice', 'btnNavDanger']) {
     assert.match(icon(id), /<circle cx="12" cy="17" r="0\.9" fill="currentColor" stroke="none"\/>/);
     assert.doesNotMatch(icon(id), /x2="12\.01"/);
@@ -238,6 +238,11 @@ test('fixed matrices reject entirely missing rows while RLC keeps explicitly opt
     const schemaPath = path.join(base, name, 'schema.json');
     if (!fs.existsSync(schemaPath)) continue;
     const schema = JSON.parse(read(schemaPath)), sample = JSON.parse(read(path.join(base, name, 'sample.json')));
+    assert.equal(validation.validate(schema, sample, false).length, 0, name + ' draft structure');
+    if (schema.userInputOnly) {
+      assert.ok(validation.validate(schema, sample).length > 0, name + ' blank input must block generation');
+      continue;
+    }
     assert.equal(validation.validate(schema, sample).length, 0, name + ' baseline');
     for (const group of schema.groups) for (const field of group.fields) {
       if (field.type !== 'matrix' || !field.required) continue;
@@ -310,7 +315,7 @@ test('startup stays quiet offline or up to date, and failed checks can be retrie
 function uiContext() {
   const nodes = {};
   return vm.createContext({
-    currentExp: { id: 'A', path: 'A', reportFile: 'A.docx' }, currentSchema: {},
+    currentExp: { id: 'A', path: 'A', reportFile: 'A.docx' }, currentSchema: {}, currentData: {},
     isGenerating: false, isBatchRunning: false, isSavingData: false, isSwitchingExperiment: false,
     isDataModified: true, isAiPolishing: false,
     aiPolishRequestIds: new Set(), aiFlightOrder: new Map(), aiFollowedRequestId: null, aiThinkingChars: 0,
@@ -332,6 +337,7 @@ function settingsModulesContext() {
     loadReportsList: async () => calls.push('files'),
     loadCustomVariantsPane: async () => calls.push('custom'),
     loadSecCfgExpList: async () => calls.push('sections'),
+    loadPolishHistory: async () => calls.push('polish'),
     showToast: (...args) => calls.push(args),
   });
   load(context, 'const SETTINGS_MODULES =', '// ── 感谢声明');
@@ -368,8 +374,8 @@ test('settings module keyboard navigation wraps and reports loading errors witho
   let prevented = false;
   nodes.btnReportModuleFiles.onkeydown({ key: 'ArrowLeft', preventDefault: () => { prevented = true; } });
   assert.equal(prevented, true);
-  assert.equal(nodes.paneSectionVariants.hidden, false);
-  assert.ok(calls.includes('focus:btnReportModuleSections'));
+  assert.equal(nodes.panePolishHistory.hidden, false);
+  assert.ok(calls.includes('focus:btnReportModulePolish'));
   context.loadSkillList = async () => { throw Error('test offline'); };
   await context.switchSettingsModule('ai', 'skills');
   assert.deepEqual(calls.at(-1), ['error', '模块加载失败', 'test offline', 5000]);
@@ -462,7 +468,7 @@ test('legacy gravity data gains a selectable one-period average without restorin
   ] }] };
   ui.window = { labAPI: { readData: async () => ({ ok: true, data: { trials, T0: 0.898, h1: 5, h2: 15 } }) } };
   Object.assign(ui, { renderForm: () => {}, refreshFormCheck: () => {}, notifyDataModified: () => {}, loadChartConfig: async () => {} });
-  load(ui, 'async function loadFormData(', '// 清除表单全部可输入数据');
+  load(ui, 'async function loadFormData(', '// 按 schema 初始化空白表单');
   await ui.loadFormData({ id: '重力加速度的测量', path: 'unused' });
   assert.equal(ui.currentData.T_avg.length, 9);
   assert.equal(ui.currentData.T_avg[8], 1.8);
@@ -493,7 +499,9 @@ test('gravity measurement table shows holes across while preserving the stored m
 
 test('multi-section polishing uses the original snapshot after switching experiments', async () => {
   const ui = uiContext();
+  ui.currentData = { measurement: 42 };
   let releaseFirst, calls = 0;
+  const history = [];
   Object.assign(ui, {
     currentSections: { one: 'A first', two: 'A second' }, skillsCache: [],
     loadSettings: () => ({ hasApiKey: true }), getAiStylePrompt: () => '', renderAiResults: () => {},
@@ -501,17 +509,24 @@ test('multi-section polishing uses the original snapshot after switching experim
     window: { labAPI: { aiChat: async () => {
       if (++calls === 1) await new Promise(r => releaseFirst = r);
       return { ok: true, content: 'mock' };
+    }, polishHistory: async (action,record) => {
+      assert.equal(action,'append');history.push(record);return {ok:true,record:{id:'record-'+history.length}};
     } } },
   });
   load(ui, 'async function runAiPolish(', '// 渲染多对象润色结果');
   const pending = ui.runAiPolish();
   ui.currentExp = { id: 'B', path: 'B', reportFile: 'B.docx' };
+  ui.currentData = { measurement: 43 };
   ui.currentSections = { one: 'B first', two: 'B second' };
   await ui.runAiPolish(); // A second click cannot start another request chain.
   releaseFirst(); await pending;
   assert.equal(calls, 2);
   assert.deepEqual(Array.from(ui.lastPolishResults, r => r.original), ['A first', 'A second']);
   assert.ok(ui.lastPolishResults.every(r => r.expId === 'A'));
+  assert.ok(ui.lastPolishResults.every(r => r.sourceData === JSON.stringify({measurement:42})));
+  assert.equal(history.length,2);
+  assert.ok(history.every(r=>r.expId==='A' && r.sourceData.measurement===42));
+  assert.ok(ui.lastPolishResults.every(r=>r.historyId));
 });
 
 test('AI polish refuses quiz results that modify topics (strong constraint)', async () => {
@@ -790,6 +805,18 @@ test('vision contribution upload assembles photo + ai + proofread + manifest wit
   assert.equal(submitted.length, 1, '上传成功后标记已提交');
 });
 
+test('upstream aborted chat is reported as connection interruption rather than user cancellation', async t => {
+  const fakeNetwork = {
+    publicUrl: raw => new URL(raw),
+    response: async () => { throw Object.assign(Error('aborted'), {code:'ECONNRESET'}); },
+  };
+  const keys = {createKeyStore:()=>({get:()=> 'test-key',status:()=>({configured:true})})};
+  const h=mainHarness(t,false,false,fakeNetwork,keys);
+  const result=await h.handlers.get('ai-chat')({}, {provider:'custom',apiUrl:'https://api.example.com/v1',model:'test',messages:[{role:'user',content:'test'}],requestId:'upstream-abort'});
+  assert.equal(result.ok,false); assert.equal(result.cancelled,false);
+  assert.match(result.error,/AI 响应连接中断/);
+});
+
 function mainHarness(t, failUpdateCopy = false, realChild = false, fakeNetwork = null, fakeKeyStore = null) {
   const root = fixture(t), handlers = new Map(), rawHandlers = new Map(), listeners = new Map(), rawListeners = new Map(), children = [], kills = [];
   // main.js installs process-level crash handlers.  Each isolated evaluation needs
@@ -850,6 +877,9 @@ function mainHarness(t, failUpdateCopy = false, realChild = false, fakeNetwork =
             : nativeRequire(name);
   const controls = new Function('require', '__dirname', read(mainFile) + '\nreturn { unzipScript: UNZIP_SCRIPT, extractDelta: extractDeltaFromSSELine, extractReasoning: extractReasoningFromSSELine, setPackage: value => { downloadedPackage = value; }, merge: (stage, target, bases) => { const warnings = []; mergeDataTree(stage, target, EXPERIMENTS_DIR, warnings, true, bases); return warnings; } };')(mockedRequire, path.dirname(mainFile));
   ready();
+  // Measurements are isolated test fixtures; production forms intentionally start blank.
+  for (const [name, data] of Object.entries(require('./fixtures/experiment-data.json')))
+    put(path.join(root, '实验数据/实验脚本', name, 'data.json'), JSON.stringify(data));
   const authorize = (zip, files, removed, version) => {
     const crypto = require('node:crypto');
     const manifest = { dataVersion: version || '2.0.0', minAppVersion: '1.7.5', url: 'https://labreport-1485394950.cos.ap-guangzhou.myqcloud.com/test.zip', size: fs.statSync(zip).size,
@@ -860,6 +890,25 @@ function mainHarness(t, failUpdateCopy = false, realChild = false, fakeNetwork =
   };
   return { root, handlers, rawHandlers, listeners, rawListeners, children, kills, authorize, merge: controls.merge, unzipScript: controls.unzipScript, copied, sent, extractDelta: controls.extractDelta, extractReasoning: controls.extractReasoning };
 }
+
+test('stale polish without a current measurement snapshot cannot start generation', async t => {
+  const h = mainHarness(t);
+  const exp = path.join(__dirname, '../物理实验/实验脚本/长度与体积的测量');
+  for (const polish of [{结论:'旧结论'}, {结论:'旧结论',__sourceData:{L:1}}]) {
+    const result = await h.handlers.get('run-generate')({},exp,{},{},polish);
+    assert.equal(result.ok,false);
+    assert.match(result.error,/缺少来源|已改变/);
+  }
+  assert.equal(h.children.length,0);
+});
+
+test('new polish cannot assign a current snapshot to old sections without provenance',()=>{
+  const ui=uiContext();let overrides={A:{结论:'旧结果'}};
+  Object.assign(ui,{currentData:{L:42},loadAllOverrides:()=>overrides,saveAllOverrides:all=>{overrides=all;}});
+  load(ui,'function setPolishOverride(', 'function clearPolishOverrides(');
+  assert.throws(()=>ui.setPolishOverride('A','误差分析','新内容'),/缺少实验数据来源/);
+  assert.equal(overrides.A.__sourceData,undefined);
+});
 
 test('main process rejects concurrent generation and cancels by killing the python tree', async t => {
   const h = mainHarness(t);

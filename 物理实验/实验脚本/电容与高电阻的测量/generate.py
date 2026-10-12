@@ -1,15 +1,20 @@
 """电容与高电阻的测量实验 — 数据处理脚本。"""
 
+import json
 import math
 import os
 import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
+sys.path.insert(0, SCRIPT_DIR)
 from common import *
 from common.docx_report import DocxReportWriter
 from common.data_io import load_data
-from common.variants import compose, render_custom_quiz
+from common.variants import (compose, render_custom_quiz, load_variants,
+    get_polish_overrides, get_custom_quiz, render_variant, DATA_PATTERN,
+    get_variant_choices, get_disabled_sections, normalize_polish_md, SECTIONS_MARKER)
+from report_integrity import validate_text
 from common.custom_plot import render_custom_plot
 
 # ============================================================
@@ -20,7 +25,6 @@ from common.custom_plot import render_custom_plot
 U_VALUES = [2.00, 4.00, 6.00, 8.00, 10.00, 12.00, 14.00, 16.00]
 
 # 表 2 冲击法测高阻的数据组数（教材表 3-23-2）
-N_POINTS_R = 16
 
 
 # ============================================================
@@ -80,47 +84,64 @@ def _plot_lnq_t(t_values: list[float], lnq_values: list[float],
 def _compute(data: dict) -> dict:
     """由原始数据计算各物理量，返回数值键字典（供正文与变体 %%DATA 注入）。"""
 
-    c_n = float(data["c_n"])          # 标准电容 / μF
-    r_0 = float(data["r_0"])          # 电阻标称值 / MΩ
-    q_n = [float(v) for v in data["q_n"]]
-    q_x = [float(v) for v in data["q_x"]]
-    t_values = [float(v) for v in data["t_values"]]
-    q_values = [float(v) for v in data["q_values"]]
-
-    # 表 1：逐点电容 C_x = (Q_x / Q_N) * C_N，再取平均
-    bad_qn = [i + 1 for i, v in enumerate(q_n) if v <= 0]
-    if bad_qn:
-        print(f"[错误] 表1 电量 Q_N 第 {bad_qn} 组非正，C_x = Q_x/Q_N·C_N 无法计算，请检查 q_n。")
-        return None
+    from common.data_validation import validate
+    with open(os.path.join(SCRIPT_DIR, "schema.json"), encoding="utf-8") as f:
+        check = validate(json.load(f), data)
+    if not check["ok"]:
+        errors = check["missing"] + check["invalid"]
+        raise ValueError("实验数据无效：" + "；".join(e["label"] + "：" + e.get("reason", "未填写") for e in errors))
+    c_n, r_0 = float(data["c_n"]), float(data["r_0"])
+    q_n, q_x = list(data["q_n"]), list(data["q_x"])
+    t_values, q_values = list(data["t_values"]), list(data["q_values"])
+    if any(b <= a for a, b in zip(t_values, t_values[1:])):
+        raise ValueError("放电时间必须严格递增，请检查重复或倒序的时刻。")
     c_x = [qx / qn * c_n for qx, qn in zip(q_x, q_n)]
     c_x_bar = mean(c_x)
-
-    # 表 2：lnQ（表中保留 3 位小数，斜率用表中值计算，与范例一致）
-    bad_q = [i + 1 for i, v in enumerate(q_values) if v <= 0]
-    if bad_q:
-        print(f"[错误] 表2 放电电量 Q 第 {bad_q} 组非正，lnQ 无定义，请检查 q_values。")
-        return None
-    lnq = [round(math.log(v), 3) for v in q_values]
-
-    # 两点法斜率（首末两点，范例做法）
+    # 展示时才舍入；两点法、拟合和绘图均使用原始对数。
+    lnq = [math.log(v) for v in q_values]
     k_slope = (lnq[-1] - lnq[0]) / (t_values[-1] - t_values[0])
-    k_abs = round(abs(k_slope), 4)          # 正文公式代入 4 位小数值
-    r_mohm = 1.0 / (k_abs * c_n * 1e-6) / 1e6   # 高电阻 / MΩ
-    delta_e = abs(r_mohm / r_0 - 1.0) * 100.0   # 相对误差 / %
-
-    # 最小二乘拟合（仅用于绘制拟合直线）
     reg = linear_regression(t_values, lnq)
-
-    return {
-        "c_n": c_n, "r_0": r_0,
-        "q_n": q_n, "q_x": q_x,
-        "t_values": t_values, "q_values": q_values,
-        "c_x": c_x, "c_x_bar": c_x_bar,
-        "lnq": lnq,
-        "k_slope": k_slope, "k_abs": k_abs,
-        "r_mohm": r_mohm, "delta_e": delta_e,
-        "reg": reg,
+    if not math.isfinite(k_slope) or k_slope >= 0 or not math.isfinite(reg.slope) or reg.slope >= 0:
+        raise ValueError("放电数据无法得到有效负斜率，请核对时间与电荷读数。")
+    k_abs = abs(k_slope)
+    r_mohm = 1.0 / (k_abs * c_n)
+    r_fit_mohm = -1.0 / (reg.slope * c_n)
+    delta_e = abs(r_mohm / r_0 - 1.0) * 100.0
+    fit_delta_e = abs(r_fit_mohm / r_0 - 1.0) * 100.0
+    result = {
+        "c_n": c_n, "r_0": r_0, "q_n": q_n, "q_x": q_x,
+        "t_values": t_values, "q_values": q_values, "c_x": c_x, "c_x_bar": c_x_bar,
+        "lnq": lnq, "k_slope": k_slope, "k_abs": k_abs,
+        "r_mohm": r_mohm, "delta_e": delta_e, "reg": reg,
+        "fit_slope": reg.slope, "fit_intercept": reg.intercept,
+        "r_fit_mohm": r_fit_mohm, "fit_delta_e": fit_delta_e,
+        "r_squared": reg.r_squared, "t_first": t_values[0], "t_last": t_values[-1],
+        "q_first": q_values[0], "q_last": q_values[-1],
+        "lnq_first": lnq[0], "lnq_last": lnq[-1],
     }
+    if any(not math.isfinite(v) for v in result.values() if isinstance(v, (int, float))):
+        raise ValueError("计算结果超出有限数值范围，请检查输入量级。")
+    return result
+
+
+def _validate_text_inputs(r):
+    """先验证模板，不能让旧润色或自建答案带入固定实验数值。"""
+    def walk(value):
+        if isinstance(value, str):
+            validate_text(value, r)
+        elif isinstance(value, dict):
+            for v in value.values(): walk(v)
+        elif isinstance(value, list):
+            for v in value: walk(v)
+    walk(load_variants(SCRIPT_DIR) or {})
+    walk(get_polish_overrides() or {})
+    quiz = get_custom_quiz()
+    if quiz: walk(quiz.get("answers", {}))
+
+
+def calculation_context(data):
+    r = _compute(data)
+    return {k: v for k, v in r.items() if k != "reg"}
 
 
 # ============================================================
@@ -130,26 +151,9 @@ def _compute(data: dict) -> dict:
 def _generate_docx(data: dict, output_path: str):
     """从 data.json 读取数据 → 计算 → 输出 docx 报告。"""
 
-    # ---------- 1. 读取数据（含必填校验） ----------
-    # 校验必填数据（required 字段为 null 或 array 含 null → 缺失）
-    missing = []
-    for k in ("c_n", "q_n", "q_x", "r_0", "t_values", "q_values"):
-        v = data.get(k)
-        if v is None:
-            missing.append(k)
-        elif isinstance(v, list) and any(x is None for x in v):
-            missing.append(k)
-
-    if missing:
-        print("以下必填数据未填写，请补齐后重新运行：")
-        for m in missing:
-            print(f"  - {m}")
-        return
-
-    # ---------- 2. 计算 ----------
+    # 计算与输入文本验证均须先于任何输出写入。
     r = _compute(data)
-    if r is None:
-        return
+    _validate_text_inputs(r)
     c_n = r["c_n"]
     r_0 = r["r_0"]
     q_n = r["q_n"]
@@ -168,13 +172,13 @@ def _generate_docx(data: dict, output_path: str):
     # 打印到控制台
     print(f"\n{'=' * 50}")
     print("Table 1: capacitance by ballistic galvanometer")
-    print(f"  C_x per point (uF): {[f'{v:.3f}' for v in c_x]}")
-    print(f"  C_x mean = {c_x_bar:.2f} uF")
+    print(f"  C_x per point (uF): {[f'{v:.4f}' for v in c_x]}")
+    print(f"  C_x mean = {c_x_bar:.4f} uF")
     print("\nTable 2: high resistance by RC discharge")
-    print(f"  two-point slope K = {k_slope:.4f} (per s)")
+    print(f"  two-point slope K = {k_slope:.7g} (per s)")
     print(f"  least-squares slope = {reg.slope:.4f}, R^2 = {reg.r_squared:.4f}")
     print(f"  R = {r_mohm:.2f} MOhm  (nominal R_0 = {r_0:g} MOhm)")
-    print(f"  relative error = {delta_e:.1f} %")
+    print(f"  relative error = {delta_e:.2f} %")
     print(f"{'=' * 50}\n")
 
     # ---------- 3. 绘制图表 ----------
@@ -187,6 +191,18 @@ def _generate_docx(data: dict, output_path: str):
 
     # ---- 变体组合（存在 variants.json 且应用传入选择时生效）----
     variants = compose(SCRIPT_DIR, r)
+    # 章节润色缓存保存可重新绑定的模板，避免把此次结果冻结为下一次的输入。
+    raw_variants = load_variants(SCRIPT_DIR) or {}
+    template_sections = {}
+    for section, texts in raw_variants.items():
+        idx = (get_variant_choices() or {}).get(section, -1)
+        if section not in get_disabled_sections() and isinstance(texts, list) and isinstance(idx, int) and 0 <= idx < len(texts):
+            template_sections[section] = texts[idx]
+    for section, text in (get_polish_overrides() or {}).items():
+        if section not in get_disabled_sections() and isinstance(text, str) and text.strip():
+            template_sections[section] = normalize_polish_md(text)
+    if template_sections:
+        print(SECTIONS_MARKER + json.dumps(template_sections, ensure_ascii=False), flush=True)
 
     # ---- 零、实验标题 ----
     doc.add_title("电容与高电阻的测量实验")
@@ -211,7 +227,7 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_paragraph("")
     doc.add_run("由给定标准电容 ")
-    doc.add_inline_math(rf"C_{{N}} = {c_n:.1f}\ \mathrm{{μF}}")
+    doc.add_inline_math(rf"C_{{N}} = {c_n:g}\ \mathrm{{μF}}")
     doc.add_run("，按下式逐点计算被测电容：")
     doc.add_math(r"C_{x} = \frac{Q_{x}}{Q_{N}} \cdot C_{N}")
 
@@ -220,7 +236,7 @@ def _generate_docx(data: dict, output_path: str):
         rows=[
             ["$Q_N$ / μC"] + [f"{v:.4g}" for v in q_n],
             ["$Q_x$ / μC"] + [f"{v:.3g}" for v in q_x],
-            ["$C_x$ / μF"] + [f"{v:.3f}" for v in c_x],
+            ["$C_x$ / μF"] + [f"{v:.4f}" for v in c_x],
         ],
         col_widths=[2.0] + [1.4] * 8,
     )
@@ -228,7 +244,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("取平均值：")
     doc.add_math(
         rf"\overline{{C_{{x}}}} = \frac{{1}}{{8}} \sum_{{i=1}}^{{8}} C_{{xi}}"
-        rf" = {c_x_bar:.2f}\ \mathrm{{μF}}"
+        rf" = {c_x_bar:.4f}\ \mathrm{{μF}}"
     )
 
     # -- 2. 冲击法测高阻 --
@@ -265,21 +281,25 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("取首末两点计算直线斜率：")
     doc.add_math(
         rf"K = \frac{{\ln Q_{{16}} - \ln Q_{{1}}}}{{t_{{16}} - t_{{1}}}}"
-        rf" = \frac{{{lnq[-1]:.3f} - {lnq[0]:.3f}}}{{{t_values[-1]:.2f} - {t_values[0]:.2f}}}"
-        rf" \approx {k_slope:.4f} = -\frac{{1}}{{RC}}"
+        rf" = \frac{{\ln({q_values[-1]:g}/{q_values[0]:g})}}{{{t_values[-1]:g} - {t_values[0]:g}}}"
+        rf" \approx {k_slope:.7g}\ \mathrm{{s^{{-1}}}}"
     )
 
     doc.add_paragraph("由斜率求得高电阻：")
     doc.add_math(
-        rf"R = \frac{{1}}{{|K|C}} = \frac{{1}}{{{k_abs:.4f} \cdot {c_n:.1f} \cdot 10^{{-6}}}}"
+        rf"R = \frac{{1}}{{|K|C}} = \frac{{1}}{{{k_abs:.7g} \cdot {c_n:g} \cdot 10^{{-6}}}}"
         rf" \approx {r_mohm:.2f}\ \mathrm{{MΩ}}"
     )
 
     doc.add_paragraph("相对误差：")
     doc.add_math(
         rf"\Delta E = \left| \frac{{R}}{{R_{{0}}}} - 1 \right| \times 100%"
-        rf" = {delta_e:.1f}%"
+        rf" = {delta_e:.2f}%"
     )
+
+    doc.add_paragraph("以全部原始对数数据作最小二乘拟合，作为两点法的对照：")
+    doc.add_math(rf"\ln(Q/\mathrm{{μC}})={reg.intercept:.7g}{reg.slope:+.7g}t")
+    doc.add_paragraph(f"最小二乘法电阻为{r['r_fit_mohm']:.2f} MΩ，与电阻标称值{r_0:g} MΩ相比，相对误差为{r['fit_delta_e']:.2f}%，R²={reg.r_squared:.6f}。两点法作为主要测量结果。")
 
     # ---- 变体组合：误差分析 / 结论 ----
     if "误差分析" in variants:
@@ -303,11 +323,11 @@ def _generate_docx(data: dict, output_path: str):
             _quiz = None
 
         doc.add_heading(
-            "1. 在冲击法测量高阻实验中，标准电容的单位为 μC，"
+            "1. 在冲击法测高阻实验中，冲击电流计测量的电量单位为 μC，"
             "这个数量级是否会影响最终的测量结果？", level=2)
         _o = _quiz.get("1") if _quiz else None
         if _o:
-            doc.add_paragraph_rich(random.choice(_o))
+            doc.add_paragraph_rich(render_variant(random.choice(_o), r))
         else:
 
             doc.add_paragraph("")
@@ -319,25 +339,17 @@ def _generate_docx(data: dict, output_path: str):
             doc.add_inline_math(r"Q_{0}")
             doc.add_run(" 和 ")
             doc.add_inline_math(r"Q_{t}")
-            doc.add_run(" 上下比值相消，不影响最终的测量结果。")
+            doc.add_run(" 中相同的电荷单位因子相消，因此电荷单位换算不改变斜率。计算电阻时仍须把标准电容正确换算为法拉。")
 
         doc.add_heading("2. 放电法测量高阻阻值，最长放电时间的选择依据是什么？", level=2)
         _o = _quiz.get("2") if _quiz else None
         if _o:
-            doc.add_paragraph_rich(random.choice(_o))
+            doc.add_paragraph_rich(render_variant(random.choice(_o), r))
         else:
 
-            doc.add_paragraph("")
-            doc.add_inline_math(r"\ln Q = -\frac{t}{RC} + \ln Q_{0}")
-            doc.add_run("，当 ")
-            doc.add_inline_math(r"\ln Q = 0")
-            doc.add_run(" 时，")
-            doc.add_inline_math(r"t = RC \cdot \ln Q_{0}")
-            doc.add_run("，且 ")
-            doc.add_inline_math(r"Q_{0} = C_{n} u")
-            doc.add_run("，故最长放电时间的选择依据是 t、")
-            doc.add_inline_math(r"C_{n}")
-            doc.add_run(" 和 u。应保证最长放电时间不超过 16~17 s。")
+            doc.add_paragraph("最长放电时间应保证剩余电荷仍在仪器可可靠测量的范围内。设有效测量下限为 Q_min，由 Q(t)≥Q_min 得：")
+            doc.add_math(r"t_{\max}\le RC_N\ln\left(\frac{Q_0}{Q_{\min}}\right)")
+            doc.add_paragraph(f"时间上限取决于标准电容、待测电阻、初始电荷、仪器分辨力与噪声以及允许误差，不能以 lnQ=0 确定通用上限。本次最大记录时间为{t_values[-1]:g} s，对应电荷{q_values[-1]:g} μC；缺少仪器有效测量下限时不虚构数值上限。")
 
     doc.save()
     doc.close()
@@ -352,9 +364,12 @@ def main():
     DOCX_FILE = os.path.join(SCRIPT_DIR, "电容与高电阻的测量实验报告.docx")
 
     data = load_data(DATA_FILE)
+    if "--context" in sys.argv:
+        print(json.dumps(calculation_context(data), ensure_ascii=False, allow_nan=False))
+        return
     if not data:
         print("未找到 data.json 或数据为空，请先在应用中填写数据。")
-        return
+        raise ValueError("未填写实验数据")
 
     _generate_docx(data, DOCX_FILE)
     if os.path.exists(DOCX_FILE):

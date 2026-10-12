@@ -88,6 +88,11 @@ def validate(schema, data):
                     elif any(x is not None and not _is_num(x)
                              for r in v if isinstance(r, list) for x in r):
                         invalid.append({"key": key, "label": label, "reason": "含非数值"})
+            elif typ == "text":
+                if not isinstance(v, str) or len(v) > 4096:
+                    invalid.append({"key": key, "label": label, "reason": "应为有效文本"})
+                elif required and not v.strip():
+                    missing.append({"key": key, "label": label})
             # Numeric bounds apply to scalar and every array/matrix member.
             vals = v if isinstance(v, list) else [v]
             vals = [x for row in vals for x in (row if isinstance(row, list) else [row])]

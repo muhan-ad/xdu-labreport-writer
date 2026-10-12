@@ -12,16 +12,13 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
 from common import *
 from common.docx_report import DocxReportWriter
-from common.data_io import load_data
+from common.data_io import load_data, bind_input_parameters
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
 
 # ── 物理常数 ──
-LAMBDA_NM = 589.3              # 钠光灯波长 (nm)
-LAMBDA_MM = 589.3e-6           # 钠光灯波长 (mm)
-DELTA_INSTRUMENT = 0.004       # 15J 测量显微镜仪器误差 (mm)
+DELTA_INSTRUMENT = None  # 由当前用户仪器参数绑定，无示例兜底
 SKIP_N = 40                    # 逐差法间隔（条）
-T_FACTOR = 1.2                 # t 因子 (n=4, df=3, P=0.683)，与 common.t_factor(4) 一致
 
 
 def _sum_str(vals, prec: int) -> str:
@@ -74,6 +71,11 @@ def _validate_data(data: dict) -> list[str]:
 
 def _generate_docx(data: dict, output_path: str):
     """读取 data.json 数据，计算并生成 Word 实验报告。"""
+    bind_input_parameters(data, globals(), SCRIPT_DIR)
+    LAMBDA_NM = data.get("wavelength_nm")
+    if isinstance(LAMBDA_NM, bool) or not isinstance(LAMBDA_NM, (int, float)) or not math.isfinite(LAMBDA_NM) or LAMBDA_NM <= 0:
+        raise ValueError("光源波长 λ：请填写有限正数（nm）")
+    LAMBDA_MM = LAMBDA_NM * 1e-6
 
     # ── 1. 读取数据 ──
     x_k = [float(v) for v in data["x_k"]]  # x_0, x_10, ..., x_70
@@ -190,7 +192,7 @@ def _generate_docx(data: dict, output_path: str):
     # ── 已知参数 ──
     doc.add_heading("2.1 已知参数", level=2)
     doc.add_paragraph("")
-    doc.add_run("钠光灯波长 ")
+    doc.add_run("光源波长 ")
     doc.add_inline_math(fr"\lambda = {LAMBDA_NM}\,\mathrm{{nm}} = {format_scientific(LAMBDA_MM)}\,\mathrm{{mm}}")
     doc.add_run("，仪器误差 ")
     doc.add_inline_math(r"\Delta_{\text{仪}} = " + format_number(DELTA_INSTRUMENT) + r"\,\mathrm{mm}")
