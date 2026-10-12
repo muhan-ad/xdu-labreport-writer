@@ -53,7 +53,7 @@ jobs:
         run: npm run verify
       - name: Build Windows installer
         if: steps.version.outputs.exists == 'false'
-        run: npm run build:win
+        run: npm run build:win -- --publish never
       - name: Publish release and installer
         if: steps.version.outputs.exists == 'false'
         env:
