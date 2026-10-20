@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "experiment": "光的偏振特性测量（第二学期）",
+  "source": {
+    "kind": "school-instructions",
+    "documents": [
+      {
+        "url": "https://wlsyzx.xidian.edu.cn/expe/expe/ahaofmz.pdf",
+        "sha256": "bb660dde0e841556acd1eecc774e3751387265eed6e4b8268eb3582e95fb967a"
+      },
+      {
+        "url": "https://wlsyzx.xidian.edu.cn/expe/expe/ahaofmz2.pdf",
+        "sha256": "c371833a4d8cb778b062e88aef02a1cb83178f5851928017a2a8029edabda5e9"
+      },
+      {
+        "url": "https://wlsyzx.xidian.edu.cn/expe/expe/ahaofmz3.pdf",
+        "sha256": "01264d506c69c19382d9ff1501a9ab796e221c292ce83d444f64c3354de819d3"
+      }
+    ],
+    "chapter": "第二学期偏振光特性测量",
+    "requirementPages": [
+      2,
+      3
+    ]
+  },
+  "purpose": "通过检偏器转动时的光功率变化，研究线偏振光经四分之一波片后的偏振特性，比较波片转角为0°、30°和45°时的曲线。",
+  "principle": "四分之一波片使沿快轴和慢轴的两正交电场分量产生相位差$\\pi/2$。当入射线偏振方向与波片快轴的夹角α为0°、30°、45°时，理想出射光分别为线偏振光、椭圆偏振光、圆偏振光。θ以起偏器与检偏器正交时的消光方向为零点，α与θ按同一正方向计量。该角度约定下，理想透射光强为$$I(\\theta)=\\frac{I_0}{2}\\left[1-\\cos^2(2\\alpha)\\cos(2\\theta)-\\sin(2\\alpha)\\cos(2\\alpha)\\sin(2\\theta)\\right]$$式中I₀为入射波片前线偏振光的光强。实际测量用光功率P表征光强，拟合模型中常数项用于描述平均光功率，谐波项描述角度变化。",
+  "formulas": [
+    "I(\\theta)=\\frac{I_0}{2}[1-\\cos^2(2\\alpha)\\cos(2\\theta)-\\sin(2\\alpha)\\cos(2\\alpha)\\sin(2\\theta)]",
+    "P(\\theta)=A+B\\cos(2\\theta)+C\\sin(2\\theta)",
+    "M=\\frac{\\sqrt{B^2+C^2}}{A}"
+  ],
+  "method": "调整各光学元件同轴等高，先将起偏器置于光功率最大的位置，再旋转检偏器确定初始消光方向。插入四分之一波片并调整至再次消光，作为α=0°的参考位置。随后分别取α=0°、30°、45°，每组将检偏器从0°转至360°，每隔15°记录一次光功率，共25个读数。三组测量保持同一角度零点和功率计调零状态，不在α=30°、45°时重新调零。",
+  "conditions": "注意激光不得直射眼睛，保持元件同轴等高、镜面清洁，按光路由前至后调整，结束后关闭电源。保持光源、量程与调零条件一致。所有仪器参数以所用仪器为准。图中三组共用光功率径向标尺。",
+  "uncertainty": "角度零点与转动读数误差会使极坐标曲线发生偏移；波片相位延迟偏离四分之一波长、元件安装不正及偏振片消光不完全会影响曲线形状。光源漂移、探测器分辨力与背景光也会改变功率读数。0°与360°的闭合差用于观察同一方向的读数变化，不能单凭闭合差确定误差来源。本次各角度对应不同条件，不能把这些点当作同一量的重复测量来计算A类不确定度；未记录的仪器误差限不作数值估计。",
+  "questions": [],
+  "dataPolicy": {
+    "userInputOnly": true,
+    "examplesAreMeasurements": false,
+    "resultSource": "current-user-calculation",
+    "rules": "本库只提供原理、符号公式和操作条件。所有测量值、仪器参数、参考输入及派生结果必须来自当前用户数据与计算结果；缺失则提示补填，禁止以教材举例或示例报告替代。实验报告示例只作为格式参考。具体结果用%%DATA:键:格式%%占位符注入，结论不得预先宣称准确、合理或一致。"
+  },
+  "reviewStatus": "school-pdf-checked"
+}

@@ -51,11 +51,11 @@
       ]
     },
     {
-      "name": "实际仪器参数（不使用教材或示例数值）",
+      "name": "仪器参数",
       "fields": [
         {
           "key": "instrument_delta_f",
-          "label": "频率仪器限差（按实际仪器填写）",
+          "label": "频率仪器限差",
           "type": "number",
           "unit": "kHz",
           "required": true,
@@ -65,7 +65,7 @@
         },
         {
           "key": "instrument_delta_x_inst",
-          "label": "位置仪器限差（按实际仪器填写）",
+          "label": "位置仪器限差",
           "type": "number",
           "unit": "mm",
           "required": true,

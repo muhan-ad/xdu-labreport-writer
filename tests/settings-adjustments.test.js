@@ -67,7 +67,7 @@ test('model connection test calls current draft model/key with a bounded text re
     return {choices:[{message:{content:'OK'}}]};
   }));assert.equal(result.ok,true);
 });
-for (const [message,kind] of [['HTTP 401','auth'],['HTTP 404','model'],['HTTP 429','rate'],['ECONNRESET secret','interrupted'],['网络连接超时','timeout'],['连接地址不是公网地址','config']]) {
+for (const [message,kind] of [['HTTP 401','auth'],['HTTP 402','balance'],['HTTP 404','model'],['HTTP 429','rate'],['ECONNRESET secret','interrupted'],['网络连接超时','timeout'],['连接地址不是公网地址','config']]) {
   test('API test categorizes '+kind+' without exposing raw errors',async()=>{
     const result=await testApi({},api(async()=>{throw Error(message);}));
     assert.equal(result.kind,kind);assert.equal(result.ok,false);assert.doesNotMatch(JSON.stringify(result),/secret/);

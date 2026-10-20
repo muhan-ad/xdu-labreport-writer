@@ -1,3 +1,8 @@
+// Read-only academic helper mode: never start the report application in this child.
+if (process.env.LAB_COURSE_READER_MODE === '1') {
+  require('./src/course-selection/academic_reader.cjs');
+  return;
+}
 // main.js — Electron 主进程
 const { app, BrowserWindow, ipcMain, shell, dialog, safeStorage, session, protocol, clipboard, net: electronNet } = require('electron');
 const path = require('path');
@@ -14,7 +19,8 @@ const network = require('./src/main/network');
 const updatePackage = require('./src/main/update-package');
 const { createKeyStore } = require('./src/main/key-store');
 const ocr = require('./src/main/ocr');
-const { createSchoolPortal } = require('./src/main/school-portal');
+const ocrCache = require('./src/main/ocr-cache');
+const { createSchoolAccounts } = require('./src/main/school-accounts');
 const { createSchoolCredentials } = require('./src/main/school-credentials');
 const { pathToFileURL } = require('url');
 const crypto = require('crypto');
@@ -131,17 +137,18 @@ function findProjectRoot() {
 const PROJECT_ROOT = findProjectRoot();
 const EXPERIMENTS_DIR = path.join(PROJECT_ROOT, '物理实验', '实验脚本');
 let mainWindow = null;
-const schoolPortal = createSchoolPortal({ electron: require('electron'), root: __dirname, getParent: () => mainWindow,
-  log,
-  credentials: createSchoolCredentials(path.join(app.getPath('userData'), 'school-portal'), safeStorage) });
-handle('open-school-portal', () => schoolPortal.open());
-let schoolClipboardQuitting = false;
-app.on('will-quit', event => {
-  if (!schoolPortal.hasOwnedClipboard() || schoolClipboardQuitting) return;
-  event.preventDefault(); schoolClipboardQuitting = true;
-  Promise.race([schoolPortal.cleanup(), new Promise(resolve => setTimeout(resolve, 1000))])
-    .catch(() => {}).finally(() => app.quit());
+const schoolCredentials=createSchoolCredentials(path.join(app.getPath('userData'),'school-portal'),safeStorage);
+const reportClient=require('./src/main/report-client').createReportClient({electron:require('electron'),getParent:()=>mainWindow,
+  getCredentials:async()=>{for(const id of ['report','course']){const status=await schoolCredentials.status(id);if(status.configured&&status.available)return schoolCredentials.get(id);}return null;},
+  saveCredentials:value=>schoolCredentials.save(value,'report'),isAutoLoginEnabled:()=>schoolPortal.getAutoFillEnabled(),log});
+const schoolPortal = createSchoolAccounts({ preferencesFile: path.join(app.getPath('userData'), 'school-portal', 'preferences.json'), credentials: schoolCredentials });
+const courseSelection = require('./src/main/course-selection').createCourseSelection({
+  electron: require('electron'), root: __dirname, getParent: () => mainWindow,
+  resolvePython: resolvePythonExe, userData: app.getPath('userData'),
+  getSavedLogin: () => schoolPortal.courseLogin(), schoolPortal, reportClient, log,
 });
+handle('open-course-selection', () => courseSelection.open());
+app.on('will-quit', () => {courseSelection.shutdown();reportClient.close();});
 // 关闭前未保存提示状态
 let isDataDirty = false;
 let allowClose = false;
@@ -202,9 +209,15 @@ function createWindow() {
   mainWindow.webContents.on('will-navigate', event => event.preventDefault());
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.loadURL(APP_URL);
+  // Warm only after the homepage has loaded; first-entry and autofill gates live in the controller.
+  mainWindow.webContents.once('did-finish-load',()=>{
+    const host=mainWindow;
+    const timer=setTimeout(()=>{if(mainWindow===host&&host&&!host.isDestroyed())void courseSelection.warm();},1000);
+    timer.unref?.();
+  });
   // mainWindow.webContents.openDevTools();
 
-  mainWindow.on('closed', () => { schoolPortal.close(); mainWindow = null; });
+  mainWindow.on('closed', () => { mainWindow = null;courseSelection.discardPreload(); });
 
   // 关闭前提示未保存的数据
   mainWindow.on('close', (e) => {
@@ -276,7 +289,7 @@ app.whenReady().then(() => {
   sweepPlotCache();
   createWindow();
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!mainWindow) createWindow();
   });
 });
 
@@ -397,8 +410,8 @@ function ensureUserCopy(expPath) {
     const builtinRoot = path.resolve(EXPERIMENTS_DIR);
     const { udRoot } = getDataRoots();
     const udRootRes = path.resolve(udRoot);
-    if (!fs.existsSync(builtinRoot)) throw Error('内置实验资源缺失');
     if (p.startsWith(udRootRes + path.sep)) return p;          // 已在 userData
+    if (!fs.existsSync(builtinRoot)) throw Error('内置实验资源缺失');
     if (!p.startsWith(builtinRoot + path.sep)) throw new Error('无效的实验目录');
     const name = path.relative(builtinRoot, p).split(path.sep).shift();
     if (!name || name === 'common' || name.startsWith('.')) return p;
@@ -569,10 +582,32 @@ function experimentPath(raw) {
   if (!fs.existsSync(path.join(p, 'generate.py'))) throw Error('实验入口不存在');
   return p;
 }
+// Persistent canonical report paths: external paths are usable only after successful generation.
+function reportLocations() {
+  return atomic.readJson(path.join(app.getPath('userData'), 'report-locations.json'), {});
+}
+function registeredReport(expId) {
+  const entry = reportLocations()[expId];
+  if (!entry) return null;
+  const root = customReportDir(entry.root);
+  const dir = security.inside(path.join(root, expId), root);
+  const file = security.inside(entry.path, dir);
+  if (path.dirname(file) !== dir || !/\.docx$/i.test(file)) throw Error('报告保存记录无效');
+  return file;
+}
+function rememberReport(expId, file, root) {
+  const locations = reportLocations();
+  if (root) locations[expId] = { root, path: file };
+  else delete locations[expId];
+  atomic.writeFile(path.join(app.getPath('userData'), 'report-locations.json'), JSON.stringify(locations), 'utf8');
+}
 function reportPath(raw, { allowMissing = false } = {}) {
   if (typeof raw !== 'string' || !/\.docx$/i.test(raw)) throw Error('只允许访问实验报告 DOCX');
   const p = path.resolve(raw);
-  experimentPath(path.dirname(p));
+  const registered = Object.keys(reportLocations()).some(id => {
+    try { return registeredReport(id) === p; } catch (_) { return false; }
+  });
+  if (!registered) experimentPath(path.dirname(p));
   security.inside(p, path.dirname(p));
   if (!allowMissing || fs.existsSync(p)) {
     const st = fs.statSync(p);
@@ -581,45 +616,62 @@ function reportPath(raw, { allowMissing = false } = {}) {
   return p;
 }
 
+function editableSchema(expPath) {
+  const load=file=>{
+    for(const candidate of [file,file+'.bak'])if(fs.existsSync(candidate)&&fs.statSync(candidate).size>1024*1024)throw Error('实验模板文件过大');
+    const schema=atomic.readJson(file,null);
+    if(!schema||!Array.isArray(schema.groups)||schema.groups.length>100||schema.groups.some(g=>!g||!Array.isArray(g.fields)||g.fields.length>200||g.fields.some(f=>!f||typeof f.key!=='string'||['length','rows','cols'].some(k=>f[k]!=null&&(!Number.isInteger(f[k])||f[k]<0||f[k]>1000))||(f.rows||0)*(f.cols||0)>10000)))throw Error('实验模板结构异常');
+    return schema;
+  };
+  const file=security.inside(path.join(expPath,'schema.json'),expPath);
+  try{return {schema:load(file),warning:null};}catch(error){
+    const builtin=security.inside(path.join(EXPERIMENTS_DIR,path.basename(expPath),'schema.json'),EXPERIMENTS_DIR);
+    if(path.resolve(file)===path.resolve(builtin)||!fs.existsSync(builtin))throw error;
+    return {schema:load(builtin),warning:'实验模板损坏，已使用内置模板；可用内置实验修复恢复'};
+  }
+}
 function scanDirEntry(d, source, builtinExpDir) {
   const expPath = path.join(d.dir, d.name);
   const generatePy = security.inside(path.join(expPath, 'generate.py'), expPath);
-  let schema = null, schemaWarning = null;
+  let schema = null;const issues=[];
   try {
     // 扫描只做结构校验（schema/data.json 可解析、类型形状正确）：必填值校验
     // 由生成阶段（run-generate）负责——用户没填完的数据不应让整个实验列表失灵。
-    schema = atomic.readJson(security.inside(path.join(expPath, 'schema.json'), expPath));
+    const result=editableSchema(expPath);schema=result.schema;if(result.warning)issues.push(result.warning);
   } catch (e) {
-    // 模板 schema 是出厂复制品（无 .bak 兜底）：损坏时用安装目录出厂副本继续本次检测，
-    // 并提示用户通过「检查实验数据更新」恢复；出厂副本也不可用则把异常抛给调用方跳过。
-    const builtin = builtinExpDir ? security.inside(path.join(builtinExpDir, d.name, 'schema.json'), builtinExpDir) : null;
-    if (!builtin || !fs.existsSync(builtin)) throw e;
-    schema = atomic.readJson(builtin);
-    schemaWarning = `${d.name}：实验模板损坏，已用出厂模板检测（请通过「检查实验数据更新」恢复）`;
+    issues.push('实验模板无法读取，请使用内置实验修复');
   }
-  const errors = dataValidation.validate(schema,
-    atomic.readJson(security.inside(path.join(expPath, 'data.json'), expPath)), false);
-  if (errors.length) throw Error(errors.join('；'));
-  if (!fs.existsSync(generatePy)) return { entry: null, warning: schemaWarning };
+  try{
+    const dataFile=security.inside(path.join(expPath,'data.json'),expPath);
+    for(const file of [dataFile,dataFile+'.bak'])if(fs.existsSync(file)&&fs.statSync(file).size>1024*1024)throw Error('数据文件过大，请清除数据后重新填写');
+    if(schema)issues.push(...dataValidation.validate(schema,atomic.readJson(dataFile),false));
+  }catch(e){issues.push(String(e.message||e));}
+  if (!fs.existsSync(generatePy)) return { entry: null, warning: `${d.name}：实验生成脚本缺失，请使用资源完整性检查` };
   const files = fs.readdirSync(expPath);
   const hasDataJson = files.includes('data.json');
   const hasSchemaJson = files.includes('schema.json');
   const docx = files.find(f => f.endsWith('.docx') && !f.startsWith('~$') && !f.includes('.~saving'));
+  let canonicalReport = docx ? path.join(expPath, docx) : null;
+  if (reportLocations()[d.name]) {
+    try { const registered = registeredReport(d.name); canonicalReport = fs.existsSync(registered) ? reportPath(registered) : null; }
+    catch (_) { canonicalReport = null; }
+  }
   return {
     entry: {
       id: d.name,
-      name: d.name,
+      name: d.name === '光的偏振特性测量' ? '光的偏振特性测量（第一学期）' : d.name,
       path: expPath,
       hasData: hasDataJson || hasSchemaJson,
-      hasReport: !!docx,
+      hasReport: !!canonicalReport,
       dataFile: hasDataJson
         ? security.inside(path.join(expPath, 'data.json'), expPath)
         : (hasSchemaJson ? security.inside(path.join(expPath, 'schema.json'), expPath) : null),
-      reportFile: docx ? path.join(expPath, docx) : null,
+      reportFile: canonicalReport,
       source,
       hasCustomVariants: hasCustomVariantsFor(d.name),
+      dataIssues: issues,
     },
-    warning: schemaWarning,
+    warning: issues.length?`${d.name}：${issues.join('；')}`:null,
   };
 }
 
@@ -737,8 +789,8 @@ handle('read-schema', (_, expPath) => {
   try {
     expPath = experimentPath(expPath);
     const p = security.inside(path.join(expPath, 'schema.json'), expPath);
-    if (!fs.existsSync(p)) return { ok: true, schema: null };
-    return { ok: true, schema: atomic.readJson(p) };
+    const result=editableSchema(expPath);
+    return { ok: true, ...result };
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -756,11 +808,24 @@ handle('read-sample-data', (_, expPath) => {
   }
 });
 
+// Developer-only UI entry; trusted renderer IPC, validated fixtures, backup and rollback.
+handle('fill-all-test-data', (_, paths) => {
+  try {
+    if (generationBusy || resourceUpdating || activeDataReq || aiAbortControllers.size) throw Error('任务运行中，请完成后再填入测试数据');
+    if (!Array.isArray(paths) || !paths.length || paths.length > 100 || paths.some(p => typeof p !== 'string')) throw Error('实验列表无效');
+    const dirs = [...new Set(paths.map(p => ensureUserCopy(experimentPath(p))))];
+    const backupDir = path.join(app.getPath('userData'), 'test-data-backups', Date.now() + '-' + require('crypto').randomUUID());
+    const result = require('./src/main/batch-test-data').fillAllTestData(dirs, backupDir);
+    return { ok: true, ...result, backupDir };
+  } catch (error) { return { ok: false, error: error.message }; }
+});
+
 // ── IPC: 读取 data.json（方式三：表单数据真相）──
 handle('read-data', (_, expPath) => {
   try {
     expPath = experimentPath(expPath);
     const p = security.inside(path.join(expPath, 'data.json'), expPath);
+    for(const file of [p,p+'.bak'])if(fs.existsSync(file)&&fs.statSync(file).size>1024*1024)throw Error('数据文件过大，请清除数据后重新填写');
     if (!fs.existsSync(p)) return { ok: true, data: null };
     return { ok: true, data: atomic.readJson(p) };
   } catch (err) {
@@ -769,11 +834,21 @@ handle('read-data', (_, expPath) => {
 });
 
 // ── IPC: 写入 data.json（方式三：保存表单数据；用户数据落 userData 副本）──
+handle('reset-experiment-data',(_,expPath)=>{
+  if(generationBusy||resourceUpdating||activeDataReq||[...aiAbortControllers.values()].some(job=>job.kind!=='ocr'))return {ok:false,error:'任务运行中，请稍后清除数据'};
+  try{
+    const p=ensureUserCopy(expPath),{schema}=editableSchema(p);
+    for(const job of aiAbortControllers.values())if(job.kind==='ocr')job.controller.abort();
+    const result=require('./src/main/data-reset').resetData(p,schema,path.join(app.getPath('userData'),'data-reset-backups',path.basename(p)));
+    const revision=ocrCache.invalidate(p);
+    return {ok:true,...result,path:p,dataFile:path.join(p,'data.json'),revision};
+  }catch(e){return {ok:false,error:e.message};}
+});
 handle('write-data', (_, expPath, data) => {
   try {
     const p = ensureUserCopy(expPath);
     if (Buffer.byteLength(JSON.stringify(data)) > 1024 * 1024) throw Error('测量数据过大');
-    const schema = atomic.readJson(security.inside(path.join(p, 'schema.json'), p));
+    const {schema} = editableSchema(p);
     const errors = dataValidation.validate(schema, data, false);
     if (errors.length) throw Error(errors.join('；'));
     atomic.writeFile(security.inside(path.join(p, 'data.json'), p), JSON.stringify(data, null, 2), 'utf-8');
@@ -847,6 +922,16 @@ handle('save-custom-chart', (_, expPath, srcPath) => {
 });
 
 // ── IPC: 将图表插入已生成的报告 docx ──
+function chartResultImages(result, outputPath) {
+  const items = Array.isArray(result.images) ? result.images : [{path: outputPath, title: result.title || ''}];
+  if (!items.length || items.length > 8) throw Error('图组图片数量异常');
+  const dir = path.dirname(outputPath), stem = path.basename(outputPath, '.png');
+  return items.map((item, i) => {
+    const expected = path.join(dir, stem + (i ? `_${i + 1}` : '') + '.png');
+    if (path.resolve(String(item.path || '')) !== path.resolve(expected) || !fs.existsSync(expected)) throw Error('图组图片路径无效或图片未生成');
+    return {path: expected, caption: String(item.caption || item.title || result.title || ''), note: String(item.note || '')};
+  });
+}
 handle('insert-chart-into-report', async (event, docxPath, expPath, reportCopyDir = '') => {
   const chartT0 = Date.now();
   let chartOutcome = '';
@@ -854,6 +939,8 @@ handle('insert-chart-into-report', async (event, docxPath, expPath, reportCopyDi
     const p = ensureUserCopy(expPath);
     // 报告路径校验：只允许实验目录内的 docx（与报告管理/预览同一套规则）
     const report = reportPath(docxPath);
+    if (path.dirname(report) !== p && report !== registeredReport(path.basename(p)))
+      throw Error('报告不属于当前实验');
     // 读图表配置（两种模式的字段要求不同，具体校验放在下面的分支里）
     const cfg = atomic.readJson(security.inside(path.join(p, '.chart-config.json'), p), null);
     if (!cfg) return { ok: false, error: '未找到图表配置，请先在「图表」页配置并生成预览' };
@@ -866,6 +953,7 @@ handle('insert-chart-into-report', async (event, docxPath, expPath, reportCopyDi
     // 自定义模式用「图表」页已生成并持久化的那张（缺了就让用户回去重新生成，不静默失败）。
     let tempChartOut = '';
     let imagePath = '';
+    let chartImages = [];
     if (mode === 'custom') {
       imagePath = String(cfg.imagePath || '') || customChartPath(p);
       const absImg = path.resolve(imagePath);
@@ -891,10 +979,12 @@ handle('insert-chart-into-report', async (event, docxPath, expPath, reportCopyDi
       if (cfg.title) chartArgs.push('--title', cfg.title);
       if (cfg.xlabel) chartArgs.push('--xlabel', cfg.xlabel);
       if (cfg.ylabel) chartArgs.push('--ylabel', cfg.ylabel);
+      if (cfg.chartType === 'official') chartArgs.push('--official-preset', cfg.officialPreset || 'all');
 
       const chartRun = await runChartHelper('chart-preview.py', chartArgs, { event, label: '图表生成' });
       if (!chartRun.ok) return { ok: false, error: '图表生成失败: ' + chartRun.error };
       if (!fs.existsSync(tempChartOut)) return { ok: false, error: '图表图片未生成' };
+      chartImages = chartResultImages(chartRun.data, tempChartOut);
     }
 
     try {
@@ -905,29 +995,19 @@ handle('insert-chart-into-report', async (event, docxPath, expPath, reportCopyDi
         '--width-cm', String(imageWidth),
       ];
       // 自定义模式带图注（AI 一并给出）；预设模式沿用原有排版
-      if (mode === 'custom' && cfg.caption) insertArgs.push('--caption', String(cfg.caption));
+      insertArgs.push('--caption', String((mode === 'custom' && cfg.caption) || cfg.title || `${cfg.yLabel || cfg.yField || '光功率'}与${cfg.xLabel || cfg.xField || '角度'}关系图`));
+      if (cfg.chartType === 'official' && mode === 'preset') insertArgs.push('--images-json', JSON.stringify(chartImages));
       const insertRun = await runChartHelper('insert-chart-into-docx.py', insertArgs, { event, label: '图表插入' });
       if (!insertRun.ok) return { ok: false, error: '图表插入失败: ' + insertRun.error };
 
-      // 报告已被改写：把带图表的版本同步到「自定义报告目录」，否则两份报告内容不一致
-      let copiedTo = '';
-      if (reportCopyDir) {
-        try {
-          const destDir = path.join(customReportDir(reportCopyDir, { create: true }), path.basename(p));
-          fs.mkdirSync(destDir, { recursive: true });
-          const dest = path.join(destDir, path.basename(report));
-          fs.copyFileSync(report, dest);
-          copiedTo = dest;
-        } catch (e) {
-          log(`chart | 自定义目录同步失败（不影响插图）| ${e.message}`);
-        }
-      }
       chartOutcome = 'ok';
-      return { ok: true, section, mode, copiedTo: copiedTo || undefined };
+      return { ok: true, section, mode, reportFile: report, count: chartImages.length || 1 };
     } finally {
       // 只清临时图；自定义模式那张是用户的资产，绝不能删
       if (tempChartOut) {
-        try { if (fs.existsSync(tempChartOut)) fs.unlinkSync(tempChartOut); } catch (e) { /* 忽略 */ }
+        for (const image of chartImages.length ? chartImages : [{path: tempChartOut}]) {
+          try { if (fs.existsSync(image.path)) fs.unlinkSync(image.path); } catch (e) { /* 忽略 */ }
+        }
       }
     }
   } catch (err) {
@@ -1339,6 +1419,7 @@ handle('open-skills-folder', () => {
 // 校验：绝对路径、不得落在应用安装目录/内置数据目录/asar 内；create 时按需建目录。
 function customReportDir(raw, { create = false } = {}) {
   if (typeof raw !== 'string' || !raw.trim()) throw Error('未设置自定义报告目录');
+  if (!path.isAbsolute(raw.trim())) throw Error('自定义报告目录必须是绝对路径');
   const p = path.resolve(raw.trim());
   if (!path.isAbsolute(p)) throw Error('自定义报告目录必须是绝对路径');
   const low = p.toLowerCase();
@@ -1370,6 +1451,13 @@ handle('list-reports', () => {
   try {
     const { roots } = getDataRoots();
     if (!roots.length) return { ok: true, reports: out };
+    const locations = reportLocations();
+    for (const id of Object.keys(locations)) {
+      try {
+        const file = reportPath(registeredReport(id)); const st = fs.statSync(file);
+        out.push({ exp: id, file: path.basename(file), path: file, size: st.size, mtime: st.mtimeMs });
+      } catch (_) { /* Removed or unavailable export remains absent, never replaced by stale local copy. */ }
+    }
     const seen = new Set();
     for (const root of roots) {
       if (root.source === 'userData') {
@@ -1381,7 +1469,7 @@ handle('list-reports', () => {
       let dirs = [];
       try { dirs = fs.readdirSync(root.dir, { withFileTypes: true }); } catch (e) { continue; }
       for (const d of dirs) {
-        if (!d.isDirectory() || d.name === 'common' || d.name.startsWith('.')) continue;
+        if (!d.isDirectory() || d.name === 'common' || d.name.startsWith('.') || locations[d.name]) continue;
         if (root.source === 'builtin' && seen.has(d.name)) continue;
         const expPath = path.join(root.dir, d.name);
         let files;
@@ -1546,7 +1634,7 @@ handle('read-audio-file', () => {
 // ═══════════════════════════════════════════════
 const DATA_MANIFEST_URL = 'https://labreport-1485394950.cos.ap-guangzhou.myqcloud.com/data-manifest.json';
 // 内置实验数据版本（未应用任何数据包时的基准版本，独立于应用版本号）
-const DATA_BUILTIN_VERSION = '1.0.0';
+const DATA_BUILTIN_VERSION = '1.2.0';
 let approvedManifest = null;
 let downloadedPackage = null;
 
@@ -1875,6 +1963,12 @@ const httpsGetJson = network.json;
 
 // ── IPC: 当前应用版本 ──
 handle('get-app-version', () => app.getVersion());
+let resourceCheck=null;
+handle('check-resource-integrity',async()=>{
+  if(!app.isPackaged)return {ok:false,error:'完整资源检查请在打包后的应用中运行。'};
+  if(!resourceCheck)resourceCheck=require('./src/main/resource-integrity').checkResources(process.resourcesPath,app.getVersion()).catch(()=>({ok:false,error:'资源检查未能完成，请稍后重试。'})).finally(()=>{resourceCheck=null;});
+  return resourceCheck;
+});
 
 // 检查更新：读取更新清单 latest.json（{ version, notes, downloads:[{name,url,hint}] }），仅做版本校对，
 // 不下载不安装——把下载入口交给用户（浏览器打开对应链接）
@@ -2188,6 +2282,10 @@ handle('run-generate', async (event, expPath, studentInfo, variants, polish, emb
   try {
   // 生成报告属写操作：迁移/复用 userData 副本，报告与章节缓存不再落入安装目录
   expPath = ensureUserCopy(expPath);
+  const reportRoot = reportCopyDir ? customReportDir(reportCopyDir, { create: true }) : '';
+  const reportOutputDir = reportRoot ? security.inside(path.join(reportRoot, path.basename(expPath)), reportRoot) : expPath;
+  fs.mkdirSync(reportOutputDir, { recursive: true });
+  fs.accessSync(reportOutputDir, fs.constants.W_OK);
   const generatePy = security.inside(path.join(expPath, 'generate.py'), expPath);
   const errors = dataValidation.validate(atomic.readJson(security.inside(path.join(expPath, 'schema.json'), expPath)),
     atomic.readJson(security.inside(path.join(expPath, 'data.json'), expPath)));
@@ -2203,6 +2301,7 @@ handle('run-generate', async (event, expPath, studentInfo, variants, polish, emb
   // 而本进程按 UTF-8 解码 stdout（data.toString()），不强制会导致日志与章节缓存乱码
   env.PYTHONIOENCODING = 'utf-8';
   env.PYTHONUTF8 = '1';
+  env.LAB_REPORT_OUTPUT_DIR = reportOutputDir;
   if (studentInfo) {
     if (studentInfo.name) env.LAB_STUDENT_NAME = studentInfo.name;
     if (studentInfo.id) env.LAB_STUDENT_ID = studentInfo.id;
@@ -2317,10 +2416,10 @@ handle('run-generate', async (event, expPath, studentInfo, variants, polish, emb
       // 仅认本次任务新建/更新的文件（mtime >= startTs），避免把旧报告误判为本次成功
       let reportFile = null;
       let newestMtime = 0;
-      const files = fs.readdirSync(expPath);
+      const files = fs.readdirSync(reportOutputDir);
       for (const f of files) {
         if (f.endsWith('.docx') && !f.startsWith('~$') && !f.includes('.~saving')) {
-          const full = path.join(expPath, f);
+          const full = path.join(reportOutputDir, f);
           let mt = 0;
           try { mt = fs.statSync(full).mtimeMs; } catch (e) { continue; }
           if (mt >= startTs && mt > newestMtime) { newestMtime = mt; reportFile = full; }
@@ -2328,22 +2427,11 @@ handle('run-generate', async (event, expPath, studentInfo, variants, polish, emb
       }
       // 退出码 0 但未产出新 docx：视为失败（多数情况是测量数据未填写完整，generate.py 打印缺失列表后静默退出）
       const ok = !job.cancelled && code === 0 && !!reportFile;
-      // 自定义报告目录：生成成功后复制一份（实验目录原件保留 —— 预览/打开/报告列表继续用原件）；
-      // 复制失败只记日志告警，不影响本次生成结果。
-      let copiedTo = '';
-      if (ok && reportCopyDir) {
-        try {
-          const destDir = path.join(customReportDir(reportCopyDir, { create: true }), path.basename(expPath));
-          fs.mkdirSync(destDir, { recursive: true });
-          const dest = path.join(destDir, path.basename(reportFile));
-          fs.copyFileSync(reportFile, dest);
-          copiedTo = dest;
-          logs.push(`[自定义目录] 已复制报告：${dest}\n`);
-        } catch (e) {
-          logs.push(`[自定义目录] 复制失败（不影响本次生成）：${e.message}\n`);
-        }
+      if (ok) {
+        rememberReport(path.basename(expPath), reportFile, reportRoot);
+        logs.push(`[报告保存] 已直接生成：${reportFile}\n`);
       }
-      log(`generate | 结束 | 实验=${genExpName} exit=${code} ok=${ok}${reportFile ? ' 报告=' + path.basename(reportFile) : ''}${copiedTo ? ' 复制=ok' : ''} | ${Date.now() - genT0}ms`);
+      log(`generate | 结束 | 实验=${genExpName} exit=${code} ok=${ok}${reportFile ? ' 报告=' + reportFile : ''} | ${Date.now() - genT0}ms`);
       try {
         // 诊断现场：job 摘要（变体/润色覆盖章节名/禁用章节，不含文本）+ 报告文件信息 + 章节缓存存在性
         let jobSummary = {};
@@ -2381,7 +2469,6 @@ handle('run-generate', async (event, expPath, studentInfo, variants, polish, emb
         cancelled: job.cancelled,
         logs: logs.join(''),
         reportFile,
-        copiedTo: copiedTo || undefined,
         sections: capturedSections || undefined,
         error: !ok && code === 0 && !reportFile
           ? '未生成报告文件，请查看日志中的缺失提示（通常为测量数据未填写完整）'
@@ -2679,7 +2766,7 @@ function getChartTempDir() {
   return d;
 }
 handle('run-chart-preview', async (event, opts) => {
-  const { expPath, xField, yField, chartType, title, xlabel, ylabel } = opts || {};
+  const { expPath, xField, yField, chartType, title, xlabel, ylabel, officialPreset } = opts || {};
   if (!expPath || !xField || !yField) return { ok: false, error: '缺少必要参数' };
   try {
     // 与报告同源：读 userData 副本里的 data.json，避免预览用的是安装目录的出厂数据
@@ -2696,13 +2783,15 @@ handle('run-chart-preview', async (event, opts) => {
     if (title) args.push('--title', title);
     if (xlabel) args.push('--xlabel', xlabel);
     if (ylabel) args.push('--ylabel', ylabel);
+    if (chartType === 'official') args.push('--official-preset', officialPreset || 'all');
 
     const run = await runChartHelper('chart-preview.py', args, { event, label: '图表预览' });
     if (!run.ok) return { ok: false, error: run.error };
     if (!fs.existsSync(outPath)) return { ok: false, error: '图表文件未生成' };
 
     const pngData = fs.readFileSync(outPath).toString('base64');
-    return { ok: true, dataUrl: `data:image/png;base64,${pngData}`, path: outPath, title: run.data.title || '' };
+    const images = chartResultImages(run.data, outPath).map(item => ({...item, dataUrl: 'data:image/png;base64,' + fs.readFileSync(item.path).toString('base64')}));
+    return { ok: true, dataUrl: `data:image/png;base64,${pngData}`, path: outPath, title: run.data.title || '', images };
   } catch (error) {
     return { ok: false, error: error.message };
   }
@@ -2801,6 +2890,15 @@ handle('vision-credential-save', (_, payload) => {
 // 识图响应体积上限：只防「模型跑飞」把内存吃光，正常识图输出远小于此值（传 0 表示不限制）
 const OCR_MAX_BYTES = 32 * 1024 * 1024;
 
+handle('ocr-result-read', (_, expPath) => {
+  const p=ensureUserCopy(experimentPath(expPath));
+  return ocrCache.read(p,editableSchema(p).schema);
+});
+handle('ocr-result-save', (_, expPath, state, revision) => {
+  const p=ensureUserCopy(experimentPath(expPath));
+  return ocrCache.save(p,state,editableSchema(p).schema,revision);
+});
+
 handle('ocr-recognize', async (_, params) => {
   const requestId = String(params?.requestId || crypto.randomUUID());
   if (!params || typeof params.prompt !== 'string' || Buffer.byteLength(params.prompt) > 128 * 1024)
@@ -2810,6 +2908,8 @@ handle('ocr-recognize', async (_, params) => {
   aiAbortControllers.set(requestId, { controller, kind: 'ocr' });
   const t0 = Date.now();
   let outcome = '';
+  let stage='validation', responseBytes=0, heartbeat;
+  const trace=(phase,detail={})=>log('ocr-detail | '+JSON.stringify({requestId,phase,elapsedMs:Date.now()-t0,...detail}));
   try {
     const image = ocr.parseImageDataUrl(params.imageDataUrl);
     const baseUrl = visionEndpoint(params);
@@ -2826,20 +2926,33 @@ handle('ocr-recognize', async (_, params) => {
         { role: 'user', content: [{ type: 'text', text: params.prompt }, { type: 'image_url', image_url: { url: image.dataUrl } }] },
       ],
     });
+    trace('request_start',{provider:params.visionProvider||'inherit',model,host:new URL(baseUrl).host,
+      imageBytes:image.bytes.length,promptChars:params.prompt.length,requestBytes:Buffer.byteLength(body)});
+    stage='request';
+    heartbeat=setInterval(()=>trace('waiting',{stage,responseBytes}),30000);
+    heartbeat.unref?.();
     // 识图不设自动中断：有些实验的大表格识别本身就慢，而识图是非流式请求 —— 模型算完之前
     // 连接上没有任何数据，空闲超时必然先于总超时触发，用户看到的是「网络连接超时」（线上已出现被拦）。
     // 中止一律交给用户点「取消」（ocr-cancel），这里只留一个防跑飞的体积上限。
     const payload = await network.json(baseUrl + '/chat/completions', {
       method: 'POST', signal: controller.signal, timeoutMs: 0, idleTimeoutMs: 0, maxBytes: OCR_MAX_BYTES,
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey }, body,
+      onTelemetry: info=>{stage=info.phase;responseBytes=info.responseBytes??responseBytes;trace(info.phase,info);},
     });
+    stage='extract_content';
     const content = ocr.extractContent(payload);
+    trace('result_ready',{outputChars:content.length,
+      inputTokens:payload.usage?.prompt_tokens,outputTokens:payload.usage?.completion_tokens,
+      reasoningTokens:payload.usage?.completion_tokens_details?.reasoning_tokens});
     outcome = `ok 输出=${content.length} 字`;
     return { ok: true, content, usage: payload.usage, requestId };
   } catch (e) {
+    trace('error',{stage:e.networkPhase||stage,code:e.code||'',errorName:e.name,
+      cancelled:controller.signal.aborted,responseBytes:e.responseBytes??responseBytes,httpStatus:e.httpStatus});
     outcome = controller.signal.aborted ? '已取消' : '失败: ' + e.message;
     return { ok: false, cancelled: controller.signal.aborted, error: controller.signal.aborted ? '已取消识别' : e.message };
   } finally {
+    if(heartbeat)clearInterval(heartbeat);
     // 排查用：识图请求同样一次一行（模型、结果、输出字符数、耗时）
     log(`ocr | ${params?.visionProvider || 'inherit'}/${params?.model || '默认'} | ${outcome} | ${Date.now() - t0}ms`);
     aiAbortControllers.delete(requestId);

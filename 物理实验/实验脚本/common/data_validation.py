@@ -67,7 +67,9 @@ def validate(schema, data):
             elif typ == "array":
                 if not isinstance(v, list):
                     invalid.append({"key": key, "label": label, "reason": "应为数组"})
-                elif "length" in fld and len(v) != fld["length"]:
+                elif fld.get("variableLength") and not fld.get("minLength", 3) <= len(v) <= fld.get("maxLength", 100):
+                    invalid.append({"key": key, "label": label, "reason": "测量点数超出允许范围"})
+                elif not fld.get("variableLength") and "length" in fld and len(v) != fld["length"]:
                     invalid.append({"key": key, "label": label,
                                     "reason": f"长度应为 {fld['length']}"})
                 elif any(x is not None and not _is_num(x) for x in v):
@@ -77,6 +79,9 @@ def validate(schema, data):
                     invalid.append({"key": key, "label": label, "reason": "应为矩阵"})
                 else:
                     rows, cols = fld.get("rows"), fld.get("cols")
+                    if fld.get("colsFrom"):
+                        positions = data.get(fld["colsFrom"])
+                        cols = len(positions) if isinstance(positions, list) else -1
                     # 多于容器上限始终非法；必填固定矩阵的少行已在上面拦截。
                     if rows is not None and len(v) > rows:
                         invalid.append({"key": key, "label": label,

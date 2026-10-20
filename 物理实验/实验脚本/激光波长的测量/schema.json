@@ -12,7 +12,6 @@
           "required": true,
           "default": null,
           "exclusiveMinimum": 0,
-          "hint": "按实际光源的标称或校准值填写；可主动选择常用值，也可直接输入。",
           "presets": [
             {
               "label": "He–Ne 红光 632.8 nm",
@@ -68,11 +67,11 @@
       ]
     },
     {
-      "name": "实际仪器参数（不使用教材或示例数值）",
+      "name": "仪器参数",
       "fields": [
         {
           "key": "instrument_delta_inst_mm",
-          "label": "位移仪器限差（按实际仪器填写）",
+          "label": "位移仪器限差",
           "type": "number",
           "unit": "mm",
           "required": true,

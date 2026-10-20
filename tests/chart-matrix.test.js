@@ -1,0 +1,22 @@
+'use strict';
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+test('RLC preset offers all six matrix columns and keeps array fields', () => {
+  const root = path.join(__dirname, '..');
+  const source = fs.readFileSync(path.join(root, 'src/renderer.js'), 'utf8');
+  const fn = source.slice(source.indexOf('function fillChartFieldOptions()'), source.indexOf('// 用配置回填两个弹窗的控件'));
+  const select = () => ({options: [], value: '', set innerHTML(_) {this.options = [{value:''}];}, appendChild(opt) {this.options.push(opt);}});
+  const x = select(), y = select();
+  const schema = JSON.parse(fs.readFileSync(path.join(root, '物理实验/实验脚本/RLC电路的稳态特性研究实验/schema.json'), 'utf8'));
+  const ctx = {currentSchema: schema, $: id => id === 'chartXField' ? x : id === 'chartYField' ? y : null, document: {createElement: () => ({})}};
+  vm.runInNewContext(fn + ';fillChartFieldOptions();', ctx);
+  assert.deepEqual(x.options.slice(1).map(o=>o.value), ['t1[0]','t1[1]','t1[2]','t2[0]','t2[1]','t2[2]']);
+  assert.equal(y.options.length, 7);
+  assert.match(x.options[1].textContent, /f\/kHz/);
+  ctx.currentSchema = {groups:[{fields:[{key:'f',type:'array'},{key:'u',type:'array'}]}]};
+  vm.runInNewContext('fillChartFieldOptions();', ctx);
+  assert.deepEqual(x.options.slice(1).map(o=>o.value), ['f','u']);
+});

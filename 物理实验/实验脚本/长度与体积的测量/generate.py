@@ -294,7 +294,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("")
     doc.add_table(["测量量", *[str(i + 1) for i in range(r["n"])]],
                   [["D / mm", *[f"{x:.2f}" for x in r["D"]]]],
-                  col_widths=[1.5] + [1.4] * r["n"])
+                  col_widths=[1.5] + [1.4] * r["n"], role="raw")
     doc.add_paragraph("")
     doc.add_run("平均值：")
     doc.add_inline_math(f"D_a = {r['D_a']:.3f} mm")
@@ -332,7 +332,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("")
     doc.add_table(["测量量", *[str(i + 1) for i in range(r["n"])]],
                   [["d / mm", *[f"{x:.3f}" for x in r["d_shi"]]]],
-                  col_widths=[1.5] + [1.4] * r["n"])
+                  col_widths=[1.5] + [1.4] * r["n"], role="raw")
     doc.add_paragraph("")
     doc.add_run("平均值：")
     doc.add_inline_math(f"d_a = {r['d_a']:.4f} mm")

@@ -22,7 +22,7 @@ app.whenReady().then(async () => {
     await until(() => BrowserWindow.getAllWindows().length);
     const contents = BrowserWindow.getAllWindows()[0].webContents;
     const evaluate = code => contents.executeJavaScript(code);
-    await until(() => evaluate('typeof experiments !== "undefined" && experiments.length === 27').catch(() => false));
+    await until(() => evaluate('typeof experiments !== "undefined" && experiments.length === 28').catch(() => false));
     assert.ok(contents.getURL().startsWith('file:'), 'preserve existing localStorage origin across upgrade');
     // Validate the preparation shortcut without opening the user's actual browser.
     const network = require('../src/main/network'), originalLookup = network.lookup, originalOpen = shell.openExternal;

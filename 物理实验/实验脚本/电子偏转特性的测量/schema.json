@@ -11,7 +11,11 @@
           "length": 9,
           "unit": "mm",
           "required": true,
-          "default": null
+          "default": null,
+          "variableLength": true,
+          "minLength": 3,
+          "maxLength": 100,
+          "pairedMatrix": "Udx"
         },
         {
           "key": "Udx",
@@ -37,7 +41,8 @@
             "D=12mm",
             "D=16mm"
           ],
-          "default": null
+          "default": null,
+          "colsFrom": "D_x"
         }
       ]
     },
@@ -51,7 +56,11 @@
           "length": 9,
           "unit": "mm",
           "required": true,
-          "default": null
+          "default": null,
+          "variableLength": true,
+          "minLength": 3,
+          "maxLength": 100,
+          "pairedMatrix": "Udy"
         },
         {
           "key": "Udy",
@@ -77,7 +86,8 @@
             "D=12mm",
             "D=16mm"
           ],
-          "default": null
+          "default": null,
+          "colsFrom": "D_y"
         }
       ]
     },
@@ -91,7 +101,11 @@
           "length": 7,
           "unit": "mm",
           "required": true,
-          "default": null
+          "default": null,
+          "variableLength": true,
+          "minLength": 3,
+          "maxLength": 100,
+          "pairedMatrix": "Im"
         },
         {
           "key": "Im",
@@ -115,11 +129,12 @@
             "D=6mm",
             "D=9mm"
           ],
-          "default": null
+          "default": null,
+          "colsFrom": "D_m"
         }
       ]
     }
   ],
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "userInputOnly": true
 }

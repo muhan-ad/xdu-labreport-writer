@@ -315,7 +315,7 @@ test('startup stays quiet offline or up to date, and failed checks can be retrie
 function uiContext() {
   const nodes = {};
   return vm.createContext({
-    currentExp: { id: 'A', path: 'A', reportFile: 'A.docx' }, currentSchema: {}, currentData: {},
+    currentExp: { id: 'A', path: 'A', reportFile: 'A.docx' }, currentSchema: {}, currentData: {},currentDataLoadIssues:[],dataValidation:require('../src/shared/data-validation'),
     isGenerating: false, isBatchRunning: false, isSavingData: false, isSwitchingExperiment: false,
     isDataModified: true, isAiPolishing: false,
     aiPolishRequestIds: new Set(), aiFlightOrder: new Map(), aiFollowedRequestId: null, aiThinkingChars: 0,
@@ -468,12 +468,20 @@ test('legacy gravity data gains a selectable one-period average without restorin
   ] }] };
   ui.window = { labAPI: { readData: async () => ({ ok: true, data: { trials, T0: 0.898, h1: 5, h2: 15 } }) } };
   Object.assign(ui, { renderForm: () => {}, refreshFormCheck: () => {}, notifyDataModified: () => {}, loadChartConfig: async () => {} });
-  load(ui, 'async function loadFormData(', '// 按 schema 初始化空白表单');
+  load(ui, 'async function loadFormData(', '// 清除即保存空白数据');
   await ui.loadFormData({ id: '重力加速度的测量', path: 'unused' });
   assert.equal(ui.currentData.T_avg.length, 9);
   assert.equal(ui.currentData.T_avg[8], 1.8);
   assert.equal(ui.currentData.T0, 0.898, '旧字段只留在旧文件中，新 schema 不展示也不参与 Python 计算');
-  assert.match(renderer, /group\.fields\.filter\(f => f\.type === 'array'\)/,
+  const select = () => ({ options: [], value: '', set innerHTML(_) { this.options = [{value:''}]; },
+    appendChild(opt) { this.options.push(opt); } });
+  const x = select(), y = select();
+  const fields = vm.createContext({currentSchema: ui.currentSchema,
+    $: id => id === 'chartXField' ? x : id === 'chartYField' ? y : null,
+    document: {createElement: () => ({})}});
+  load(fields, 'function fillChartFieldOptions()', '// 用配置回填两个弹窗的控件');
+  fields.fillChartFieldOptions();
+  assert.ok(x.options.some(o => o.value === 'T_avg') && y.options.some(o => o.value === 'T_avg'),
     '图表字段下拉自动列出 schema 中新增的平均值数组');
 });
 
@@ -747,62 +755,16 @@ test('readFormData reads array fields from the main form container only', () => 
   assert.equal(data.n1, 7);
 });
 
-test('vision contribution upload assembles photo + ai + proofread + manifest with privacy strip', async () => {
-  const ui = uiContext();
-  const uploaded = [], submitted = [];
-  let credFiles = null;
-  Object.assign(ui, {
-    TextEncoder, atob,
-    currentExp: { id: '刚体转动惯量的测量', path: 'x', reportFile: 'r.docx' },
-    $: (id) => (id === 'cvVisionList' ? {
-      innerHTML: '', style: {},
-      // 模拟列表里有一个勾选中的样本（collectCVVisionSel 从 DOM 收集）
-      querySelectorAll: () => [{
-        dataset: { key: '刚体转动惯量的测量/20260920_120000' },
-        querySelector: (sel) => (sel === '.cv-vision-pick' ? { checked: true, disabled: false } : null),
-      }],
-      querySelector: () => null,
-    } : {
-      style: {}, value: '', textContent: '', innerHTML: '',
-      classList: { toggle: () => {}, add: () => {}, remove: () => {} },
-      checked: id === 'chkContributeAgree',
-      querySelectorAll: () => [], querySelector: () => null,
-    }),
-    window: { labAPI: {
-      getAppVersion: async () => '9.9.9',
-      listVisionSamples: async () => ({ ok: true, samples: [] }),
-      readVisionSample: async () => ({
-        ok: true,
-        photoDataUrl: 'data:image/jpeg;base64,AAAA',
-        aiData: { fields: { a: { value: 1 } }, student: { name: '张三', id: '2021001' } },
-        proofreadData: { fields: { a: { value: 2 } }, student: { name: '张三', id: '2021001' } },
-      }),
-      contributeGetCredentials: async (p) => {
-        credFiles = p.files;
-        return { ok: true, items: p.files.map(f => ({ key: f.key, putUrl: 'https://cos/' + f.key })) };
-      },
-      contributeUpload: async (p) => { uploaded.push(p); return { ok: true }; },
-      markVisionSubmitted: async (p) => { submitted.push(p); return { ok: true }; },
-    } },
-  });
+test('removed vision contribution has no visible entry and cannot upload samples', async () => {
+  const ui = uiContext(), calls = [];
+  Object.assign(ui, {window:{labAPI:{contributeGetCredentials:async()=>calls.push('credentials'),readVisionSample:async()=>calls.push('read')}}});
   load(ui, 'let cvMode = ', 'let dangerStep');
-  // 状态是脚本级词法绑定，外部预设属性会被声明遮蔽：改为调用 slice 内部函数设置
-  ui.switchCVTab('vision');
-  ui.collectCVVisionSel();
+  vm.runInContext("cvMode='vision'", ui);
   await ui.doContributeUpload();
-  assert.equal(credFiles.length, 4, '每个样本 4 个文件：' + JSON.stringify(credFiles.map(f => f.key)));
-  const keys = credFiles.map(f => f.key);
-  assert.ok(keys.every(k => k.startsWith('contributions/vision/刚体转动惯量的测量/20260920_120000/')), '对象键按 vision 前缀：' + keys.join('、'));
-  assert.ok(keys.some(k => k.endsWith('/photo.jpg')) && keys.some(k => k.endsWith('/ai.json'))
-    && keys.some(k => k.endsWith('/proofread.json')) && keys.some(k => k.endsWith('/manifest.json')), '三件套 + manifest 齐全');
-  const aiFile = uploaded.find(p => p.putUrl.endsWith('/ai.json'));
-  const aiObj = JSON.parse(Buffer.from(aiFile.data).toString('utf8'));
-  assert.ok(!aiObj.student, '默认移除学生信息');
-  assert.equal(aiObj.fields.a.value, 1, '识别数据保留');
-  const manifest = JSON.parse(Buffer.from(uploaded.find(p => p.putUrl.endsWith('/manifest.json')).data).toString('utf8'));
-  assert.equal(manifest.kind, 'vision');
-  assert.equal(manifest.masked, false);
-  assert.equal(submitted.length, 1, '上传成功后标记已提交');
+  assert.deepEqual(calls, []);
+  const html = read(path.join(__dirname,'../src/index.html'));
+  assert.doesNotMatch(html, /id="btnCVTabVision"|id="cvPaneVision"|数据贡献 → 识图数据/);
+  assert.match(html, /id="btnCVTabVariant"/);assert.match(html, /id="btnCVTabReport"/);
 });
 
 test('upstream aborted chat is reported as connection interruption rather than user cancellation', async t => {
@@ -830,7 +792,7 @@ function mainHarness(t, failUpdateCopy = false, realChild = false, fakeNetwork =
   let ready;
   const copied = [];
   const sent = [];                      // 主进程推给渲染层的事件（ai-chat-chunk 等）
-  const webContents = { mainFrame: { url: require('node:url').pathToFileURL(path.join(__dirname, '../src/index.html')).href }, on: () => {}, setWindowOpenHandler: () => {}, send: (channel, payload) => sent.push({ channel, payload }) };
+  const webContents = { mainFrame: { url: require('node:url').pathToFileURL(path.join(__dirname, '../src/index.html')).href }, on: () => {}, once: () => {}, setWindowOpenHandler: () => {}, send: (channel, payload) => sent.push({ channel, payload }) };
   const testKeys = require('node:crypto').generateKeyPairSync('ed25519');
   const mainFile = path.join(__dirname, '../main.js');
   const nativeRequire = createRequire(mainFile);
@@ -849,10 +811,10 @@ function mainHarness(t, failUpdateCopy = false, realChild = false, fakeNetwork =
     },
   };
   const childTools = {
-    spawn: realChild ? require('node:child_process').spawn : () => {
+    spawn: realChild ? require('node:child_process').spawn : (exe, args, spawnOptions) => {
       const child = new EventEmitter();
       Object.assign(child, { stdout: new PassThrough(), stderr: new PassThrough(), stdin: new PassThrough(), pid: 1234, exitCode: null });
-      children.push(child); return child;
+      child.spawnOptions = spawnOptions; children.push(child); return child;
     },
     execFile: realChild ? require('node:child_process').execFile : (exe, args, options, callback) => {
       kills.push({ exe, args });
@@ -1213,7 +1175,7 @@ test('copy link IPC accepts a share URL and refuses non-HTTPS clipboard payloads
   assert.equal(h.handlers.get('copy-link')({}, 'file:///C:/private.txt').ok, false);
 });
 
-test('scan skips a corrupted experiment and reports it in warnings', t => {
+test('scan retains a corrupted experiment and reports it in warnings', t => {
   const h = mainHarness(t);
   const base = path.join(h.root, '实验数据', '实验脚本');
   const mkExp = (name, schema, data) => {
@@ -1230,8 +1192,26 @@ test('scan skips a corrupted experiment and reports it in warnings', t => {
   assert.ok(r && Array.isArray(r.experiments), 'scan 必须返回 {experiments, warnings}');
   const names = r.experiments.map(e => e.name);
   assert.ok(names.includes('甲实验') && names.includes('丙实验'), '正常实验应保留');
-  assert.ok(!names.includes('乙实验'), '损坏实验应被跳过而不是拖垮列表');
+  assert.ok(names.includes('乙实验'), '损坏实验仍保留入口');assert.ok(r.experiments.find(e=>e.name==='乙实验').dataIssues.length);
   assert.ok(Array.isArray(r.warnings) && r.warnings.some(w => w.includes('乙实验')), 'warnings 应列出异常实验');
+});
+
+test('invalid array lengths remain visible and clearing repairs damaged JSON through IPC', async t => {
+  const h=mainHarness(t),dir=path.join(h.root,'实验数据','实验脚本','异常数组实验');
+  const schema={groups:[{fields:[{key:'a',type:'array',length:3,required:true}]}]};
+  put(path.join(dir,'generate.py'),'print(1)');put(path.join(dir,'schema.json'),JSON.stringify(schema));
+  const original=JSON.stringify({a:[1,2,3,4,5,6]});put(path.join(dir,'data.json'),original);
+  const scan=h.handlers.get('scan-experiments')(),entry=scan.experiments.find(e=>e.name==='异常数组实验');
+  assert.ok(entry);assert.match(entry.dataIssues.join('；'),/数组长度/);assert.equal(read(path.join(dir,'data.json')),original);
+  const before=h.children.length,result=await h.handlers.get('run-generate')({},dir,{}, {}, {});
+  assert.equal(result.ok,false);assert.match(result.error,/数组长度/);assert.equal(h.children.length,before);
+  put(path.join(dir,'data.json'),'{broken');put(path.join(dir,'.ocr-last-result.json'),'old OCR');
+  const reset=h.handlers.get('reset-experiment-data')({},dir);assert.equal(reset.ok,true,reset.error);
+  assert.equal(read(path.join(reset.backup,'data.json')),'{broken');
+  assert.deepEqual(JSON.parse(JSON.stringify(h.handlers.get('read-data')({},dir).data)),{a:[null,null,null]});
+  assert.equal(fs.existsSync(path.join(dir,'.ocr-last-result.json')),false);
+  assert.equal(h.handlers.get('scan-experiments')().experiments.find(e=>e.name==='异常数组实验').dataIssues.length,0);
+  assert.equal(h.handlers.get('reset-experiment-data')({},dir).ok,true);
 });
 
 test('scan falls back to the builtin schema when a template is corrupted', t => {
@@ -1335,47 +1315,47 @@ test('AI result copy goes through the main-process clipboard', () => {
 });
 
 // ── 自定义报告目录（设置 → 报告管理）──
-test('run-generate copies the report into the custom directory and keeps the original', async t => {
+test('generation writes directly to the selected directory and tracks the edited canonical file', async t => {
   const h = mainHarness(t);
   const exp = path.join(__dirname, '../物理实验/实验脚本/长度与体积的测量');
   const customDir = path.join(h.root, '自定义报告');
   const pending = h.handlers.get('run-generate')({}, exp, {}, {}, {}, true, customDir);
-  const report = path.join(h.root, '实验数据/实验脚本/长度与体积的测量/长度与体积的测量.docx');
+  const report = path.join(customDir, '长度与体积的测量', 'report.docx');
+  assert.equal(h.children[0].spawnOptions.env.LAB_REPORT_OUTPUT_DIR, path.dirname(report));
   put(report, 'report bytes');
-  // 模拟真实生成后的新文件，避开 Windows 同毫秒时间戳舍入造成的偶发误判。
-  const generatedAt = new Date(Date.now() + 1000);
-  fs.utimesSync(report, generatedAt, generatedAt);
-  h.children[0].exitCode = 0;
-  h.children[0].emit('close', 0);
+  const generatedAt = new Date(Date.now() + 1000); fs.utimesSync(report, generatedAt, generatedAt);
+  h.children[0].exitCode = 0; h.children[0].emit('close', 0);
   const r = await pending;
-  assert.equal(r.ok, true);
-  const copiedPath = path.join(customDir, '长度与体积的测量', '长度与体积的测量.docx');
-  assert.equal(fs.existsSync(copiedPath), true, '自定义目录里应有按实验名建子文件夹的副本');
-  assert.equal(fs.readFileSync(copiedPath, 'utf8'), 'report bytes');
-  assert.equal(fs.existsSync(report), true, '实验目录原件必须保留（预览/打开/报告列表仍用它）');
-  assert.equal(r.copiedTo, copiedPath, '返回值带上复制目标路径');
-  // 生成日志（app.log）里也要能看出这次复制
-  const logText = fs.readFileSync(path.join(h.root, 'logs', 'app.log'), 'utf8');
-  assert.match(logText, /generate \| 结束 \| .*复制=ok/, '生成结束行要带上复制结果');
+  assert.equal(r.ok, true); assert.equal(r.reportFile, report); assert.equal(r.copiedTo, undefined);
+  const local = path.join(h.root, '实验数据/实验脚本/长度与体积的测量');
+  assert.equal(fs.readdirSync(local).some(f => f.endsWith('.docx')), false);
+  put(report, 'manually edited');
+  const list = await h.handlers.get('list-reports')({});
+  assert.equal(list.reports.find(x => x.exp === path.basename(exp)).path, report);
+  const scan = await h.handlers.get('scan-experiments')({});
+  assert.equal(scan.experiments.find(x => x.id === path.basename(exp)).reportFile, report);
+  assert.equal((await h.handlers.get('open-file')({}, report)).ok, true);
+  const stored = JSON.parse(read(path.join(h.root, 'report-locations.json')));
+  assert.equal(stored[path.basename(exp)].path, report);
+  const restarted = mainHarness(t);
+  fs.copyFileSync(path.join(h.root, 'report-locations.json'), path.join(restarted.root, 'report-locations.json'));
+  const restored = await restarted.handlers.get('scan-experiments')({});
+  assert.equal(restored.experiments.find(x => x.id === path.basename(exp)).reportFile, report);
+  assert.equal(fs.readFileSync(report, 'utf8'), 'manually edited');
+
+  const unknown = path.join(customDir, 'arbitrary.docx'); put(unknown, 'other');
+  assert.equal((await h.handlers.get('delete-report')({}, unknown)).ok, false);
+  assert.equal((await h.handlers.get('delete-report')({}, report)).ok, true);
+  assert.equal((await h.handlers.get('list-reports')({})).reports.some(x => x.path === report), false);
 });
 
-test('an unusable custom report directory does not fail generation', async t => {
+test('invalid export location stops generation before spawning', async t => {
   const h = mainHarness(t);
   const exp = path.join(__dirname, '../物理实验/实验脚本/长度与体积的测量');
-  // 指向内置数据目录（安装目录内）→ 必须被拒；生成本身仍应成功
-  const bad = path.join(__dirname, '../物理实验/实验脚本');
-  const pending = h.handlers.get('run-generate')({}, exp, {}, {}, {}, true, bad);
-  const report = path.join(h.root, '实验数据/实验脚本/长度与体积的测量/长度与体积的测量.docx');
-  put(report, 'report bytes');
-  const generatedAt = new Date(Date.now() + 1000);
-  fs.utimesSync(report, generatedAt, generatedAt);
-  h.children[0].exitCode = 0;
-  h.children[0].emit('close', 0);
-  const r = await pending;
-  assert.equal(r.ok, true, '自定义目录不可用时生成仍要成功');
-  assert.equal(r.copiedTo, undefined);
-  assert.match(r.logs, /\[自定义目录\] 复制失败/, '日志里要有告警');
-  assert.equal(fs.existsSync(path.join(bad, '长度与体积的测量', '长度与体积的测量.docx')), false, '不得写进内置数据目录');
+  for (const bad of [path.join(__dirname, '../物理实验/实验脚本'), 'relative-folder']) {
+    const r = await h.handlers.get('run-generate')({}, exp, {}, {}, {}, true, bad);
+    assert.equal(r.ok, false); assert.equal(h.children.length, 0);
+  }
 });
 
 // AI / 识图请求的诊断日志：这条链路此前完全没有日志（响应异常偏大、模型空转、润色失败都查不到）。
@@ -1434,7 +1414,7 @@ test('chart page has preset/custom modes and the custom mode reuses the AI plot 
   const mainSrc = read(path.join(__dirname, '../main.js'));
   const css = read(path.join(__dirname, '../src/style.css'));
   // UI：图表页三个按钮 + 两个弹窗；数据卡片不再有自定义画图入口
-  for (const id of ['btnChartPreset', 'btnChartCustom', 'btnChartGenerate', 'chartModeHint',
+  for (const id of ['btnChartPreset', 'btnChartCustom', 'btnChartGenerate',
     'chartPresetModal', 'chartCustomModal', 'customPlotReq', 'plotConsentRow', 'chkPlotConsent',
     'customInsertSection', 'customImageWidth', 'chartInsertModeHint']) {
     assert.ok(html.includes(`id="${id}"`), '缺少控件 ' + id);
@@ -1478,7 +1458,7 @@ test('chart page has preset/custom modes and the custom mode reuses the AI plot 
   assert.match(mainSrc, /customImageUrl: readCustomChartUrl\(p\)/, '读配置要带回显用的 dataUrl');
   assert.match(mainSrc, /const mode = cfg\.mode === 'custom' \? 'custom' : 'preset'/, '插入按模式分支');
   assert.match(mainSrc, /自定义图表尚未生成，请到「图表」页点「生成图表」/, '自定义图缺失要给中文提示');
-  assert.match(mainSrc, /'--caption', String\(cfg\.caption\)/, '自定义模式带图注插入');
+  assert.match(mainSrc, /insertArgs\.push\('--caption', String\(/, '自定义模式带图注插入');
   assert.match(preload, /saveCustomChart: \(expPath, srcPath\)/, 'preload 透传 saveCustomChart');
   assert.match(preload, /runPlot: \(expPath, code, runId\)/, 'preload 透传 runPlot');
   // 技能作用域：绘图技能不参与润色
@@ -1754,9 +1734,8 @@ test('chart preview and insert run real python and sync the custom report dir', 
         .filter(l => l.includes('chart')).slice(-3).join(' | ');
     } catch (e) { return '(无日志)'; }
   })();
-  assert.ok(ins.copiedTo && fs.existsSync(ins.copiedTo),
-    '带图表的版本应同步到自定义目录：' + ins.copiedTo + ' | 日志: ' + chartLog);
-  assert.equal(fs.statSync(ins.copiedTo).size, fs.statSync(gen.reportFile).size, '自定义目录副本应与实验目录那份一致');
+  assert.equal(ins.reportFile, gen.reportFile);
+  assert.equal(ins.copiedTo, undefined);
 
   // 4) 临时图表图片要清理，不留中间产物
   const leftovers = fs.readdirSync(path.join(h.root, '.chart-previews')).filter(f => f.startsWith('insert_'));
@@ -1797,7 +1776,8 @@ test('custom-mode chart persists to the experiment dir and is inserted with a ca
   const ins = await h.handlers.get('insert-chart-into-report')({}, gen.reportFile, exp, copyDir);
   assert.equal(ins.ok, true, '自定义模式插图应成功：' + JSON.stringify(ins).slice(0, 300));
   assert.equal(ins.mode, 'custom', '回报里要标明模式');
-  assert.ok(ins.copiedTo && fs.existsSync(ins.copiedTo), '带图表的版本应同步到自定义目录');
+  assert.equal(ins.reportFile, gen.reportFile, '插图直接编辑同一报告，不再生成副本');
+  assert.equal(ins.copiedTo, undefined);
   const text = (await require('mammoth').extractRawText({ path: gen.reportFile })).value;
   assert.ok(text.includes('图1 自定义模式端到端测试'), '报告里应写入图注');
   assert.ok(fs.existsSync(persisted), '插入后用户那张图必须还在（不能被当临时文件删掉）');
@@ -1948,7 +1928,7 @@ test('header open-report row gets a save-path button reusing the settings handle
   const contribute = html.indexOf('id="btnContribute"');
   assert.ok(open > -1 && pick2 > open && pick2 < contribute, '「选择保存路径」紧贴在「打开报告」右侧');
   assert.ok(!/id="btnPickReportDir2"[^>]*disabled/.test(html), '保存路径与有没有报告无关，不设 disabled');
-  assert.match(html, />\s*选择保存路径\s*<\/button>/, '按钮文案为「选择保存路径」');
+  assert.match(html, />\s*保存路径\s*<\/button>/, '按钮文案为「保存路径」');
   assert.match(renderer, /\$\('btnPickReportDir2'\)\.onclick = pickReportDir;/, '头部按钮绑定到同一个 pickReportDir（不新增 IPC）');
   assert.match(renderer, /for \(const id of \['btnPickReportDir', 'btnPickReportDir2'\]\)/, '两个入口的 title 一起刷新');
   assert.match(renderer, /\$\('btnOpenReport2'\)\.disabled = !exp\.hasReport;\s*renderReportDirSetting\(\);/, '切换实验时同步头部按钮上的当前路径');
@@ -1979,4 +1959,22 @@ test('oversized AI response warns instead of aborting the request', () => {
   assert.ok(warnIdx > -1, '渲染层要处理 warn');
   assert.ok(followIdx > -1 && warnIdx < followIdx, 'warn 分支必须在跟随闸门之前');
   assert.match(renderer, /showToast\('warning', '目前模型可能空转或跑飞'/, '提示文案');
+});
+
+
+test('real Python exports DOCX and previews and inserts into that same file', async t => {
+  const h = mainHarness(t, false, true);
+  const exp = path.join(__dirname, '../物理实验/实验脚本/长度与体积的测量');
+  const dir = path.join(h.root, 'direct-export');
+  const r = await h.handlers.get('run-generate')({}, exp, {}, {}, {}, false, dir);
+  assert.equal(r.ok, true, r.error || r.logs);
+  assert.equal(path.dirname(r.reportFile), path.join(dir, path.basename(exp)));
+  const local = path.join(h.root, '实验数据/实验脚本', path.basename(exp));
+  assert.equal(fs.readdirSync(local).some(f => f.endsWith('.docx')), false);
+  assert.equal((await h.handlers.get('report-text')({}, r.reportFile)).ok, true);
+  put(path.join(local, '.chart-config.json'), JSON.stringify({xField:'D',yField:'d_shi',chartType:'scatter',insertSection:'实验结果分析',imageWidth:12}));
+  const ins = await h.handlers.get('insert-chart-into-report')({}, r.reportFile, exp, dir);
+  assert.equal(ins.ok, true, ins.error);
+  assert.equal(ins.reportFile, r.reportFile);
+  assert.equal(fs.readdirSync(local).some(f => f.endsWith('.docx')), false);
 });

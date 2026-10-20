@@ -1,6 +1,6 @@
 'use strict';
 // 执行于网页隔离世界；只返回状态，不回传网页值或凭据。
-function fillLoginForm(expectedUrl, username, password, probeOnly = false, expectedRootUrl = expectedUrl) {
+function fillLoginForm(expectedUrl, username, password, probeOnly = false, expectedRootUrl = expectedUrl, onlyEmpty = false) {
   const siteUrl = raw => {
     try {
       const url = new URL(raw);
@@ -47,6 +47,7 @@ function fillLoginForm(expectedUrl, username, password, probeOnly = false, expec
   const account = cached?.password === passwordInput && cachedAccount ? cachedAccount
     : named.length === 1 ? named[0] : candidates.length === 1 ? candidates[0] : null;
   if (!account || account.form !== passwordInput.form) return { filled: false };
+  if (onlyEmpty && (account.value || passwordInput.value)) return { filled: false, occupied: true };
   if (probeOnly) return { ready: true };
   const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
   // 管理界面不显示明文；填入网页的输入框也使用掩码，不点击提交。
@@ -61,7 +62,7 @@ function fillLoginForm(expectedUrl, username, password, probeOnly = false, expec
   return { filled: true };
 }
 
-function autofillScript(url, credentials, probeOnly = false, rootUrl = url) {
-  return `(${fillLoginForm.toString()})(${JSON.stringify(url)},${JSON.stringify(credentials.username)},${JSON.stringify(credentials.password)},${JSON.stringify(!!probeOnly)},${JSON.stringify(rootUrl)})`;
+function autofillScript(url, credentials, probeOnly = false, rootUrl = url, onlyEmpty = false) {
+  return `(${fillLoginForm.toString()})(${JSON.stringify(url)},${JSON.stringify(credentials.username)},${JSON.stringify(credentials.password)},${JSON.stringify(!!probeOnly)},${JSON.stringify(rootUrl)},${JSON.stringify(onlyEmpty)})`;
 }
 module.exports = { fillLoginForm, autofillScript };

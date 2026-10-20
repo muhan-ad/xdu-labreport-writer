@@ -64,7 +64,8 @@ const STANDARD_NAMES = {
   '衍射光强分布的测量': '衍射光强分布的测量',
   '三棱镜顶角的测量': '三棱镜顶角的测量',
   '平凸透镜曲率半径的测量': '平凸透镜曲率半径的测量',
-  '光的偏振特性测量': '光的偏振特性测量',
+  '光的偏振特性测量': '光的偏振特性测量（第一学期）',
+  '光的偏振特性测量（第二学期）': '光的偏振特性测量（第二学期）',
   '激光波长的测量': '激光波长的测量',
   '光栅光谱的测量': '光栅光谱的测量',
   '电表的改装与校准': '电表的改装与校准',
@@ -176,11 +177,11 @@ async function fetchExperiments() {
   return arr;
 }
 
-// 扫描时被跳过的异常实验：提示用户（其余实验正常，异常项可导出诊断日志排查）
+// 数据异常保留实验入口，用户可进入修改或清除；生成仍严格校验。
 function showScanWarnings(expList) {
   const ws = expList && Array.isArray(expList.warnings) ? expList.warnings : [];
   if (!ws.length) return;
-  showToast('warning', '部分实验数据异常', `已隐藏 ${ws.length} 个异常实验：${ws.slice(0, 3).join('；')}${ws.length > 3 ? '；…' : ''}`, 8000);
+  showToast('warning', '部分实验需要检查', `数据异常的实验仍保留在列表：${ws.slice(0, 3).join('；')}${ws.length > 3 ? '；…' : ''}`, 10000);
 }
 
 // ── AI 润色强约束：公式不可修改（程序化比对，不依赖模型自觉）──
@@ -239,11 +240,12 @@ function isDevMode() {
 function applyDevUi() {
   const dev = isDevMode();
   // dataFileInfo（data.json 文件名/路径/外部打开）、批量入口与自建变体导入仅开发者模式可见
-  const devEls = ['btnBatch', 'btnQueuePanel', 'btnSelectAll', 'btnOpenData', 'btnOpenData2', 'dataFileInfo', 'btnImportCustomVariants'];
+  const devEls = ['btnBatch', 'btnQueuePanel', 'btnSelectAll', 'btnOpenData', 'btnOpenData2', 'dataFileInfo', 'btnImportCustomVariants', 'btnFillAllTestData'];
   devEls.forEach(id => {
     const el = $(id);
     if (el) el.style.display = dev ? '' : 'none';
   });
+  if ($('btnFillAllTestData')) $('btnFillAllTestData').hidden = !dev;
   if (!dev) selectedIds.clear();   // 关闭调试模式时清空选中，避免残留状态
 }
 
@@ -261,6 +263,8 @@ function loadDevelopPane() {
   const dev = isDevMode();
   $('rdDevMode').checked = dev;
   $('rdNormalMode').checked = !dev;
+  $('btnFillAllTestData').hidden = !dev;
+  $('btnFillAllTestData').style.display = dev ? '' : 'none';
 }
 
 // ── 变体管理：实验级章节开关（设置 → 报告管理 → 变体管理）──
@@ -313,6 +317,42 @@ async function saveSecCfg() {
   const r = await window.labAPI.writeSectionsConfig(exp.path, disabled);
   if (r && r.ok) showToast('success', '已保存', `${getDisplayName(exp)} 章节开关已保存，下次生成报告时生效`);
   else showToast('error', '保存失败', (r && r.error) || '未知错误', 5000);
+}
+
+async function fillAllTestData() {
+  if (!isDevMode()) return;
+  if (isGenerating || isSavingData || isAiPolishing || isBatchRunning || queueState === 'running' || queueState === 'paused') { showToast('warning', '任务运行中', '请等待生成任务结束'); return; }
+  if (!(await appConfirm(`将全部 ${experiments.length} 个实验替换为测试数据并直接保存？当前未保存的表单也会被替换。原数据会备份；照片、自定义思考题和报告保留。测试数据不得作为实测数据提交。`, { danger: true }))) return;
+  const button = $('btnFillAllTestData'), status = $('allTestDataStatus');
+  button.disabled = true; status.textContent = '正在检查、备份并填入测试数据…';
+  try {
+    const result = await window.labAPI.fillAllTestData(experiments.map(e => e.path));
+    if (!result.ok) throw Error(result.error || '填入失败');
+    isDataModified = false;
+    experiments = await fetchExperiments();
+    experiments.forEach(e => { e.category = getCategory(e.name); });
+    updateCategoryCounts(); updateEmptyStats();
+    if (currentExp) { currentExp = experiments.find(e => e.id === currentExp.id) || currentExp; await loadFormData(currentExp); }
+    renderList($('searchInput').value);
+    status.textContent = `已填入并保存 ${result.count} 个实验。原数据备份：${result.backupDir}`;
+    showToast('success', '全部测试数据已填入', '仅用于功能测试，不得作为实测数据提交');
+  } catch (error) { status.textContent = error.message; showToast('error', '批量填入失败', error.message); }
+  finally { button.disabled = false; }
+}
+
+async function checkResourceIntegrity() {
+  const button=$('btnCheckResources'),status=$('resourceCheckStatus'),details=$('resourceCheckDetails');
+  if(button.disabled)return;
+  button.disabled=true;status.dataset.state='';status.textContent='正在核对完整资源…';details.hidden=true;details.textContent='';
+  try {
+    const result=await window.labAPI.checkResourceIntegrity();
+    if(!result.ok){status.dataset.state='error';status.textContent=result.error||'资源检查未能完成';if(result.missing?.length){details.textContent='缺失资源：\n'+result.missing.join('\n');details.hidden=false;}return;}
+    if(result.complete){status.dataset.state='available';status.textContent=`资源完整（已核对 ${result.total} 个文件）`;return;}
+    status.dataset.state='error';
+    status.textContent=`资源不完整：缺失 ${result.missing.length} 项，内容不一致 ${result.changed.length} 项，无法读取 ${result.unreadable.length} 项`;
+    details.textContent=[['缺失资源',result.missing],['内容不一致',result.changed],['无法读取',result.unreadable]].filter(([,files])=>files.length).map(([label,files])=>label+'：\n'+files.join('\n')).join('\n\n');details.hidden=false;
+  } catch {status.dataset.state='error';status.textContent='资源检查未能完成，请稍后重试。';}
+  finally {button.disabled=false;}
 }
 
 // ── 导出诊断日志（设置-开发者调试；主进程统一脱敏）──
@@ -463,6 +503,7 @@ async function selectExperiment(exp) {
       return;   // 取消切换
     }
   }
+  if(typeof closeRecognizeModal==='function'&&$('recognizeModal')?.classList.contains('show'))closeRecognizeModal();
   currentExp = exp;
   lastPolishResults = [];   // 切换实验清空上一实验的润色结果，防跨实验导入
   $('emptyState').style.display = 'none';
@@ -470,10 +511,14 @@ async function selectExperiment(exp) {
   $('batchPanel').style.display = 'none';
 
   $('expName').textContent = getDisplayName(exp);
+  const preparationUrl=window.ExperimentPreparation.url(exp.name);
+  $('btnExperimentPreparationDetail').disabled=!preparationUrl;
+  $('btnExperimentPreparationDetail').title=preparationUrl?'在默认浏览器中打开当前实验的预习页面；上下学期版本共用资料':'官网预习目录暂无该实验的对应页面';
   $('expCat').textContent = CATEGORY_NAMES[exp.category];
 
-  $('metaData').textContent = exp.hasData ? '数据已就绪' : '无数据模板';
-  $('metaData').className = 'meta-dot' + (exp.hasData ? ' ok' : '');
+  $('metaData').textContent = exp.dataIssues?.length ? '数据待检查' : exp.hasData ? '数据已就绪' : '无数据模板';
+  $('metaData').className = 'meta-dot' + (exp.hasData&&!exp.dataIssues?.length ? ' ok' : '');
+  $('metaData').title = (exp.dataIssues||[]).join('；');
   $('metaReport').textContent = exp.hasReport ? '报告已生成' : '未生成';
   $('metaReport').className = 'meta-dot' + (exp.hasReport ? ' ok' : '');
 
@@ -596,8 +641,8 @@ async function pumpQueue() {
       const polish = await generationPolish(q.exp, 'batchLog');
       const cq = await ensureCustomQuizAnswers(q.exp);
       if (cq.stop) {
-        q.status = 'failed'; q.error = '已停止（自定义思考题答案未生成）';
-        $('batchLog').textContent += '  ⏹ 已停止队列\n';
+        q.status = 'failed'; q.error = cq.error || '自定义思考题答案未就绪';
+        $('batchLog').textContent += `  ⏹ 已停止队列：${q.error}\n`;
         queueState = 'cancelled';
         renderQueue(); updateQueueProgress();
         break;
@@ -736,6 +781,7 @@ function logEvent(msg) {
 // 全部实验均有 schema.json，统一走表单渲染；无 schema 时提示未迁移
 // ══════════════════════════════════════════════════════════
 let currentSchema = null;   // 当前实验 schema（null = 未迁移）
+let currentDataLoadIssues = [];
 let currentData = null;     // 当前表单数据
 
 function escapeHtml(s) {
@@ -753,7 +799,7 @@ async function loadExperimentData(exp) {
   } else {
     currentSchema = null;
     currentData = null;
-    $('dataTableWrap').innerHTML = '<div class="data-table-empty">该实验尚未迁移，暂不能在应用内填写</div>';
+    $('dataTableWrap').innerHTML = `<div class="data-table-empty">${escapeHtml(sr.error||'实验模板无法读取，请在设置中使用内置实验修复。')}</div>`;
     $('sheetTabs').style.display = 'none';
     $('btnFillDefaultData').disabled = true;
     $('btnFillTestData').disabled = true;
@@ -763,7 +809,14 @@ async function loadExperimentData(exp) {
 async function loadFormData(exp) {
   let result = { ok: false, data: null };
   try { result = await window.labAPI.readData(exp.path); } catch (e) { /* 忽略 */ }
-  currentData = (result.ok && result.data) ? result.data : {};
+  currentDataLoadIssues=[...(exp.dataIssues||[])];
+  if(!result.ok)currentDataLoadIssues.push(result.error||'数据无法读取，请清除数据后重新填写');
+  const raw=(result.ok&&result.data)?result.data:{};
+  const rawIssues=dataValidation.validate(currentSchema,raw,false);
+  currentDataLoadIssues.push(...rawIssues);
+  if(rawIssues.length)currentDataLoadIssues.push('表单按模板整理显示，原文件未改动；请核对后保存，或清除数据重新填写');
+  if(typeof raw!=='object'||Array.isArray(raw))currentDataLoadIssues.push('数据格式异常，请清除数据后重新填写');
+  currentData = raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
   // schema 默认值只在"数据文件中缺失该字段"时回填一次；
   // 渲染层不再 fallback default，保证「清除数据」置空后不会被默认值恢复
   for (const group of (currentSchema?.groups || [])) {
@@ -788,11 +841,12 @@ async function loadFormData(exp) {
       }
     }
   }
+  currentData = dataValidation.forEditing(currentSchema,currentData);
   isDataModified = false;
   $('btnSaveData').disabled = true;
   $('btnFillDefaultData').disabled = false;
   $('btnFillTestData').disabled = false;
-  $('btnFillDefaultData').textContent = '初始化空白表单';
+  $('btnFillDefaultData').textContent = '清除数据';
   notifyDataModified();
   $('sheetTabs').style.display = 'none';   // 表单模式无 sheet 切换
   $('dataIssueBar').style.display = 'none';
@@ -817,20 +871,27 @@ async function fillTestData() {
   showToast('success', '已填入测试数据', '仅用于功能测试，请勿作为真实实验数据提交');
 }
 
-// 按 schema 初始化空白表单，仅保存修改时写入文件。
+// 清除即保存空白数据，并移除旧识图/派生缓存；原文件由主进程先备份。
 async function fillDefaultData() {
-  if (!currentSchema || !currentExp) return;
-  if (!(await appConfirm('将当前实验表单初始化为空白？填写的数据将清空，点击保存修改后才写入文件。', {danger:true}))) return;
-  for (const group of currentSchema.groups || []) for (const field of group.fields || []) {
-    currentData[field.key] = field.type === 'array' ? Array(field.length || 0).fill(null)
-      : field.type === 'matrix' ? Array.from({length:field.rows || 0},()=>Array(field.cols || 0).fill(null)) : null;
-  }
-  renderForm();
-  isDataModified = true;
-  notifyDataModified();
-  $('btnSaveData').disabled = false;
-  refreshFormCheck();
-  showToast('success', '已初始化空白表单', '请自行填写实验数据并保存');
+  if (!currentSchema || !currentExp || isSavingData || isSwitchingExperiment) return;
+  if(isGenerating||isBatchRunning||isAiPolishing){showToast('warning','暂时不能清除','请等待当前任务完成。');return;}
+  const exp=currentExp;
+  if (!(await appConfirm('清除当前实验已保存的测量数据、识图缓存、原始数据照片及绘图缓存，并重建空白表单？\n原数据会先备份；报告、账号和其他实验不变。', {danger:true}))) return;
+  if(currentExp?.id!==exp.id||isSavingData||isGenerating||isBatchRunning)return;
+  isSavingData=true;$('btnFillDefaultData').disabled=true;
+  try{
+    if(typeof discardOcrForExperiment==='function')discardOcrForExperiment(exp.id);
+    const r=await window.labAPI.resetExperimentData(exp.path);if(!r.ok)throw Error(r.error);
+    exp.path=r.path;exp.dataFile=r.dataFile;exp.dataIssues=[];Object.assign(experiments.find(e=>e.id===exp.id)||{},exp);
+    if(typeof discardOcrForExperiment==='function')discardOcrForExperiment(exp.id,r.revision);
+    currentData=r.data;currentDataLoadIssues=[];currentSections=null;lastPolishResults=[];
+    clearPolishOverrides(exp.id);clearLegacyCustomPlot(exp.id);clearChartPreview();
+    isDataModified=false;notifyDataModified();$('btnSaveData').disabled=true;
+    $('metaData').textContent='数据已清除';$('metaData').title='';
+    renderForm();refreshFormCheck();await loadChartConfig(exp);
+    showToast('success','数据已彻底清除','已保存空白表单，旧数据已备份。');
+  }catch(e){showToast('error','清除失败',e.message,8000);}
+  finally{isSavingData=false;$('btnFillDefaultData').disabled=false;}
 }
 
 function renderForm() {
@@ -850,6 +911,20 @@ function renderForm() {
   }
   html += '</div>';
   wrap.innerHTML = html;
+  wrap.querySelectorAll('[data-resize-points]').forEach(button => {
+    button.onclick = async () => {
+      const field = currentSchema.groups.flatMap(g => g.fields || []).find(f => f.key === button.dataset.resizePoints && f.variableLength);
+      if (!field) return;
+      const expId = currentExp?.id, live = readFormData(), count = live[field.key].length, delta = Number(button.dataset.delta);
+      if (count + delta < (field.minLength || 3) || count + delta > (field.maxLength || 100)) return;
+      if (delta < 0 && !(await appConfirm('删除最后一个测量点及三组对应测量值？保存修改后才写入数据文件。'))) return;
+      if (currentExp?.id !== expId) return;
+      const resize = values => Array.from({length:count + delta}, (_, i) => values?.[i] ?? null);
+      live[field.key] = resize(live[field.key]);
+      live[field.pairedMatrix] = live[field.pairedMatrix].map(resize);
+      currentData = live; renderForm(); onFormInput();
+    };
+  });
   wrap.querySelectorAll('select.parameter-presets').forEach(select => {
     select.addEventListener('change', () => {
       if (!select.value) return;
@@ -885,7 +960,9 @@ function handleFormKeyNav(e) {
 // dataOverride：值来源覆盖（人工核对界面用它渲染识别结果，不改动主表单的 currentData）
 function renderField(fld, dataOverride) {
   const key = fld.key;
-  const label = escapeHtml(fld.label || key);
+  const formatLabel = value => escapeHtml(String(value)).replace(/([A-Za-z\u0370-\u03ff])((?:[_^](?:\{[^{}]+\}|[A-Za-z0-9]+))+)/g, (_, base, suffix) => base + suffix.replace(/([_^])(?:\{([^{}]+)\}|([A-Za-z0-9]+))/g, (_, op, braced, plain) => { const tag = op === '_' ? 'sub' : 'sup'; return `<${tag}>${braced || plain}</${tag}>`; }));
+  const labelText = escapeHtml(fld.label || key);
+  const label = fld.label ? formatLabel(fld.label) : labelText;
   const unit = fld.unit ? `<span class="field-unit">${escapeHtml(fld.unit)}</span>` : '';
   const src = dataOverride !== undefined ? dataOverride : currentData;
   const val = src ? src[key] : null;
@@ -893,7 +970,7 @@ function renderField(fld, dataOverride) {
 
   if (fld.type === 'number') {
     const v = hasVal(val) ? val : '';   // 无默认回退：清除后保持空白（默认值已在 loadFormData 阶段填入）
-    const presets = Array.isArray(fld.presets) ? `<select class="field-input parameter-presets" data-target-key="${escapeHtml(key)}" aria-label="${label}常用值"><option value="">选择常用值（可手动输入）</option>${fld.presets.map(p => `<option value="${escapeHtml(p.value)}">${escapeHtml(p.label)}</option>`).join('')}</select>` : '';
+    const presets = Array.isArray(fld.presets) ? `<select class="field-input parameter-presets" data-target-key="${escapeHtml(key)}" aria-label="${labelText}常用值"><option value="">选择常用值（可手动输入）</option>${fld.presets.map(p => `<option value="${escapeHtml(p.value)}">${escapeHtml(p.label)}</option>`).join('')}</select>` : '';
     return `<div class="form-field form-field-number">`
       + `<label class="field-label">${label}</label>`
       + `<input type="number" step="any" class="field-input" data-key="${escapeHtml(key)}" value="${escapeHtml(v)}">`
@@ -913,17 +990,15 @@ function renderField(fld, dataOverride) {
       }
     }
     const suggs = Array.isArray(fld.expSuggestions) ? fld.expSuggestions : [-6, -7, -8, -9, -10, -11, -12];
-    const dl = suggs.map(e => `<option value="${e}">10^${e}</option>`).join('');
     return `<div class="form-field form-field-science">`
       + `<label class="field-label">${label}</label>`
       + `<input type="number" step="any" class="field-input science-mantissa" data-key="${escapeHtml(key)}" value="${escapeHtml(mantissa)}" placeholder="有效数字">`
       + `<span class="sci-times">× 10^</span>`
-      + `<input type="number" step="1" class="field-input science-exp" data-key="${escapeHtml(key)}" value="${exp}" list="sciExp_${escapeHtml(key)}">`
-      + `<datalist id="sciExp_${escapeHtml(key)}">${dl}</datalist>`
+      + `<span class="science-exp-wrap"><input type="number" step="1" class="field-input science-exp" aria-label="指数" data-key="${escapeHtml(key)}" value="${exp}" data-exp-suggestions="${escapeHtml(JSON.stringify(suggs))}"><button type="button" class="science-exp-trigger" aria-label="选择指数" aria-haspopup="listbox" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button></span>`
       + unit + `</div>`;
   }
   if (fld.type === 'array') {
-    const len = fld.length || (Array.isArray(val) ? val.length : 0);
+    const len = fld.variableLength ? dataValidation.dimensions(fld, src || {}).length : fld.length || (Array.isArray(val) ? val.length : 0);
     let cells = '';
     for (let i = 0; i < len; i++) {
       const av = (Array.isArray(val) && hasVal(val[i])) ? val[i] : '';
@@ -932,10 +1007,11 @@ function renderField(fld, dataOverride) {
     }
     return `<div class="form-field form-field-array">`
       + `<div class="field-head"><span class="field-label">${label}</span>${unit}</div>`
-      + `<div class="array-grid">${cells}</div></div>`;
+      + `<div class="array-grid">${cells}</div>`
+      + (fld.variableLength && dataOverride === undefined ? `<div class="field-hint">当前 ${len} 个测量点 <button type="button" class="btn btn-outline btn-sm" data-resize-points="${escapeHtml(key)}" data-delta="1">增加测量点</button> <button type="button" class="btn btn-outline btn-sm" data-resize-points="${escapeHtml(key)}" data-delta="-1">删除末点</button></div>` : '') + `</div>`;
   }
   if (fld.type === 'matrix') {
-    const rows = fld.rows || 0, cols = fld.cols || 0;
+    const rows = fld.rows || 0, cols = fld.colsFrom ? dataValidation.dimensions(fld, src || {}).cols : fld.cols || 0;
     const rowLabels = fld.rowLabels || [], colLabels = fld.colLabels || [];
     // 只转置显示方向，输入框仍使用原始行列索引；旧数据、识图结果和计算脚本无需迁移。
     const transposed = fld.displayTranspose === true;
@@ -945,14 +1021,15 @@ function renderField(fld, dataOverride) {
     table += '<thead><tr><th class="matrix-corner"></th>';
     for (let c = 0; c < displayCols; c++) {
       const labels = transposed ? rowLabels : colLabels;
-      const cl = (labels[c] != null) ? labels[c] : (c + 1);
-      table += `<th class="matrix-col-label">${escapeHtml(String(cl))}</th>`;
+      const position = fld.colsFrom && !transposed ? src?.[fld.colsFrom]?.[c] : null;
+      const cl = fld.colsFrom && !transposed ? (position != null ? `D=${position}mm` : `第${c+1}点`) : (labels[c] != null) ? labels[c] : (c + 1);
+      table += `<th class="matrix-col-label">${formatLabel(cl)}</th>`;
     }
     table += '</tr></thead><tbody>';
     for (let r = 0; r < displayRows; r++) {
       const labels = transposed ? colLabels : rowLabels;
       const rl = (labels[r] != null) ? labels[r] : (r + 1);
-      table += `<tr><td class="matrix-row-label">${escapeHtml(String(rl))}</td>`;
+      table += `<tr><td class="matrix-row-label">${formatLabel(rl)}</td>`;
       for (let c = 0; c < displayCols; c++) {
         const sourceRow = transposed ? c : r;
         const sourceCol = transposed ? r : c;
@@ -1008,7 +1085,8 @@ function readFormData() {
         const inputs = root.querySelectorAll(`input[data-key="${key}"][data-idx]`);
         data[key] = Array.from(inputs).map(i => i.value !== '' ? parseFloat(i.value) : null);
       } else if (fld.type === 'matrix') {
-        const rows = fld.rows || 0, cols = fld.cols || 0;
+        const cells = fld.colsFrom ? [...root.querySelectorAll(`input[data-key="${key}"][data-col]`)] : [];
+        const rows = fld.rows || 0, cols = fld.colsFrom ? Math.max(0, ...cells.map(el => Number(el.dataset.col) + 1)) : fld.cols || 0;
         const m = [];
         for (let r = 0; r < rows; r++) {
           const row = [];
@@ -1039,6 +1117,8 @@ async function saveFormData() {
   const result = await window.labAPI.writeData(saveExp.path, data);
   if (result.ok) {
     currentData = data;
+    currentDataLoadIssues=[];saveExp.dataIssues=[];
+    $('metaData').textContent='数据已就绪';$('metaData').title='';
     isDataModified = false;
     // 首次保存会把实验迁移到用户数据目录，同步当前实验与列表项的真实路径
     if (result.path) {
@@ -1066,7 +1146,7 @@ async function saveFormData() {
 function refreshFormCheck() {
   if (!currentSchema) return;
   const data = readFormData();
-  const errors = dataValidation.validate(currentSchema, data);
+  const errors = [...new Set([...currentDataLoadIssues,...dataValidation.validate(currentSchema, data)])];
   const bar = $('dataIssueBar');
   if (errors.length > 0) {
     bar.style.display = 'block';
@@ -1367,11 +1447,11 @@ async function ensureCustomQuizAnswers(exp) {
   if (!settings.hasApiKey) {
     await appConfirm('已启用「自定义思考题」，但还没有配置 API Key，无法生成答案。\n\n请到「设置 → AI 服务」配置密钥后重试。本次生成已停止。',
       { title: '无法生成思考题答案', okText: '知道了', danger: true });
-    return { stop: true };
+    return { stop: true, reason: 'missing-api-key', error: '尚未配置 API Key' };
   }
   let calculationContext;
   try { calculationContext = typeof reportIntegrity !== 'undefined' && reportIntegrity.applies(exp) ? await getExperimentCalculationContext(exp) : null; }
-  catch (error) { showToast('error', '实验数据未就绪', error.message, 8000); return { stop: true }; }
+  catch (error) { logLine(`❌ 自定义思考题前置检查失败：${error.message}`); logEvent(`custom-quiz | exp=${exp.id} | phase=context | error=${error.message}`); showToast('error', '实验数据未就绪', error.message, 8000); return { stop: true, reason: 'invalid-data', error: error.message }; }
   const dataBlock = calculationContext ? reportIntegrity.prompt(calculationContext) : '';
   logLine('正在用 AI 生成自定义思考题的回答…');
   // 知识库（与润色同一套：读不到就降级为软约束）
@@ -1396,7 +1476,7 @@ async function ensureCustomQuizAnswers(exp) {
   const messages = [
     {
       role: 'system',
-      content: `你是一个大学物理实验报告写作助手。以完成本次实验的学生视角撰写报告正文，使用“本实验”“测得”等客观表达；不虚构操作或观察。不得把用户填写、知识库、AI、应用、占位符及内部校验规则等软件说明写入正文。${getAiStylePrompt(style)}${skillBlock}${userPrompt ? `\n\n【用户自定义要求（优先遵循，但不得违反下方格式与知识库硬性约束）】\n${userPrompt}` : ''}请为下面给出的思考题写出回答，内容要科学准确、有依据，符合大学物理实验报告的规范。${kbBlock}${dataBlock}\n\n【输出格式硬性要求】每题先原样抄一遍题目（题号与文字必须与给定题目逐字一致，不得增删改题目），下一行以「答：」开头写回答；数学表达一律用 $...$ 包裹，独立公式用单行 $$...$$；不要输出任何解释或额外内容。`,
+      content: `你是一个大学物理实验报告写作助手。以完成本次实验的学生视角撰写报告正文，使用“本实验”“测得”等客观表达；不虚构操作或观察。不得把用户填写、知识库、AI、应用、占位符及内部校验规则等软件说明写入正文。误差分析必须分点书写，每点独立成段并使用（1）（2）等序号，禁止整章写成一个长段落。所有图片的图题必须置于图片下方，独立一行居中；图题只写编号和简短名称，说明、条件或注释另起一段，不与图题混排。${getAiStylePrompt(style)}${skillBlock}${userPrompt ? `\n\n【用户自定义要求（优先遵循，但不得违反下方格式与知识库硬性约束）】\n${userPrompt}` : ''}请为下面给出的思考题写出回答，内容要科学准确、有依据，符合大学物理实验报告的规范。${kbBlock}${dataBlock}\n\n【输出格式硬性要求】每题先原样抄一遍题目（题号与文字必须与给定题目逐字一致，不得增删改题目），下一行以「答：」开头写回答；数学表达一律用 $...$ 包裹，独立公式用单行 $$...$$；不要输出任何解释或额外内容。`,
     },
     {
       role: 'user',
@@ -1409,7 +1489,7 @@ async function ensureCustomQuizAnswers(exp) {
   try {
     res = await window.labAPI.aiChat({
       provider: settings.provider || 'deepseek', apiUrl: settings.apiUrl, model: settings.model,
-      messages, temperature: 0.8, requestId: rid, label: '自定义思考题',
+      messages, temperature: 0.8, requestId: rid, label: `自定义思考题 · ${exp.id}`,
     });
   } catch (e) {
     res = { ok: false, error: (e && e.message) || String(e) };
@@ -1423,7 +1503,7 @@ async function ensureCustomQuizAnswers(exp) {
     const go = await appConfirm(
       `自定义思考题的答案生成失败：\n\n${reason}\n\n「继续生成」＝用你自定义的题目生成报告，答案留空（日志里会标明哪几题没生成）；\n「停止」＝中止本次生成。`,
       { title: '答案生成失败', okText: '继续生成', cancelText: '停止', danger: true });
-    return go ? { questions, answers: {} } : { stop: true };
+    return go ? { questions, answers: {} } : { stop: true, reason: 'user-stop', error: reason };
   }
   // 解析：按「题号. 题目」切分，取题目行之后的正文作为回答（去掉「答：」前缀）
   const answers = {};
@@ -1433,9 +1513,32 @@ async function ensureCustomQuizAnswers(exp) {
     const body = part.split('\n').slice(1).join('\n').trim().replace(/^答\s*[:：]\s*/, '');
     if (body) answers[m[1]] = [body];
   }
+  const invalidQuestions = [], warningQuestions = [];
   if (calculationContext) {
-    try { for (const texts of Object.values(answers)) for (const text of texts) reportIntegrity.validateText(text, calculationContext); }
-    catch (error) { showToast('error', '思考题数值校验失败', error.message, 8000); return { stop: true }; }
+    for (const [question, texts] of Object.entries(answers)) for (const text of texts) {
+      try {
+        reportIntegrity.validateText(text, calculationContext, () => warningQuestions.push(question));
+      } catch (error) {
+        delete answers[question];
+        invalidQuestions.push(question);
+        const detail = `第 ${question} 题：${error.message}${error.numericToken ? `（冲突数字：${error.numericToken}）` : ''}`;
+        logLine(`⚠ 思考题答案未通过确定性校验，暂不采用。${detail}`);
+        logEvent(`custom-quiz | exp=${exp.id} | requestId=${rid} | phase=numeric-validation | question=${question} | code=${error.validationCode || 'INVALID_TEXT'} | token=${error.numericToken || '-'} | responseChars=${String(res.content || '').length} | answerChars=${text.length}`);
+      }
+    }
+  }
+  if (warningQuestions.length) {
+    const ids = [...new Set(warningQuestions)].join('、');
+    logLine(`⚠ 第 ${ids} 题含待核对数值，已保留答案；请核对来源、单位和精度。`);
+    logEvent(`custom-quiz | exp=${exp.id} | phase=numeric-advisory | questions=${ids} | code=UNVERIFIED_QUANTITY`);
+    showToast('warning', '思考题数值待核对', `第 ${ids} 题含未绑定数值，已保留答案，不阻止生成。请在报告中核对。`, 10000);
+  }
+  if (invalidQuestions.length) {
+    const ids = [...new Set(invalidQuestions)].join('、');
+    const proceed = await appConfirm(`第 ${ids} 题存在无效数据引用或与当前结果矛盾，相关答案不会写入报告。其余已通过的答案保留。\n\n可以让这些题目留空后继续生成，也可以停止后修改。`,
+      {title:'部分思考题需要处理',okText:'留空并继续生成',cancelText:'停止生成'});
+    if (!proceed) return {stop:true, reason:'user-stop', error:`第 ${ids} 题未通过确定性校验`};
+    logLine(`⚠ 第 ${ids} 题已按你的选择留空，继续生成报告。`);
   }
   const got = Object.keys(answers).length;
   logLine(got ? `✔ 已生成 ${got} 道思考题的回答` : '⚠ 模型没有按要求返回回答（报告里答案将留空）');
@@ -1507,7 +1610,7 @@ const PLOT_CONTRACT = [
   '2. 开头写 import matplotlib 并 matplotlib.use("Agg")（本机无显示环境），禁止调用 plt.show()。',
   '3. 测量数据从全局变量 DATA（dict，本实验数据）或 DATA_FILE（同一份数据的 JSON 文件路径）读取，不要臆造数据。',
   '4. 只画一张图并保存到全局变量 OUT_DIR：save(fig, "fig1.png")（这张图会被插进报告）。',
-  '5. 配一行图注：caption("fig1.png", "图1 ……")；图注里可用 $...$ 写公式。',
+  '5. 图题必须简短，单独居中放在图片下方；说明另起一行。调用 caption("fig1.png", "图1 ……")；图注里可用 $...$ 写公式。',
   '6. 只往 OUT_DIR 里写文件；figsize 不超过 (10, 7)，dpi 用默认 150 即可。',
   '7. 中文标签要能正常显示（中文字体已内置）；物理量与单位用 $...$ 数学写法，如 $U$ / V。',
   '8. 只输出一个 ```python 代码块，不要输出解释文字。',
@@ -2248,7 +2351,7 @@ async function runAiPolish(onlyScopeVal) {
         const messages = [
           {
             role: 'system',
-            content: `你是一个大学物理实验报告润色助手。以完成本次实验的学生视角撰写报告正文，使用“本实验”“测得”等客观表达；不虚构操作或观察。不得把用户填写、知识库、AI、应用、占位符及内部校验规则等软件说明写入正文。${getAiStylePrompt(style)}${skillBlock}${userPromptBlock}请对用户提供的实验报告内容进行个性化改写，保持科学准确性和数据真实性，避免与原文措辞重复，使报告更具个人特色，降低重复检测风险。只输出改写后的内容，不要输出解释或说明。${formatBlock}${kbBlock}${dataBlock}${scopeVal === 'quiz' ? '\n\n【思考题润色规则·最高优先级】题目（含题号，如"1. …"）是固定内容：必须逐字保留在输出中，严禁修改、删除或新增任何题目；只改写"答："之后的回答内容。输出格式：每问一行题目（与原文逐字一致）+ 下一行改写后的回答，按题号顺序排列。' : ''}`,
+            content: `你是一个大学物理实验报告润色助手。以完成本次实验的学生视角撰写报告正文，使用“本实验”“测得”等客观表达；不虚构操作或观察。不得把用户填写、知识库、AI、应用、占位符及内部校验规则等软件说明写入正文。误差分析必须分点书写，每点独立成段并使用（1）（2）等序号，禁止整章写成一个长段落。所有图片的图题必须置于图片下方，独立一行居中；图题只写编号和简短名称，说明、条件或注释另起一段，不与图题混排。${getAiStylePrompt(style)}${skillBlock}${userPromptBlock}请对用户提供的实验报告内容进行个性化改写，保持科学准确性和数据真实性，避免与原文措辞重复，使报告更具个人特色，降低重复检测风险。只输出改写后的内容，不要输出解释或说明。${formatBlock}${kbBlock}${dataBlock}${scopeVal === 'quiz' ? '\n\n【思考题润色规则·最高优先级】题目（含题号，如"1. …"）是固定内容：必须逐字保留在输出中，严禁修改、删除或新增任何题目；只改写"答："之后的回答内容。输出格式：每问一行题目（与原文逐字一致）+ 下一行改写后的回答，按题号顺序排列。' : ''}`,
           },
           {
             role: 'user',
@@ -2275,7 +2378,7 @@ async function runAiPolish(onlyScopeVal) {
         });
         if (aiPolishCancelled) return null;   // 取消后丢弃当前项结果
         if (result.ok) {
-          if (calculationContext) reportIntegrity.validateText(result.content, calculationContext);
+          if (calculationContext) reportIntegrity.validateText(result.content, calculationContext, () => showToast('warning', '润色数值待核对', '结果含未绑定数值，已保留；请核对来源、单位和精度。', 10000));
           // 公式强约束：AI 输出中的公式一律替换回原文公式（文字保留 AI 改写）；
           // 仅当原文公式被 AI 删除/改写时拒绝，并给出诊断（具体缺失的公式与 AI 输出公式）
           const restored = restoreFormulas(sectionText, result.content || '');
@@ -2591,7 +2694,7 @@ function getDefaultModel(provider) {
 const POPULAR_MODELS = {
   deepseek: [
     { name: 'deepseek-v4-pro', desc: '最新旗舰' },
-    { name: 'deepseek-v4-flash', desc: '快速版' },
+    { name: 'deepseek-flash', desc: '快速版' },
     { name: 'deepseek-chat', desc: '旧版兼容' },
   ],
   mimo: [
@@ -2662,17 +2765,34 @@ function chartPreviewNodes() {
     loading: $('chartLoading'), img: $('chartImg'), caption: $('chartPreviewCaption'),
   };
 }
-function showChartPreview(dataUrl, caption) {
+function showChartPreview(dataUrl, caption, images = []) {
   const n = chartPreviewNodes();
+  const oldGallery = $('chartImageGallery');
+  if (oldGallery) oldGallery.remove();
   if (n.loading) n.loading.style.display = 'none';
   if (n.empty) n.empty.style.display = 'none';
   if (n.image) n.image.style.display = 'flex';
-  if (n.img) n.img.src = dataUrl;
+  if (n.img) { n.img.src = dataUrl; n.img.style.display = images.length > 0 ? 'none' : ''; }
+  if (images.length && n.image) {
+    const gallery = document.createElement('div'); gallery.id = 'chartImageGallery';
+    gallery.style.cssText = 'width:100%;display:flex;flex-direction:column;gap:24px';
+    for (const [index, item] of images.entries()) {
+      const figure = document.createElement('figure'); figure.style.cssText = 'margin:0;width:100%';
+      const img = document.createElement('img'); img.src = item.dataUrl; img.alt = item.caption || item.title || '实验图表';
+      img.style.cssText = 'display:block;max-width:100%;height:auto;margin:auto';
+      const title = document.createElement('figcaption'); title.textContent = `图${index + 1} ${item.caption || item.title || '实验图表'}`;
+      title.style.cssText = 'text-align:center;margin-top:10px;font-weight:600';
+      figure.append(img, title);
+      if (item.note) { const note = document.createElement('p'); note.textContent = '注：' + item.note; note.style.cssText = 'line-height:1.7;text-align:left'; figure.appendChild(note); }
+      gallery.appendChild(figure);
+    }
+    n.image.appendChild(gallery);
+  }
   chartPreviewUrl = dataUrl;
   chartPreviewCaption = caption || '';
   if (n.caption) {
     n.caption.textContent = chartPreviewCaption;
-    n.caption.style.display = chartPreviewCaption ? 'block' : 'none';
+    n.caption.style.display = chartPreviewCaption && !images.length ? 'block' : 'none';
   }
 }
 function clearChartPreview() {
@@ -2695,18 +2815,39 @@ function renderChartMode() {
     btn.classList.toggle('active', chartMode === mode);
     btn.classList.toggle('chart-mode-btn', true);
   }
-  const cfg = chartConfig || {};
   const name = chartMode === 'preset' ? '预设' : (chartMode === 'custom' ? '自定义' : '');
-  const hint = $('chartModeHint');
-  if (hint) {
-    hint.textContent = chartMode === 'preset'
-      ? `当前模式：预设 —— ${cfg.xField || '?'} / ${cfg.yField || '?'}（点「预设」可改字段与插入位置）`
-      : (chartMode === 'custom'
-        ? `当前模式：自定义 —— ${String(cfg.requirement || '').slice(0, 40) || '（还没写需求）'}（点「自定义」可改需求）`
-        : '未选择模式 —— 点「预设」按字段快速出图，或点「自定义」用一句话让 AI 画图。');
-  }
   const insertHint = $('chartInsertModeHint');
   if (insertHint) insertHint.textContent = name ? `当前模式：${name}` : '未选择';
+}
+function officialChartGuide() {
+  return (window.LabChartPresets || {})[currentSchema && currentSchema['实验']] || null;
+}
+function renderOfficialChartChoice() {
+  const select = $('chartPresetChoice'); if (!select) return;
+  const guide = officialChartGuide(), cfg = chartConfig || {};
+  select.innerHTML = '';
+  const add = (value, text) => { const option = document.createElement('option'); option.value = value; option.textContent = text; select.appendChild(option); };
+  if (guide && guide.charts.length) {
+    add('official:all', guide.charts.length > 1 ? '官网图组：全部主图' : '官网实验预设');
+    if (guide.charts.length > 1) guide.charts.forEach(c => add('official:' + c.id, c.title));
+  } else add('none', guide ? guide.status + '（不设默认关系图）' : '尚无官网专用图组');
+  add('manual', '手动选择字段（保留已有配置）');
+  select.value = cfg.chartType === 'official' ? 'official:' + (cfg.officialPreset || 'all')
+    : (cfg.xField || cfg.yField ? 'manual' : guide?.charts.length ? 'official:all' : 'none');
+  if (!select.value) select.value = 'manual';
+  updateOfficialChartChoice();
+}
+function updateOfficialChartChoice() {
+  const choice = $('chartPresetChoice')?.value || 'manual', guide = officialChartGuide();
+  document.querySelectorAll('#chartPresetModal .chart-manual-row').forEach(row => { row.style.display = choice === 'manual' ? '' : 'none'; });
+  const refresh = $('btnChartRefresh'); if (refresh) refresh.style.display = choice === 'manual' ? '' : 'none';
+  const hint = $('chartOfficialGuide'), summary = $('chartOfficialSummary');
+  if (hint) hint.textContent = guide ? `${guide.status} · 官网资料第${guide.pages}页。${choice === 'manual' ? '手动配置不会被官网方案覆盖。' : guide.note}` : '手动选择字段，不自动猜测横纵坐标。';
+  if (summary) {
+    const selected = (guide?.charts || []).filter(c => choice === 'official:all' ? !c.id.startsWith('field_') : choice === 'official:' + c.id);
+    summary.textContent = selected.map((c, i) => `${i + 1}. ${c.title}：横轴 ${c.xLabel}；纵轴 ${c.yLabel}`).join('\n');
+    if (choice === 'none') summary.textContent = guide?.description || '请按实际实验要求选择扩展图。';
+  }
 }
 // 写配置：读-改-写，避免覆盖另一个模式的字段；失败给出提示而不是静默吞掉
 async function saveChartConfigSafe(expPath, patch) {
@@ -2728,12 +2869,41 @@ function fillChartFieldOptions() {
   const xSel = $('chartXField');
   const ySel = $('chartYField');
   if (!xSel || !ySel) return;
+  const previousX = xSel.value, previousY = ySel.value;
   xSel.innerHTML = '<option value="">— 选择字段 —</option>';
   ySel.innerHTML = '<option value="">— 选择字段 —</option>';
+  const typeSelect = $('chartType');
+  if (typeSelect) {
+    typeSelect.querySelectorAll('option[data-experiment-preset]').forEach(opt => opt.remove());
+    Array.from(typeSelect.options).forEach(opt => { opt.disabled = false; });
+  }
   if (!currentSchema) return;
+  const preset = currentSchema.chartPreset;
+  if (preset && preset.kind === 'polarization') {
+    for (const [select, value, label] of [[xSel, preset.xField, preset.xLabel], [ySel, preset.yField, preset.yLabel]]) {
+      const option = document.createElement('option');
+      option.value = value; option.textContent = label; select.appendChild(option); select.value = value;
+    }
+    if (typeSelect) {
+      const option = document.createElement('option');
+      option.value = 'polar'; option.textContent = '三组极坐标曲线（第二学期）';
+      option.dataset.experimentPreset = 'true'; typeSelect.appendChild(option);
+      Array.from(typeSelect.options).forEach(opt => { opt.disabled = opt.value !== 'polar'; });
+      typeSelect.value = 'polar';
+    }
+    return;
+  }
+  if (typeSelect && !typeSelect.value) typeSelect.value = 'scatter';
   const groupArrays = [];
   for (const group of (currentSchema.groups || [])) {
-    const arrs = group.fields.filter(f => f.type === 'array');
+    const arrs = (group.fields || []).flatMap(f => {
+      if (f.type === 'array') return [f];
+      if (f.type !== 'matrix') return [];
+      return Array.from({ length: f.cols || 0 }, (_, col) => ({
+        key: `${f.key}[${col}]`,
+        label: `${group.title || group.name || f.label || f.key} · ${(f.colLabels || [])[col] || `第 ${col + 1} 列`}`,
+      }));
+    });
     for (const fld of arrs) {
       const label = fld.label || fld.key;
       const optX = document.createElement('option');
@@ -2745,14 +2915,9 @@ function fillChartFieldOptions() {
     }
     if (arrs.length >= 2) groupArrays.push(arrs);
   }
-  if (groupArrays.length > 0) {
-    const pair = groupArrays[0];
-    xSel.value = pair[0].key;
-    ySel.value = pair[1].key;
-  } else if (xSel.options.length > 1) {
-    xSel.selectedIndex = 1;
-    if (ySel.options.length > 2) ySel.selectedIndex = 2;
-  }
+  // 不再按字段顺序猜坐标。官网图组独立处理；手动字段由用户明确选择。
+  if (Array.from(xSel.options).some(opt => opt.value === previousX && previousX)) xSel.value = previousX;
+  if (Array.from(ySel.options).some(opt => opt.value === previousY && previousY)) ySel.value = previousY;
 }
 // 用配置回填两个弹窗的控件
 function applyChartConfigToUi() {
@@ -2768,6 +2933,7 @@ function applyChartConfigToUi() {
   if ($('chartImageWidth')) $('chartImageWidth').value = cfg.imageWidth || 14;
   if ($('customInsertSection')) $('customInsertSection').value = cfg.insertSection || '实验结果分析';
   if ($('customImageWidth')) $('customImageWidth').value = cfg.imageWidth || 14;
+  renderOfficialChartChoice();
 }
 // 切实验 / 进图表页时调用：读配置 + 迁移老数据 + 回显上次生成的图
 async function loadChartConfig(exp) {
@@ -2789,8 +2955,15 @@ async function loadChartConfig(exp) {
       clearLegacyCustomPlot(target.id);
     }
   }
+  const guide = officialChartGuide();
+  if (!chartConfig && guide && guide.charts.length) {
+    chartConfig = {mode: 'preset', xField: '__official__', yField: '__official__', chartType: 'official', officialPreset: 'all', presetRevision: 1};
+  } else if (!chartConfig && !guide && currentSchema && currentSchema.chartPreset) {
+    const preset = currentSchema.chartPreset;
+    chartConfig = {mode: 'preset', xField: preset.xField, yField: preset.yField, chartType: preset.chartType};
+  }
   const cfg = chartConfig || {};
-  chartMode = cfg.mode || (cfg.requirement ? 'custom' : (cfg.xField ? 'preset' : ''));
+  chartMode = cfg.mode === 'none' ? '' : cfg.mode || (cfg.requirement ? 'custom' : (cfg.xField ? 'preset' : ''));
   applyChartConfigToUi();
   if (chartMode === 'custom' && customImageUrl) showChartPreview(customImageUrl, cfg.caption || '');
   else clearChartPreview();
@@ -2802,11 +2975,25 @@ function openChartPresetModal() {
 }
 async function saveChartPresetModal() {
   if (!currentExp) return;
+  const choice = $('chartPresetChoice')?.value || 'manual';
+  if (choice !== 'manual') {
+    const official = choice.startsWith('official:');
+    const ok = await saveChartConfigSafe(currentExp.path, {
+      mode: official ? 'preset' : 'none', chartType: official ? 'official' : 'scatter',
+      officialPreset: official ? choice.slice(9) : '', presetRevision: 1,
+      xField: official ? '__official__' : '', yField: official ? '__official__' : '',
+      insertSection: $('chartInsertSection')?.value || '实验结果分析', imageWidth: parseFloat($('chartImageWidth')?.value) || 14,
+    });
+    if (!ok) return;
+    chartMode = official ? 'preset' : ''; closeModal('chartPresetModal'); clearChartPreview(); renderChartMode();
+    showToast('success', official ? '已采用官网图组' : '不启用默认关系图'); return;
+  }
   const xField = $('chartXField') ? $('chartXField').value : '';
   const yField = $('chartYField') ? $('chartYField').value : '';
   if (!xField || !yField) { showToast('warning', '请选择 X 和 Y 轴字段'); return; }
   const ok = await saveChartConfigSafe(currentExp.path, {
     mode: 'preset', xField, yField,
+    officialPreset: '',
     chartType: ($('chartType') && $('chartType').value) || 'scatter',
     title: ($('chartTitle') && $('chartTitle').value) || '',
     xlabel: ($('chartXLabel') && $('chartXLabel').value) || '',
@@ -2821,8 +3008,7 @@ async function saveChartPresetModal() {
   showToast('success', '已切换为预设模式', '回图表页点「生成图表」预览');
 }
 // 生成后按需把图表插入报告（单份生成与批量队列共用）。
-// 报告被插图后内容变了，主进程会顺带把带图表的版本同步到「自定义报告目录」，
-// 否则两份报告会不一致（副本是生成时复制的，还没有图表）。
+// 插图直接修改 result.reportFile 指向的报告，与预览和打开保持同一文件。
 async function maybeInsertChart(exp, result) {
   const chk = $('chkInsertChart');
   if (!chk || !chk.checked || !result || !result.reportFile) return;
@@ -2831,8 +3017,8 @@ async function maybeInsertChart(exp, result) {
     const ins = await window.labAPI.insertChartIntoReport(result.reportFile, exp.path, loadSettings().customReportDir || '');
     if (ins && ins.ok) {
       logLine(`📊 图表已插入「${ins.section}」（${ins.mode === 'custom' ? '自定义' : '预设'}模式）`);
-      if (ins.copiedTo) logLine(`📁 已同步到自定义目录：${ins.copiedTo}`);
-      logEvent(`图表插入 | ${exp.id} | ${ins.section} | ${ins.mode || 'preset'}${ins.copiedTo ? ' | 已同步自定义目录' : ''}`);
+
+      logEvent(`图表插入 | ${exp.id} | ${ins.section} | ${ins.mode || 'preset'}`);
     } else {
       logLine(`⚠️ 图表插入失败：${(ins && ins.error) || '未知错误'}`);
       logEvent(`图表插入失败 | ${exp.id} | ${String((ins && ins.error) || '').slice(0, 120)}`);
@@ -2869,8 +3055,8 @@ async function generateChartPreview() {
   }
   // 预设模式：按字段出图
   const cfg = chartConfig || {};
-  const xField = ($('chartXField') && $('chartXField').value) || cfg.xField || '';
-  const yField = ($('chartYField') && $('chartYField').value) || cfg.yField || '';
+  const xField = cfg.chartType === 'official' ? '__official__' : (($('chartXField') && $('chartXField').value) || cfg.xField || '');
+  const yField = cfg.chartType === 'official' ? '__official__' : (($('chartYField') && $('chartYField').value) || cfg.yField || '');
   if (!xField || !yField) {
     if (n.loading) n.loading.style.display = 'none';
     if (n.empty) n.empty.style.display = 'flex';
@@ -2886,6 +3072,10 @@ async function generateChartPreview() {
     return;
   }
   try {
+    if (cfg.chartType === 'official') {
+      const saved = await saveChartConfigSafe(exp.path, cfg);
+      if (!saved) throw new Error('官网图组配置未能保存');
+    }
     const result = await window.labAPI.chartPreview({
       expPath: exp.path,
       xField,
@@ -2894,9 +3084,11 @@ async function generateChartPreview() {
       title: cfg.title || '',
       xlabel: cfg.xlabel || '',
       ylabel: cfg.ylabel || '',
+      officialPreset: cfg.officialPreset || 'all',
     });
     if (!result.ok) throw new Error(result.error || '生成失败');
-    showChartPreview(result.dataUrl, result.title || '');
+    if (currentExp !== exp) return;
+    showChartPreview(result.dataUrl, result.title || '', cfg.chartType === 'official' ? result.images || [] : []);
     if (n.loading) n.loading.style.display = 'none';
   } catch (err) {
     if (n.loading) n.loading.style.display = 'none';
@@ -2940,6 +3132,11 @@ function updateStudentDisplay() {
 
 // ── 事件绑定 ──
 function bindEvents() {
+  $('btnExperimentPreparationDetail').onclick=async()=>{
+    const url=window.ExperimentPreparation.url(currentExp?.name);if(!url)return;
+    try{const result=await window.labAPI.openExternal(url);if(!result.ok)showToast('error','实验预习未打开',result.error||'请稍后重试',5000);}
+    catch(error){showToast('error','实验预习未打开',error.message,5000);}
+  };
   $('btnExperimentPreparation').onclick = async () => {
     const button = $('btnExperimentPreparation');
     button.disabled = true;
@@ -2949,13 +3146,13 @@ function bindEvents() {
     } catch (error) { showToast('error', '实验预习网站未打开', error.message, 5000); }
     finally { button.disabled = false; }
   };
-  $('btnOpenSchoolPortal').onclick = async () => {
-    const button = $('btnOpenSchoolPortal');
+  $('btnOpenCourseSelection').onclick = async () => {
+    const button = $('btnOpenCourseSelection');
     button.disabled = true;
     try {
-      const result = await window.labAPI.openSchoolPortal();
-      if (!result.ok) showToast('error', '学校网站未打开', result.error || '请稍后重试', 5000);
-    } catch (error) { showToast('error', '学校网站未打开', error.message, 5000); }
+      const result = await window.labAPI.openCourseSelection();
+      if (!result.ok) showToast('error', '一站通未打开', result.error || '请稍后重试', 5000);
+    } catch (error) { showToast('error', '一站通未打开', error.message, 5000); }
     finally { button.disabled = false; }
   };
   // 主进程请求"保存后退出"：保存当前数据，成功则确认关闭
@@ -3030,8 +3227,7 @@ function bindEvents() {
   $('btnNavNotice').onclick = () => switchSettingsPane('notice');
   $('btnNavThanks').onclick = () => { switchSettingsPane('thanks'); loadThanksPane(); };
   $('btnExportDiagnostics').onclick = exportDiagnostics;
-  const noticeReminder = document.querySelector('.notice-reminder');
-  if (noticeReminder) noticeReminder.onclick = () => { openModal('settingsModal'); switchSettingsPane('notice'); };
+  $('btnFillAllTestData').onclick = fillAllTestData;
   $('btnNavDevelop').onclick = () => { switchSettingsPane('develop'); loadDevelopPane(); };
   $('rdDevMode').onclick = () => setDevMode(true);
   $('rdNormalMode').onclick = () => setDevMode(false);
@@ -3042,6 +3238,7 @@ function bindEvents() {
   $('btnSaveSecCfg').onclick = saveSecCfg;
   $('btnFillDefaultData').onclick = fillDefaultData;
   $('btnFillTestData').onclick = fillTestData;
+  $('btnCheckResources').onclick = checkResourceIntegrity;
   $('btnCheckUpdate').onclick = checkForUpdate;
   $('btnCheckDataUpdate').onclick = checkDataUpdate;
   $('btnRestoreBuiltinResources').onclick = restoreBuiltinResources;
@@ -3057,8 +3254,6 @@ function bindEvents() {
   $('btnCancelContribute').onclick = () => closeModal('contributeModal');
   $('btnCVTabVariant').onclick = () => switchCVTab('variant');
   $('btnCVTabReport').onclick = () => switchCVTab('report');
-  $('btnCVTabVision').onclick = () => switchCVTab('vision');
-  bindMaskEditor();
   $('btnCVPickPhotos').onclick = () => $('cvPhotoInput').click();
   $('cvPhotoInput').onchange = (e) => handleCVPhotos(e.target.files);
   $('btnCVPickDocx').onclick = () => $('cvDocxInput').click();
@@ -3085,7 +3280,7 @@ function bindEvents() {
     $('inputApiKey').value = ''; $('inputApiKey').placeholder = '请输入 API Key'; updateAiStatus();
     showToast('success', '已清除', '已删除此应用保存的 API Key');
   };
-  $('btnAiConfig').onclick = () => { closeModal('studentModal'); openModal('settingsModal'); loadSettingsForm(); switchSettingsPane('ai'); };
+  $('btnAiConfig').onclick = () => { closeModal('studentModal'); openModal('settingsModal'); loadSettingsForm(); switchSettingsPane('ai'); switchSettingsModule('ai','config'); };
   $('selectProvider').onchange = () => {
     resetDiscoveredModels();
     renderModelChips();
@@ -3203,7 +3398,6 @@ function bindEvents() {
     const el = $('aiStreamPreview');
     if (el) el.textContent += delta;
   });
-  $('btnAiConfig').onclick = () => openModal('settingsModal');
   $('btnImportAi').onclick = importPolishAndRegenerate;
   $('btnClearOverrides').onclick = () => {
     if (!currentExp) return;
@@ -3267,6 +3461,7 @@ function bindEvents() {
   $('btnChartCustom').onclick = openChartCustomModal;
   $('btnChartGenerate').onclick = generateChartPreview;
   $('btnSaveChartPreset').onclick = saveChartPresetModal;
+  $('chartPresetChoice').onchange = updateOfficialChartChoice;
   $('btnCancelChartPreset').onclick = () => closeModal('chartPresetModal');
   $('btnCloseChartPreset').onclick = () => closeModal('chartPresetModal');
   $('btnChartRefresh').onclick = () => applyChartConfigToUi();
@@ -3555,8 +3750,8 @@ async function loadDataInfo() {
       const warnings = Array.isArray(r.resourceWarnings) ? r.resourceWarnings : [];
       if ($('resourceSyncStatus')) $('resourceSyncStatus').textContent = warnings.length
         ? `已保留 ${warnings.length} 个来源不明或自行修改的资源文件。若报告仍使用旧逻辑，可选择内置修复；原资源会备份。`
-        : '内置实验修复已同步；测量数据和自建内容保持不变。';
-      if ($('btnRestoreBuiltinResources')) $('btnRestoreBuiltinResources').hidden = !warnings.length;
+        : '可重复使用内置实验修复；测量数据和自建内容保持不变。';
+      if ($('btnRestoreBuiltinResources')) $('btnRestoreBuiltinResources').hidden = false;
     } else {
       el.textContent = '未知';
     }
@@ -3564,14 +3759,15 @@ async function loadDataInfo() {
 }
 
 async function restoreBuiltinResources() {
+  const button = $('btnRestoreBuiltinResources');
+  if (button.disabled) return;
   if (isGenerating || isBatchRunning || isSavingData || isAiPolishing || isDataModified) {
     showToast('warning', '暂时不能修复', '请先保存测量数据，并等待当前任务完成。');
     return;
   }
-  if (!(await appConfirm('将使用当前安装包内的官方实验脚本和模板。\n测量数据、报告、照片和自行修改的变体不会覆盖；旧资源会保留备份。\n来源不明的自定义脚本会被替换，是否继续？', { okText: '使用内置修复' }))) return;
-  const button = $('btnRestoreBuiltinResources');
   button.disabled = true;
   try {
+    if (!(await appConfirm('将使用当前安装包内的官方实验脚本和模板。\n测量数据、报告、照片和自行修改的变体不会覆盖；旧资源会保留备份。\n来源不明的自定义脚本会被替换，是否继续？', { okText: '使用内置修复' }))) return;
     const result = await window.labAPI.restoreBuiltinResources();
     if (!result.ok) throw Error(result.error);
     const previousId = currentExp?.id;
@@ -3793,18 +3989,16 @@ async function openContributeModal() {
   renderCVDocx();
   switchCVTab('variant');
   loadCVVariants();
-  loadCVVision();
   openModal('contributeModal');
 }
 
 function switchCVTab(mode) {
+  if (!['variant', 'report'].includes(mode)) return;
   cvMode = mode;
   $('btnCVTabVariant').classList.toggle('active', mode === 'variant');
   $('btnCVTabReport').classList.toggle('active', mode === 'report');
-  $('btnCVTabVision').classList.toggle('active', mode === 'vision');
   $('cvPaneVariant').style.display = mode === 'variant' ? '' : 'none';
   $('cvPaneReport').style.display = mode === 'report' ? '' : 'none';
-  $('cvPaneVision').style.display = mode === 'vision' ? '' : 'none';
 }
 
 async function loadCVVariants() {
@@ -4112,6 +4306,7 @@ function dataUrlToBytes(dataUrl) {
 }
 
 async function doContributeUpload() {
+  if (!['variant', 'report'].includes(cvMode)) return;
   const statusEl = $('cvUploadStatus');
   if (!currentExp) return;
   if (!$('chkContributeAgree').checked) { showToast('warning', '请先勾选同意', '阅读并勾选隐私同意后才能上传'); return; }
@@ -4314,7 +4509,7 @@ function fmtSize(bytes) {
 }
 
 // ── 自定义报告目录（设置 → 报告管理；实验详情页头部有同功能按钮）──
-// 设置存 appSettings.customReportDir；生成成功后由主进程复制一份到该目录（实验目录原件保留）。
+// 设置存 appSettings.customReportDir；报告直接生成到指定目录，预览、打开及后续编辑使用同一文件。
 // 界面上不再单独占一行展示路径（避免灰色小字），改为挂在按钮的 title 上。
 function renderReportDirSetting() {
   const dir = loadSettings().customReportDir || '';
@@ -4333,7 +4528,7 @@ async function pickReportDir() {
   settings.customReportDir = r.dir;
   saveSettings(settings);
   renderReportDirSetting();
-  showToast('success', '已设置保存位置', '以后生成的报告会复制到：' + r.dir, 6000);
+  showToast('success', '已设置保存位置', '以后报告会直接保存到：' + r.dir, 6000);
 }
 
 async function loadReportsList() {
@@ -4442,7 +4637,7 @@ async function importPolishAndRegenerate() {
     if (ok.some(r => !r.sourceData || r.sourceData !== JSON.stringify(currentData || {})))
       throw Error('测量数据已改变或润色缺少来源记录，请重新润色');
     const context = await getExperimentCalculationContext(currentExp);
-    if (context) for (const r of ok) reportIntegrity.validateText(r.polished, context);
+    if (context) for (const r of ok) reportIntegrity.validateText(r.polished, context, () => showToast('warning', '导入数值待核对', '已保留润色内容；请核对未绑定数值的来源、单位和精度。', 10000));
   } catch (error) { showToast('error', '无法导入', error.message, 8000); return; }
   for (const r of ok) { setPolishOverride(currentExp.id, r.section, r.polished); await markPolishApplied(r); }
   updateOverrideBar();
@@ -4640,7 +4835,7 @@ async function runGenerateReport(btn, genExpId) {
   const polish = await generationPolish(genExp);
   const cq = await ensureCustomQuizAnswers(genExp);
   if (cq.stop) {
-    $('logContent').textContent += '\n⏹ 已按你的选择停止生成（自定义思考题答案未生成）\n';
+    $('logContent').textContent += `\n⏹ ${cq.reason === 'user-stop' ? '已按你的选择停止生成' : '报告生成已停止'}：${cq.error || '自定义思考题答案未就绪'}\n`;
     return false;
   }
   const customQuiz = cq.none ? null : { questions: cq.questions, answers: cq.answers };
@@ -4653,7 +4848,7 @@ async function runGenerateReport(btn, genExpId) {
   if (result.ok) {
     $('logContent').textContent += '\n✅ 报告生成成功！\n';
     if (result.reportFile) $('logContent').textContent += `📄 ${result.reportFile}\n`;
-    if (result.copiedTo) $('logContent').textContent += `📁 已复制到自定义目录：${result.copiedTo}\n`;
+
 
     // 插入图表到报告（按实验保存的图表配置；报告被插图后会同步到自定义目录）
     await maybeInsertChart(genExp, result);
@@ -4840,7 +5035,7 @@ async function runVariantAI() {
     const messages = [
       {
         role: 'system',
-        content: '你是大学物理实验报告写作助手。以完成本次实验的学生视角撰写报告正文，使用“本实验”“测得”等客观表达；不虚构操作或观察。不得把用户填写、知识库、AI、应用、占位符及内部校验规则等软件说明写入正文。根据用户的调整指令，对给定的实验章节文本进行改写：保持物理原理与实验事实正确；必须原样保留 $...$ 公式和 %%DATA:xxx%% 数据占位符；使表达更具个人特色、避免与原文措辞重复。只输出改写后的完整文本，不要输出任何解释或前后缀说明。',
+        content: '你是大学物理实验报告写作助手。以完成本次实验的学生视角撰写报告正文，使用“本实验”“测得”等客观表达；不虚构操作或观察。不得把用户填写、知识库、AI、应用、占位符及内部校验规则等软件说明写入正文。误差分析必须分点书写，每点独立成段并使用（1）（2）等序号，禁止整章写成一个长段落。所有图片的图题必须置于图片下方，独立一行居中；图题只写编号和简短名称，说明、条件或注释另起一段，不与图题混排。根据用户的调整指令，对给定的实验章节文本进行改写：保持物理原理与实验事实正确；必须原样保留 $...$ 公式和 %%DATA:xxx%% 数据占位符；使表达更具个人特色、避免与原文措辞重复。只输出改写后的完整文本，不要输出任何解释或前后缀说明。',
       },
       {
         role: 'user',

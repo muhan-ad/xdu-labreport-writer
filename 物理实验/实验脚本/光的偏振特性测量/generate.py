@@ -169,7 +169,7 @@ def _generate_docx(data: dict, output_path: str):
     doc = DocxReportWriter(output_path)
 
     # ---- 零、实验标题 ----
-    doc.add_title("光的偏振特性测量")
+    doc.add_title("光的偏振特性测量（第一学期）")
     doc.add_student_info()
 
     # ---- 变体组合：实验原理 / 实验方法（存在 variants.json 且应用传入选择时生效）----
@@ -193,7 +193,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # 仅插入图表，不输出数学公式
     if not render_custom_plot(doc, 1, width_cm=14):
-        doc.add_image(plot_path, width_cm=14)
+        doc.add_image(plot_path, width_cm=14, caption='图1 透射光功率差与检偏器夹角余弦平方的关系')
 
     # 简单附注回归结果
     doc.add_paragraph("")
@@ -219,30 +219,23 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("")
     doc.add_run("由 ")
     doc.add_inline_math(r"(P - P_{\min}) \sim \cos^2(\theta)")
-    doc.add_run(" 关系图可见，实验数据点基本分布在一条")
+    doc.add_run(" 关系采用含截距的直线模型拟合，得到")
 
     if intercept_ok:
-        doc.add_run("过原点的直线上（拟合截距 ")
+        doc.add_run("拟合截距（")
         doc.add_inline_math(f"a = {intercept:.4f}\\ \\mathrm{{mW}}")
-        doc.add_run("，在 2σ 范围内与零一致），线性相关系数 ")
+        doc.add_run("，在 2σ 范围内与零一致），决定系数 ")
     else:
-        doc.add_run("直线上，但拟合截距 ")
+        doc.add_run("拟合截距（")
         doc.add_inline_math(f"a = {intercept:.4f}\\ \\mathrm{{mW}}")
-        doc.add_run("，偏离零值超过 2σ，线性相关系数 ")
+        doc.add_run("，偏离零值超过 2σ），决定系数 ")
 
     doc.add_inline_math(f"R^2 = {r_squared:.4f}")
-    doc.add_run("，线性关系良好。")
+    doc.add_run("。该系数描述直线模型对本次数据变化的解释程度。")
 
-    if intercept_ok:
-        doc.add_run("实验结果表明，透射光功率差 ")
-        doc.add_inline_math("P - P_{\\min}")
-        doc.add_run(" 与 ")
-        doc.add_inline_math(r"\cos^2(\theta)")
-        doc.add_run(" 成正比关系，验证了马吕斯定律 ")
-        doc.add_inline_math(r"I = I_0 \cos^2(\theta)")
-        doc.add_run("。")
-    else:
-        doc.add_run("截距偏离零值表明存在一定系统误差，但整体线性趋势仍基本符合马吕斯定律。")
+    doc.add_run("马吕斯定律给出透射光强与 ")
+    doc.add_inline_math(r"\cos^2(\theta)")
+    doc.add_run(" 的理论关系。截距检验只反映常数偏移，完整比较还涉及斜率、残差及测量不确定度。")
 
     doc.add_paragraph(
         "误差来源分析：（1）半导体激光器的光功率可能存在微小波动，影响测量稳定性；"

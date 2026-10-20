@@ -15,6 +15,8 @@ import argparse
 import json
 import os
 import sys
+import shutil
+import tempfile
 
 from docx import Document
 from docx.shared import Cm, Pt
@@ -120,10 +122,22 @@ def insert_chart(docx_path, image_path, section, width_cm=14.0, caption=''):
     run.add_picture(image_path, width=Cm(width_cm))
 
     caption_p = None
-    text = str(caption or '').strip()
+    caption_notes = []
+    text = str(caption or '图表').strip() or '图表'
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    text = lines.pop(0)
+    if '。' in text:
+        text, rest = text.split('。', 1)
+        if rest.strip(): lines.insert(0, rest.strip())
+    if '注：' in text:
+        text, rest = text.split('注：', 1)
+        lines.insert(0, rest.strip())
+    new_p.paragraph_format.keep_with_next = True
     if text:
         caption_p = doc.add_paragraph()
         caption_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        caption_p.paragraph_format.first_line_indent = Pt(0)
+        caption_p.paragraph_format.keep_with_next = bool(lines)
         c_run = caption_p.add_run(text)
         c_run.font.size = Pt(10.5)
         c_run.font.name = '宋体'
@@ -136,6 +150,15 @@ def insert_chart(docx_path, image_path, section, width_cm=14.0, caption=''):
         for attr in ('w:ascii', 'w:hAnsi', 'w:eastAsia', 'w:cs'):
             rFonts.set(qn(attr), '宋体')
 
+    for line in lines:
+        note_p = doc.add_paragraph(line if line.startswith('注：') else '注：' + line)
+        note_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        note_p.paragraph_format.first_line_indent = Pt(0)
+        for run in note_p.runs:
+            run.font.name = '宋体'; run.font.size = Pt(10.5)
+            run._element.get_or_add_rPr().get_or_add_rFonts().set(qn('w:eastAsia'), '宋体')
+        caption_notes.append(note_p._element)
+
     # 把新段落从末尾挪到目标位置（图注紧跟图片之后）
     body = doc.element.body
     new_p_element = new_p._element
@@ -145,16 +168,20 @@ def insert_chart(docx_path, image_path, section, width_cm=14.0, caption=''):
         caption_element = caption_p._element
         body.remove(caption_element)
 
+    for note in caption_notes: body.remove(note)
+
     insert_before = paragraphs[end_idx]._element if end_idx < len(paragraphs) else None
     if insert_before is not None:
         at = body.index(insert_before)
         body.insert(at, new_p_element)
         if caption_element is not None:
             body.insert(at + 1, caption_element)
+        for offset, note in enumerate(caption_notes, 2): body.insert(at + offset, note)
     else:
         body.append(new_p_element)
         if caption_element is not None:
             body.append(caption_element)
+        for note in caption_notes: body.append(note)
 
     # 保存：写临时文件再原子替换。报告可能正被 Word 打开 —— 那时 os.replace 会
     # PermissionError，清理临时文件后抛出可读的中文提示（与报告生成器的口径一致）。
@@ -188,9 +215,30 @@ def main():
     parser.add_argument('--section', default='实验结果分析', help='目标章节名')
     parser.add_argument('--width-cm', type=float, default=14.0, help='图片宽度（厘米）')
     parser.add_argument('--caption', default='', help='可选图注（图片下方居中一行）')
+    parser.add_argument('--images-json', default='', help='完整图组：path/caption/note，不覆盖原报告直到全部插图成功')
     args = parser.parse_args()
 
     try:
+        if args.images_json:
+            items = json.loads(args.images_json)
+            if not isinstance(items, list) or not 1 <= len(items) <= 8:
+                raise ValueError('图组数量必须为1～8')
+            # 同目录临时副本操作，任一图失败不产生部分更新。
+            fd, temp = tempfile.mkstemp(suffix='.docx', prefix='.chart-group-', dir=os.path.dirname(os.path.abspath(args.docx_path)))
+            os.close(fd)
+            try:
+                shutil.copy2(args.docx_path, temp)
+                for i, item in enumerate(items, 1):
+                    caption = f"图{i} " + str(item.get('caption') or '实验图表')
+                    if item.get('note'): caption += '\n注：' + str(item['note'])
+                    insert_chart(temp, item['path'], args.section, args.width_cm, caption)
+                os.replace(temp, args.docx_path)
+            except PermissionError as exc:
+                raise RuntimeError('报告文件正被占用（可能已在 Word 中打开），请关闭后重试') from exc
+            finally:
+                if os.path.exists(temp): os.remove(temp)
+            print(json.dumps({'ok': True, 'section': args.section, 'count': len(items)}, ensure_ascii=False))
+            return
         paras_after = insert_chart(
             docx_path=args.docx_path,
             image_path=args.image_path,

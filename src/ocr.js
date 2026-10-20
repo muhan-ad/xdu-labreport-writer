@@ -12,6 +12,64 @@ const RECOG_STUDENT_FIELDS = [
 ];
 
 let recogState = null;   // { dataUrl, name, includeStudent, student, fields }
+let lastOcrResult = null;
+let ocrResumeRecord = null;
+let ocrOpenSequence = 0;
+let ocrCacheRevision = 0;
+function discardOcrForExperiment(expId,revision){
+  if(currentExp?.id!==expId)return;
+  ocrOpenSequence++;cancelRecognition();recogState=null;lastOcrResult=null;ocrResumeRecord=null;
+  if(revision!==undefined)ocrCacheRevision=revision;
+  if($('recogFields'))$('recogFields').innerHTML='';
+  if($('recogImg'))$('recogImg').removeAttribute('src');
+  closeModal('recognizeModal');closeModal('ocrResumeModal');
+}
+
+function ocrLog(requestId, phase, detail={}) {
+  try { window.labAPI.logEvent('ocr-ui | '+JSON.stringify({requestId,phase,...detail})); } catch(e) { /* Logging cannot block recognition. */ }
+}
+
+function rememberOcrResult(captureControls=false) {
+  if (!recogState || !currentExp || recogState.expId !== currentExp.id || !recogState.fields?.length) return;
+  if (captureControls && $('recogFields').children.length) {
+    recogState.reviewControls=Array.from($('recogFields').querySelectorAll('.field-input[data-key],.recog-pick')).map(el=>({
+      key:el.dataset.key,idx:el.dataset.idx,row:el.dataset.row,col:el.dataset.col,
+      kind:el.classList.contains('recog-pick')?'pick':el.classList.contains('science-mantissa')?'mantissa':el.classList.contains('science-exp')?'exponent':'value',
+      value:el.value,checked:el.checked,
+    }));
+    recogState.onlyEmpty=$('recogOnlyEmptyReview').checked;
+  }
+  const exp=currentExp, state=structuredClone(recogState);
+  lastOcrResult={state,schemaText:JSON.stringify(currentSchema),savedAt:new Date().toISOString()};
+  return window.labAPI.saveOcrResult(exp.path,state,ocrCacheRevision).then(result=>{
+    if(result?.stale)return;
+    if(!result?.ok)throw Error(result?.error||'保存失败');
+  }).catch(()=>showToast('warning','上次识图结果暂未保存到磁盘','当前会话仍可恢复；请勿关闭应用。',6000));
+}
+
+function restoreOcrControls(state) {
+  const controls=Array.from($('recogFields').querySelectorAll('.field-input[data-key],.recog-pick'));
+  for(const saved of state.reviewControls||[]) {
+    const el=controls.find(el=>el.dataset.key===saved.key&&el.dataset.idx===saved.idx&&el.dataset.row===saved.row&&el.dataset.col===saved.col
+      &&(saved.kind==='pick'?el.classList.contains('recog-pick'):saved.kind==='mantissa'?el.classList.contains('science-mantissa'):saved.kind==='exponent'?el.classList.contains('science-exp'):!el.classList.contains('recog-pick')));
+    if(!el)continue;
+    if(saved.kind==='pick'){el.checked=!!saved.checked;el.closest('.review-field').classList.toggle('unpicked',!el.checked);}
+    else el.value=saved.value;
+  }
+  if(typeof state.onlyEmpty==='boolean')$('recogOnlyEmptyReview').checked=state.onlyEmpty;
+  updateApplyBtn();
+}
+
+function resumeOcrResult() {
+  const pending=ocrResumeRecord;
+  if(!pending||pending.expId!==currentExp?.id||pending.schemaText!==JSON.stringify(currentSchema))return;
+  closeModal('ocrResumeModal');ocrResumeRecord=null;
+  resetRecognizeModal();
+  recogState=structuredClone(pending.record.state);
+  $('recogImg').src=recogState.originalDataUrl||recogState.dataUrl;
+  $('recogPick').style.display='none';$('recogResult').style.display='';
+  renderRecogResult();restoreOcrControls(recogState);
+}
 
 function photoEmbedEnabled() {
   return loadSettings().embedDataPhoto !== false;
@@ -105,11 +163,32 @@ window.loadOcrSettingsForm = loadOcrSettingsForm;
 window.saveOcrSettings = saveOcrSettings;
 
 // ── 打开识别弹窗 ──
-function openRecognizeModal() {
+async function openRecognizeModal() {
   if (!currentSchema) {
     showToast('warning', '无法识别', '该实验尚未迁移，暂不支持表单录入');
     return;
   }
+  const exp=currentExp,schemaText=JSON.stringify(currentSchema),sequence=++ocrOpenSequence;
+  let record=lastOcrResult?.state.expId===exp.id&&lastOcrResult.schemaText===schemaText?lastOcrResult:null;
+  if(!record){
+    try {
+      const saved=await window.labAPI.readOcrResult(exp.path);
+      if(saved?.revision!==undefined)ocrCacheRevision=saved.revision;
+      if(saved?.schemaChanged)showToast('info','实验模板已更新','上次结果已保留，请重新识图后核对。',6000);
+      if(saved?.ok)record=saved.record;
+      else showToast('warning','上次识图结果读取失败','可先重新识图；原缓存未删除。',6000);
+    } catch(e){showToast('warning','上次识图结果读取失败','可先重新识图；原缓存未删除。',6000);}
+  }
+  if(sequence!==ocrOpenSequence||currentExp?.id!==exp.id||JSON.stringify(currentSchema)!==schemaText)return;
+  if(record){
+    ocrResumeRecord={expId:exp.id,schemaText,record};
+    $('ocrResumeTime').textContent='上次保存时间：'+new Date(record.savedAt).toLocaleString('zh-CN');
+    openModal('ocrResumeModal');$('btnOcrResume').focus();return;
+  }
+  resetRecognizeModal();
+}
+
+function resetRecognizeModal() {
   cancelRecognition();          // 上一次残留的识别请求先作废
   recogState = null;
   const zoomBox = $('recogZoom');
@@ -131,7 +210,7 @@ function openRecognizeModal() {
 }
 
 // ── 图片压缩（长边限制 + 转 JPEG），压缩后反而更大就保留原图 ──
-function compressImage(dataUrl, maxSide = RECOG_IMG_MAX_SIDE, quality = RECOG_IMG_QUALITY) {
+function compressImage(dataUrl, maxSide = RECOG_IMG_MAX_SIDE, quality = RECOG_IMG_QUALITY, metrics = () => {}) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -148,7 +227,9 @@ function compressImage(dataUrl, maxSide = RECOG_IMG_MAX_SIDE, quality = RECOG_IM
         ctx.fillRect(0, 0, cw, ch);
         ctx.drawImage(img, 0, 0, cw, ch);
         const out = cv.toDataURL('image/jpeg', quality);
-        resolve(dataUrl.startsWith('data:image/bmp;') || out.length < dataUrl.length ? out : dataUrl);
+        const useResized=dataUrl.startsWith('data:image/bmp;') || out.length < dataUrl.length;
+        metrics({originalWidth:w,originalHeight:h,outputWidth:useResized?cw:w,outputHeight:useResized?ch:h,keptOriginal:!useResized});
+        resolve(useResized ? out : dataUrl);
       } catch (e) { resolve(dataUrl); }
     };
     img.onerror = () => resolve(dataUrl);
@@ -236,7 +317,7 @@ function buildRecogPrompt(schema, includeStudent) {
       const unit = fld.unit ? ` 单位=${fld.unit}` : '';
       let shape = '';
       if (fld.type === 'array') {
-        shape = ` 类型=数值数组 长度=${fld.length || '见表格行数'}`;
+        shape = fld.variableLength ? ` 类型=数值数组 按照片实际测量点数完整输出（${fld.minLength || 3}～${fld.maxLength || 100}点），不得裁剪或补造` : ` 类型=数值数组 长度=${fld.length || '见表格行数'}`;
       } else if (fld.type === 'matrix') {
         const cols = (fld.colLabels || []).length || fld.cols || 0;
         // 有 rowLabels = 每一行身份固定（第1次/第2次…），行数必须照搬；
@@ -245,6 +326,7 @@ function buildRecogPrompt(schema, includeStudent) {
         shape = ` 类型=数值矩阵 ${fld.rowLabels ? `尺寸=${rows}行×${cols}列` : `最多 ${rows} 行 × ${cols} 列`}`
           + (fld.colLabels ? ` 列名=${JSON.stringify(fld.colLabels)}` : '')
           + (fld.rowLabels ? ` 行名=${JSON.stringify(fld.rowLabels)}` : '');
+        if (fld.colsFrom) shape = ` 类型=数值矩阵 ${rows}行，列数与 ${fld.colsFrom} 实际测量点数相同，保持逐点对应，不得按模板列数裁剪；行名=${JSON.stringify(fld.rowLabels)}`;
       } else if (fld.type === 'text') {
         shape = ' 类型=文本';
       } else if (fld.type === 'science') {
@@ -402,7 +484,7 @@ function validateRecog(raw, schema) {
         if (!arr) { fail('识别结果不是数组'); }
         else {
           // 措辞方向：差额是「模板把长度定死了」，不是照片抄错了
-          if (expect && arr.length !== expect) {
+          if (!fld.variableLength && expect && arr.length !== expect) {
             warn(`照片上是 ${arr.length} 项，模板固定 ${expect} 项`
               + (arr.length > expect ? '，多出的会被丢弃' : ''));
           }
@@ -436,8 +518,10 @@ function validateRecog(raw, schema) {
               warn(`照片上是 ${m.length} 行，表格最多容纳 ${rows} 行，多出的会被丢弃`);
             }
           }
-          const badRows = m.filter(r => r.length !== cols).length;
-          if (badRows) warn(`${badRows} 行的列数不是 ${cols}`);
+          const pairedCols = fld.colsFrom && rawFields[fld.colsFrom]?.value;
+          const expectedCols = fld.colsFrom && Array.isArray(pairedCols) ? pairedCols.length : cols;
+          const badRows = m.filter(r => r.length !== expectedCols).length;
+          if (badRows) warn(fld.colsFrom ? '测量值与偏转位置数量不同，请核对补齐；不会丢弃已有数据' : `${badRows} 行的列数不是 ${cols}`);
           const flat = m.flat();
           const miss = flat.filter(x => x === null).length;
           // 整块没读出东西就别留个空数组当「值」——与数组分支一致，保持 null
@@ -594,6 +678,7 @@ let recogSeq = 0;         // requestId 的自增后缀（无 crypto.randomUUID �
 
 function cancelRecognition(reason) {
   if (!recogSession || !recogSession.requestId) return;
+  if(recogSession.waitTimer)clearInterval(recogSession.waitTimer);
   recogSession.cancelled = true;
   try { window.labAPI.ocrCancel(recogSession.requestId); } catch (e) { /* 忽略 */ }
   recogSession = null;
@@ -612,6 +697,7 @@ async function startRecognition(dataUrl, name) {
     showToast('warning', '未配置 API Key', '请先在「设置 → AI 服务」里填写识图用的 Key', 6000);
     return;
   }
+  rememberOcrResult(true);cancelRecognition();recogState=null;
 
   $('recogPick').style.display = 'none';
   $('recogResult').style.display = 'none';
@@ -624,17 +710,27 @@ async function startRecognition(dataUrl, name) {
   const originalDataUrl = dataUrl;
   const requestId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `recog-${Date.now()}-${(recogSeq += 1)}`;
   const expId = (currentExp && currentExp.id) || '';
+  const schema=currentSchema,uiStarted=performance.now();
   recogSession = { requestId, expId, cancelled: false };
+  ocrLog(requestId,'image_processing_start',{imageBytes:Math.floor((dataUrl.split(',')[1]||'').length*3/4)});
 
   const includeStudent = $('recogStudent').checked;
-  const compressed = await compressImage(dataUrl);
+  const compressed = await compressImage(dataUrl,RECOG_IMG_MAX_SIDE,RECOG_IMG_QUALITY,info=>ocrLog(requestId,'image_compressed',{...info,elapsedMs:Math.round(performance.now()-uiStarted)}));
+  if(recogSession?.requestId!==requestId||recogSession.cancelled||currentExp?.id!==expId)return;
   // 核对用原图（打码只在数据共享时做）：手写数字看得更清；失败时回退压缩图
   $('recogImg').src = originalDataUrl || compressed;
   // 勾了「扫描增强」就做白平衡归一化 + 对比度拉伸（p85→255），把纸面拉到纯白
   const aiImg = $('recogScan').checked ? await toScanEffect(compressed) : compressed;
-  $('recogLoadingText').textContent = '正在识别数据表…（大图可能需要 10~30 秒）';
+  if(recogSession?.requestId!==requestId||recogSession.cancelled||currentExp?.id!==expId)return;
+  ocrLog(requestId,'image_processing_complete',{elapsedMs:Math.round(performance.now()-uiStarted),scanEnhanced:$('recogScan').checked,imageBytes:Math.floor((aiImg.split(',')[1]||'').length*3/4)});
+  $('recogLoadingText').textContent = '正在识别数据表…耗时取决于服务端，可点击取消。';
+  const requestStarted=Date.now();
+  const waitTimer=setInterval(()=>{
+    if(recogSession?.requestId===requestId)$('recogLoadingText').textContent=`正在识别数据表…已等待 ${Math.floor((Date.now()-requestStarted)/1000)} 秒，可点击取消。`;
+  },1000);
+  recogSession.waitTimer=waitTimer;
 
-  const prompt = buildRecogPrompt(currentSchema, includeStudent);
+  const prompt = buildRecogPrompt(schema, includeStudent);
   const messages = [
     { role: 'system', content: '你是严谨的实验数据抄录助手。你只抄写照片中真实存在的数字，绝不推算、补齐或美化数据。你只输出 JSON。' },
     {
@@ -666,6 +762,8 @@ async function startRecognition(dataUrl, name) {
   } catch (err) {
     result = { ok: false, error: err.message };
   }
+  clearInterval(waitTimer);
+  ocrLog(requestId,'request_returned',{ok:!!result?.ok,cancelled:!!result?.cancelled,elapsedMs:Math.round(performance.now()-uiStarted)});
 
   // 会话校验：这次结果是否仍属于「同一个实验 + 同一次识图」
   if (!recogSession || recogSession.requestId !== requestId || recogSession.cancelled) return;
@@ -686,6 +784,7 @@ async function startRecognition(dataUrl, name) {
 
   const parsed = parseLooseJson(result.content);
   if (!parsed || !parsed.fields) {
+    ocrLog(requestId,'result_parse_failed',{outputChars:result.content?.length||0});
     $('recogLoading').style.display = 'none';
     $('recogPick').style.display = '';
     showToast('error', '模型返回无法解析', '模型这次的输出不是有效 JSON。若反复出现，可能是该模型不支持图片输入，可在设置里换用识图模型。', 8000);
@@ -706,6 +805,8 @@ async function startRecognition(dataUrl, name) {
   $('recogLoading').style.display = 'none';
   $('recogResult').style.display = '';
   renderRecogResult();
+  ocrLog(requestId,'review_ready',{fields:recogState.fields.length,elapsedMs:Math.round(performance.now()-uiStarted)});
+  await rememberOcrResult(true);
 
   // 模型没返回 student 字段时，说明它忽略了这半边任务
   if (includeStudent && !parsed.student) {
@@ -743,9 +844,10 @@ function collectReviewValues() {
       } else if (fld.type === 'matrix') {
         const m = [];
         let any = false;
+        const cols = fld.colsFrom ? Math.max(0, ...els.filter(x => x.classList.contains('matrix-cell')).map(el => Number(el.dataset.col) + 1)) : fld.cols || 0;
         for (let r = 0; r < (fld.rows || 0); r++) {
           const rowArr = [];
-          for (let c = 0; c < (fld.cols || 0); c++) {
+          for (let c = 0; c < cols; c++) {
             const el = els.find(x => x.classList.contains('matrix-cell')
               && Number(x.dataset.row) === r && Number(x.dataset.col) === c);
             const v = num(el);
@@ -770,6 +872,7 @@ function collectReviewValues() {
 // 核对页输入与主表单共用 data-key，残留下来会串进主表单取值（数组长度翻倍），必须清掉。
 // 三条关闭路径（右上角 ×、底部取消、导入完成后）与点击遮罩都走这里。
 function closeRecognizeModal() {
+  rememberOcrResult(true);
   cancelRecognition();
   $('recogFields').innerHTML = '';
   closeModal('recognizeModal');
@@ -777,7 +880,7 @@ function closeRecognizeModal() {
 
 // 核对完成 → 导入表单 + 保存识图训练样本三件套（原图 / AI 识别 / 人工校对）
 async function applyReview() {
-  if (!recogState || !currentSchema || !currentExp) return;
+  if (!recogState || !currentSchema || !currentExp || recogState.expId!==currentExp.id) return;
   const reviewData = collectReviewValues();
   const onlyEmpty = $('recogOnlyEmptyReview').checked;
   const live = readFormData();          // 先读回表单，保证用户之前的手工编辑不丢
@@ -791,6 +894,8 @@ async function applyReview() {
     live[key] = value;
     filled++;
   }
+  const importErrors=dataValidation.validate(currentSchema,live,false);
+  if(importErrors.length){showToast('error','识图数据需要核对',importErrors.join('；'),10000);return;}
 
   // 学生信息（勾选识别时才会有）
   let stuFilled = 0;
@@ -874,6 +979,9 @@ function bindRecognizeEvents() {
   const btn = $('btnRecognize');
   if (btn) btn.onclick = openRecognizeModal;
   if (!$('recognizeModal')) return;
+  $('btnOcrResume').onclick=resumeOcrResult;
+  $('btnOcrNew').onclick=()=>{if(ocrResumeRecord?.expId!==currentExp?.id)return;ocrResumeRecord=null;closeModal('ocrResumeModal');resetRecognizeModal();};
+  $('btnCloseOcrResume').onclick=()=>{ocrResumeRecord=null;closeModal('ocrResumeModal');};
 
   // 关闭弹窗即取消进行中的识别请求：既省一次 API 调用，也避免晚到结果污染状态
   const closeAndCancel = () => closeRecognizeModal();

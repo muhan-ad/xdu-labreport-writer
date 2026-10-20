@@ -1,0 +1,86 @@
+{
+  "实验": "光的偏振特性测量（第二学期）",
+  "schemaVersion": 1,
+  "userInputOnly": true,
+  "chartPreset": {
+    "kind": "polarization",
+    "xField": "theta_deg",
+    "yField": "power_mw",
+    "chartType": "polar",
+    "xLabel": "检偏器角度 θ（0°～360°，间隔15°）",
+    "yLabel": "三组光功率（α=0°、30°、45°）"
+  },
+  "groups": [
+    {
+      "name": "第二学期光功率记录：θ以初始消光方向为零点，三组不重新调零",
+      "fields": [
+        {
+          "key": "power_mw",
+          "label": "三组光功率 P（mW）",
+          "unit": "mW",
+          "type": "matrix",
+          "rows": 25,
+          "cols": 3,
+          "rowLabels": [
+            "0°",
+            "15°",
+            "30°",
+            "45°",
+            "60°",
+            "75°",
+            "90°",
+            "105°",
+            "120°",
+            "135°",
+            "150°",
+            "165°",
+            "180°",
+            "195°",
+            "210°",
+            "225°",
+            "240°",
+            "255°",
+            "270°",
+            "285°",
+            "300°",
+            "315°",
+            "330°",
+            "345°",
+            "360°"
+          ],
+          "colLabels": [
+            "α=0°",
+            "α=30°",
+            "α=45°"
+          ],
+          "required": true,
+          "default": null,
+          "minimum": 0
+        }
+      ]
+    },
+    {
+      "name": "仪器记录（选填）",
+      "fields": [
+        {
+          "key": "wavelength_nm",
+          "label": "光源波长 λ（若已记录）",
+          "unit": "nm",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "exclusiveMinimum": 0
+        },
+        {
+          "key": "resolution_mw",
+          "label": "光功率计分辨力（若已记录）",
+          "unit": "mW",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "exclusiveMinimum": 0
+        }
+      ]
+    }
+  ]
+}

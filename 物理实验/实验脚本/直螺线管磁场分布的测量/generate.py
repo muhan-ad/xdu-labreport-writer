@@ -426,11 +426,10 @@ def _generate_docx(data: dict, output_path: str):
 
     # 2.4 dm-x 分布曲线
     doc.add_heading("4. dₘ-x 分布曲线", level=2)
-    doc.add_paragraph("螺线管轴线上 dₘ 随位置 x 的变化曲线如下。曲线呈中间平坦、"
-                       "两端下降的特征，与长直螺线管内部磁场均匀、端口磁场减半的理论一致。")
+    doc.add_paragraph("螺线管轴线上 dₘ 随位置 x 的变化曲线如下。理想长直螺线管内部磁场近似均匀、"
+                       "端口磁场约为中心的一半；该近似还受到螺线管长度、半径及绕组结构的限制。")
     if not render_custom_plot(doc, 1, width_cm=14):
-        doc.add_image(plot_path, width_cm=14)
-        doc.add_paragraph("图1 螺线管轴线上 dₘ-x 分布曲线")
+        doc.add_image(plot_path, width_cm=14, caption='图1 螺线管轴线上 dₘ-x 分布曲线')
 
     # 2.5 中心点磁感应强度
     doc.add_heading("5. 中心点磁感应强度", level=2)

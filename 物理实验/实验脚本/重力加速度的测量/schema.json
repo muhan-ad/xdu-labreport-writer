@@ -11,16 +11,7 @@
           "unit": "m/s²",
           "default": null,
           "required": true,
-          "exclusiveMinimum": 0,
-          "hint": "使用有明确来源且适用于实验地点的参考值，不作为本次实测结果。"
-        },
-        {
-          "key": "g0_source",
-          "label": "参考值来源及适用地点",
-          "type": "text",
-          "required": true,
-          "default": null,
-          "hint": "例如实验指导书章节、教师给定值或当地标定资料；请注明地点。"
+          "exclusiveMinimum": 0
         },
         {
           "key": "delta_instr",

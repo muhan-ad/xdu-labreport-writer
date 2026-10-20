@@ -6,20 +6,24 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'" />
   <title>学校实验系统</title>
   <link rel="stylesheet" href="school-portal.css" />
+<link rel="stylesheet" href="shared/unified-select.css">
+<link rel="stylesheet" href="shared/input-fields.css">
 </head>
 <body>
-  <header class="portal-controls">
-    <div class="portal-topline"><label class="visually-hidden" for="systemSelect">选择学校系统</label><select id="systemSelect" class="portal-system" aria-label="选择学校系统"><option value="report">物理实验报告提交系统</option></select><span class="portal-domain" id="domain">wlsy.xidian.edu.cn</span><span class="portal-connection" id="connection">HTTP · 未加密</span></div>
-    <nav class="portal-actions" aria-label="学校网站操作">
-      <button id="back" disabled>返回</button><button id="reload">刷新</button>
-      <span class="portal-status" id="status" role="status">正在打开学校网站…</span>
-      <button id="autofill" disabled>自动填充</button>
-      <button id="copyAccount" disabled>复制账号</button><button id="copyPassword" disabled>复制密码</button>
-      <button id="manageCredentials">账号密码管理</button>
-      <button id="clearLogin">清除登录状态</button>
-    </nav>
-  </header>
-  <dialog id="credentialsDialog" class="credential-dialog" aria-labelledby="credentialsTitle">
+  <header class="portal-window-bar">学校实验系统</header>
+  <header class="portal-controls"><div class="portal-topline"><label class="visually-hidden" for="systemSelect">选择学校系统</label><select id="systemSelect" class="portal-system" aria-label="选择学校系统"><option value="report">物理实验报告提交系统</option></select><nav class="portal-actions" aria-label="学校网站操作"><button id="back" disabled>返回</button><button id="reload">刷新</button><span class="portal-status" id="status" role="status">正在打开学校网站…</span><button id="openSettings">设置</button></nav></div></header>
+  <dialog id="portalSettings" class="credential-dialog" aria-labelledby="portalSettingsTitle">
+  <p class="portal-connection-settings"><span id="domain">wlsy.xidian.edu.cn</span> · <span id="connection">HTTP · 未加密</span></p><div class="credential-heading"><h1 id="portalSettingsTitle">学校系统设置</h1><button id="closeSettings">关闭</button></div>
+  <label class="auto-fill-option"><input id="autoFillEnabled" type="checkbox" checked /> 自动填充账号密码</label>
+  <p class="credential-note">默认开启。登录页就绪后填入本机保存的账号密码，不点击登录、不处理验证码，也不覆盖已填写的内容。</p>
+  <div class="portal-settings-actions">
+    <button id="autofill" disabled>立即填充</button>
+    <button id="manageCredentials">账号密码管理</button>
+    <button id="clearLogin">清除登录状态</button>
+  </div>
+  <p id="portalSettingsStatus" class="credential-message" role="status"></p>
+</dialog>
+<dialog id="credentialsDialog" class="credential-dialog" aria-labelledby="credentialsTitle">
     <div class="credential-heading"><div><span class="credential-eyebrow"><span id="credentialSystem">物理实验报告提交系统</span> · 本机保存</span><h1 id="credentialsTitle">账号密码管理</h1></div><button id="closeCredentials" aria-label="关闭账号密码管理">关闭</button></div>
     <p id="credentialState" class="credential-state" role="status">正在检查加密存储…</p>
     <form id="credentialForm" autocomplete="off">
@@ -36,5 +40,6 @@
     <button id="retry">重新连接</button>
   </main>
   <script src="school-portal-renderer.js"></script>
+<script src="shared/unified-select.js"></script>
 </body>
 </html>

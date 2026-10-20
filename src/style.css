@@ -396,6 +396,7 @@ body {
 .school-portal-intro span { display: block; font-size: 12px; color: var(--text-secondary); margin-top: 3px; line-height: 1.5; }
 .school-portal-entry .btn { flex-shrink: 0; }
 .school-portal-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+@media (max-width: 1200px) { .school-portal-entry { flex-wrap: wrap; } .school-portal-actions { flex-wrap: wrap; } }
 .school-portal-entry .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 1000px) { .school-portal-entry { padding: 10px 14px; gap: 8px; } .school-portal-intro span { max-width: 230px; } }
 .titlebar {
@@ -441,19 +442,7 @@ body {
 }
 
 /* 主界面顶部醒目提醒（必读公告入口） */
-.notice-reminder {
-  margin-left: 10px;
-  padding: 3px 10px;
-  border: 1px solid #ef4444;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-  color: #dc2626;
-  background: rgba(239, 68, 68, 0.08);
-  white-space: nowrap;
-  cursor: pointer;
-}
-.notice-reminder:hover { background: rgba(239, 68, 68, 0.16); }
+
 
 .titlebar-actions {
   display: flex;
@@ -768,9 +757,12 @@ body {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
+  max-width: 100%;
   flex-wrap: wrap;
   align-items: center;
 }
+.exp-header-card { flex-wrap: wrap; }
+.exp-header-main { flex: 1 1 240px; min-width: 0; }
 /* 报告类型下拉（实验报告 / 实验论文） */
 .report-type-select {
   padding: 8px 12px;
@@ -1052,8 +1044,8 @@ body {
   margin-top: 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: auto;
-  max-height: 420px;
+  overflow: visible;
+  max-height: none;
   background: var(--card);
   box-shadow: var(--shadow-sm);
 }
@@ -2812,6 +2804,7 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 .settings-page-heading h4 { font-size: 16px; color: var(--text); margin-bottom: 6px; }
 .settings-page-heading p { font-size: 12px; line-height: 1.7; color: var(--text-secondary); }
 .update-card { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 16px; margin-bottom: 12px; background: var(--card); }
+.resource-check-details { margin-top:12px; padding:12px; max-height:240px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-family:inherit; font-size:12px; line-height:1.7; color:var(--text); background:var(--accent-soft); border:1px solid var(--border); border-radius:var(--radius); }
 .update-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .update-card h4 { font-size: 14px; color: var(--text); letter-spacing: 0; margin-bottom: 6px; }
 .update-card-heading p { font-size: 12px; line-height: 1.6; color: var(--text-secondary); }
@@ -2834,6 +2827,15 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 .form-field-science .field-label { flex: 0 0 auto; margin-right: 8px; }
 .form-field-science .science-mantissa { width: 110px; }
 .form-field-science .science-exp { width: 90px; }
+.science-exp-wrap { position: relative; display: inline-flex; align-items: center; }
+.form-field-science .science-exp-wrap .science-exp { padding-right: 32px; }
+.science-exp-wrap .science-exp::-webkit-inner-spin-button { -webkit-appearance: none; }
+.science-exp-trigger { position: absolute; right: 2px; top: 2px; bottom: 2px; width: 30px; border: 0; border-radius: 8px; background: transparent; color: var(--accent); cursor: pointer; }
+.science-exp-trigger:hover { background: var(--accent-light, #eaf4eb); }
+.science-exp-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.science-exp-trigger svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.science-exponents-panel { color: var(--text); }
+.science-exponents-panel .uds-option { color: var(--text); }
 .form-field-science .sci-times { margin: 0 6px; font-size: 13px; color: var(--text-secondary); }
 
 /* ── 获取 skill 弹窗：分享链接展示 ── */
@@ -3057,3 +3059,39 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 /* Common parameter presets require explicit selection; keep labels readable. */
 .form-field-number:has(.parameter-presets) { flex-wrap: wrap; }
 .form-field-number .parameter-presets { width: 220px; max-width: 100%; }
+
+/* Collapsing navigation changes layout only; the active experiment and form stay mounted. */
+.main { min-width: 0; }
+.sidebar {
+  flex-shrink: 0;
+  margin-left: 0;
+  opacity: 1;
+  visibility: visible;
+  transition: margin-left 240ms cubic-bezier(0.4, 0, 0.2, 1), opacity 180ms ease, visibility 0s;
+}
+.app.sidebar-collapsed .sidebar {
+  margin-left: -260px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: margin-left 240ms cubic-bezier(0.4, 0, 0.2, 1), opacity 180ms ease, visibility 0s 240ms;
+}
+.sidebar-toggle {
+  width: 30px; height: 30px; padding: 5px; margin-right: 10px;
+  display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card); color: var(--text-secondary); cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.sidebar-toggle:hover { color: var(--accent); background: var(--accent-light); border-color: var(--accent); }
+.sidebar-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.sidebar-toggle svg { width: 20px; height: 20px; }
+.sidebar-toggle-chevron { transform-origin: 14.5px 12px; transition: transform 240ms ease; }
+.app.sidebar-collapsed .sidebar-toggle-chevron { transform: rotate(180deg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar, .app.sidebar-collapsed .sidebar, .sidebar-toggle-chevron { transition: none; }
+}
+
+/* Keep the outer data card; remove only measurement-group outlines. */
+#dataTableWrap .schema-form>.form-group{border-color:transparent;box-shadow:none;background:transparent}

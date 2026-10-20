@@ -6,21 +6,19 @@
       "fields": [
         {
           "key": "m0_g",
-          "label": "下盘质量 m₀（实测或器材标定值）",
+          "label": "下盘质量 m₀",
           "type": "number",
           "unit": "g",
           "default": null,
-          "required": true,
-          "hint": "按本次称量结果或当前器材标定值填写，不使用教材示例质量。"
+          "required": true
         },
         {
           "key": "m_g",
-          "label": "圆环质量 m（实测或器材标定值）",
+          "label": "圆环质量 m",
           "type": "number",
           "unit": "g",
           "default": null,
-          "required": true,
-          "hint": "按本次称量结果或当前器材标定值填写，不使用教材示例质量。"
+          "required": true
         }
       ]
     },
@@ -55,11 +53,11 @@
       ]
     },
     {
-      "name": "实际仪器参数（不使用教材或示例数值）",
+      "name": "仪器参数",
       "fields": [
         {
           "key": "instrument_g",
-          "label": "当地重力加速度（按实际仪器填写）",
+          "label": "当地重力加速度",
           "type": "number",
           "unit": "m/s²",
           "required": true,
@@ -69,7 +67,7 @@
         },
         {
           "key": "instrument_delta_ruler",
-          "label": "长度量具仪器限差（按实际仪器填写）",
+          "label": "长度量具仪器限差",
           "type": "number",
           "unit": "cm",
           "required": true,
@@ -79,7 +77,7 @@
         },
         {
           "key": "instrument_delta_timer",
-          "label": "计时器仪器限差（按实际仪器填写）",
+          "label": "计时器仪器限差",
           "type": "number",
           "unit": "s",
           "required": true,
@@ -89,7 +87,7 @@
         },
         {
           "key": "instrument_delta_balance",
-          "label": "天平仪器限差（按实际仪器填写）",
+          "label": "天平仪器限差",
           "type": "number",
           "unit": "g",
           "required": true,

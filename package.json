@@ -1,15 +1,16 @@
 {
   "name": "labreport-writer",
-  "version": "2.1.4",
+  "version": "2.2.0",
   "description": "大学物理实验报告自动编写应用",
   "main": "main.js",
   "scripts": {
-    "test": "node --test tests/network.test.js tests/regression.test.js tests/security.test.js tests/ocr.test.js tests/school-portal.test.js tests/school-credentials.test.js tests/report-integrity.test.js tests/settings-adjustments.test.js",
+    "test": "node scripts/verify.js",
     "start": "electron .",
     "build": "electron-builder",
     "build:win": "electron-builder --win",
     "verify": "node scripts/verify.js",
-    "test:desktop": "node scripts/test-desktop.js"
+    "test:desktop": "node scripts/test-desktop.js",
+    "test:course": "python-runtime\\python.exe -m unittest discover -s src/course-selection -p test_*.py && node --test src/course-selection/test_*.cjs"
   },
   "keywords": [
     "物理实验",
@@ -30,6 +31,8 @@
     "sanitize-html": "2.17.7"
   },
   "build": {
+    "afterPack": "scripts/after-pack.cjs",
+    "afterSign": "scripts/after-pack.cjs",
     "appId": "com.labreport.writer",
     "productName": "实验搭子",
     "directories": {
@@ -40,7 +43,10 @@
       "preload.js",
       "src/**/*",
       "package.json",
-      "!src/.mimosa/**"
+      "!src/.mimosa/**",
+      "!src/course-selection/test*",
+      "!src/course-selection/__pycache__/**",
+      "!src/course-selection/bridge*"
     ],
     "extraResources": [
       {
@@ -63,6 +69,40 @@
           "!**/.lab_sections.json",
           "!**/__pycache__/**",
           "!**/.mimosa/**"
+        ]
+      },
+      {
+        "from": "src/course-selection",
+        "to": "course-selection",
+        "filter": [
+          "server.py",
+          "academic.py",
+          "course_metadata.py",
+          "academic_reader.cjs",
+          "edge_reader.cjs",
+          "app.js",
+          "index.html",
+          "style.css",
+          "academic_bridge.py",
+          "timetable_reader.js",
+          "guide-content.js",
+          "guide-ui.js",
+          "guide-reviews.js",
+          "course-filters.js",
+          "filter-ui.js",
+          "cancellation.py",
+          "guide-ui.css",
+          "guide_selection.py",
+          "audio/**/*"
+        ]
+      },
+      {
+        "from": "src/shared",
+        "to": "shared",
+        "filter": [
+          "unified-select.js",
+          "unified-select.css",
+          "input-fields.css"
         ]
       }
     ],

@@ -256,7 +256,7 @@ def render_custom_quiz(doc, data):
         if isinstance(answers, str):
             answers = [answers]
         from .content_policy import validate_polish
-        rendered = [render_variant(normalize_polish_md(validate_polish(str(a))), data)
+        rendered = [render_variant(normalize_polish_md(validate_polish(str(a), data)), data)
                     for a in (answers or []) if str(a or "").strip()]
         if rendered:
             doc.add_paragraph_rich(rendered[0])
@@ -286,7 +286,7 @@ def compose(script_dir: str, data: dict) -> dict:
             # 思考题：按问回答变体字典原样透传（题目在 generate.py 写死，
             # 生成器对每问随机选回答；LAB_POLISH 覆盖时下方循环替换为整段文本）
             if isinstance(texts, dict):
-                out[section] = {qno: [render_variant(validate_polish(str(answer)) if enforce_policy else str(answer), data)
+                out[section] = {qno: [render_variant(validate_polish(str(answer), data) if enforce_policy else str(answer), data)
                                      for answer in (answers if isinstance(answers, list) else [answers])]
                                 for qno, answers in texts.items()}
             continue
@@ -298,12 +298,16 @@ def compose(script_dir: str, data: dict) -> dict:
                 idx = -1
         if 0 <= idx < len(texts):
             if enforce_policy:
-                validate_polish(texts[idx])
+                validate_polish(texts[idx], data)
             out[section] = render_variant(texts[idx], data)
     for section, md in (get_polish_overrides() or {}).items():
         if section in disabled:
             continue   # 润色覆盖同样受章节开关约束
         if not isinstance(md, str) or not md.strip():
+            continue
+        from .content_policy import contains_writing_instructions
+        if contains_writing_instructions(md):
+            print('polish | 已跳过包含写作指导或软件说明的旧润色，使用当前实验正文；请重新润色。', file=sys.stderr, flush=True)
             continue
         from .content_policy import validate_polish
         if section == "思考题":
@@ -318,10 +322,13 @@ def compose(script_dir: str, data: dict) -> dict:
             base = out.get("思考题")
             merged = dict(base) if isinstance(base, dict) else {}
             for qno, answers in quiz.items():
-                merged[qno] = [render_variant(normalize_polish_md(validate_polish(a)), data) for a in answers]
+                merged[qno] = [render_variant(normalize_polish_md(validate_polish(a, data)), data) for a in answers]
             out["思考题"] = merged
             continue
-        out[section] = render_variant(normalize_polish_md(validate_polish(md)), data)
+        out[section] = render_variant(normalize_polish_md(validate_polish(md, data)), data)
+    from .report_style import error_points
+    if isinstance(out.get('误差分析'), str):
+        out['误差分析'] = error_points(out['误差分析'])
     if out:
         print(SECTIONS_MARKER + json.dumps(out, ensure_ascii=False), flush=True)
     return out

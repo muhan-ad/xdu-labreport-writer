@@ -79,7 +79,7 @@ function harness() {
   const action = (name, event, payload) => ipc.get('school-portal-action')(event || {
     sender: windows.at(-1).webContents, senderFrame: windows.at(-1).webContents.mainFrame }, name, payload);
   const status = () => windows.at(-1).webContents.messages.filter(m => m[0] === 'school-portal-state').at(-1)[1];
-  return { portal, windows, views, ses, dialogs, operations, external, action, status, credentials, copied: () => copied, decide: fn => { decision = fn; } };
+  return { Window, portal, windows, views, ses, dialogs, operations, external, action, status, credentials, copied: () => copied, decide: fn => { decision = fn; } };
 }
 
 test('school URL whitelist rejects local, lookalike and credential-bearing addresses', () => {
@@ -192,14 +192,14 @@ test('credential manager opens directly, hides remote view and never returns pla
   assert.equal(h.dialogs.length, 0);
 });
 
-test('copy/fill execute without dialogs and never return secrets over IPC', async () => {
+test('removed copy actions reject requests; fill executes without dialogs and never return secrets over IPC', async () => {
   const h = harness(); await h.portal.open(); await h.credentials.save({ username: 'TEST_ACCOUNT', password: 'TEST_PASSWORD' });
   h.decide(async () => ({ response: 1 }));
   h.decide(async () => ({ response: 0 }));
-  const copied = await h.action('copy-password'); assert.equal(copied.ok, true); assert.equal(h.copied(), 'TEST_PASSWORD');
+  const copied = await h.action('copy-password'); assert.equal(copied.ok, false); assert.equal(h.copied(), null);
   assert.doesNotMatch(JSON.stringify(copied), /TEST_PASSWORD/);
   const filled = await h.action('autofill'); assert.equal(filled.ok, true); assert.doesNotMatch(JSON.stringify(filled), /TEST_ACCOUNT|TEST_PASSWORD/);
-  assert.equal((await h.action('copy-account')).ok, true); assert.equal(h.copied(), 'TEST_ACCOUNT');
+  assert.equal((await h.action('copy-account')).ok, false); assert.equal(h.copied(), null);
   assert.equal(h.dialogs.length, 0);
   const remote = h.views[0].webContents;
   assert.equal((await h.action('copy-password', { sender: remote, senderFrame: remote.mainFrame })).ok, false);
@@ -244,7 +244,7 @@ test('credential actions are scoped to selected system and cannot switch during 
   await h.action('save-credentials',null,{username:'virtual-test',password:'virtual-secret'});await h.action('close-credentials');
   assert.equal((await h.action('autofill')).ok,true);
   await h.action('delete-credentials');await h.action('switch-system',null,{systemId:'report'});
-  assert.equal((await h.action('copy-password')).ok,true);assert.equal(h.copied(),'report-secret');
+  assert.equal((await h.action('autofill')).ok,true);assert.equal(h.copied(),null);
 });
 test('approved popups preserve window semantics and school downloads use a Save dialog',async()=>{
   const h=harness();await h.portal.open();const remote=h.views[0].webContents;
@@ -310,4 +310,71 @@ test('observed simulation remote login and content load without receiving saved 
   await h.credentials.save({username:'fixture',password:'secret'},'simulation');remote.url=urls[1];remote.mainFrame.url=urls[1];
   let injected=false;remote.executeJavaScriptInIsolatedWorld=async()=>{injected=true;return {filled:true}};
   assert.equal((await h.action('autofill')).ok,false);assert.equal(injected,false);
+});
+
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+test('settings hide remote page, default auto-fill fills on ready without IPC secrets, off suppresses fill', async () => {
+ const h=harness(); await h.portal.open(); await h.credentials.save({username:'TEST_ACCOUNT',password:'TEST_PASSWORD'});
+ const remote=h.views[0].webContents; let filled=0;
+ remote.executeJavaScriptInIsolatedWorld=async(_,scripts)=>{ if(scripts[0].code.includes(',true,')) return {ready:true}; filled++; return {filled:true}; };
+ assert.equal(h.status().autoFillEnabled,true);
+ remote.emit('did-stop-loading'); await pause(240); assert.equal(filled,1);
+ remote.emit('did-stop-loading'); await pause(240); assert.equal(filled,1,'successful page not repeatedly filled');
+ assert.doesNotMatch(JSON.stringify(h.windows[0].webContents.messages),/TEST_ACCOUNT|TEST_PASSWORD/);
+ await h.action('open-settings'); assert.equal(h.views[0].visible,false);
+ await h.action('set-auto-fill',null,{enabled:false});
+ await h.action('close-settings'); assert.equal(h.views[0].visible,true);
+ remote.emit('did-start-navigation',{isMainFrame:true}); remote.emit('did-stop-loading'); await pause(240); assert.equal(filled,1);
+ await h.action('set-auto-fill',null,{enabled:true}); await pause(240); assert.equal(filled,2);
+ h.portal.close();
+});
+test('auto-fill cancelled by navigation and close; no saved credentials means no injection', async()=>{
+ const h=harness();await h.portal.open();let count=0;h.views[0].webContents.executeJavaScriptInIsolatedWorld=async()=>{count++;return {ready:true}};
+ h.views[0].webContents.emit('did-stop-loading');await pause(220);assert.equal(count,0);
+ await h.credentials.save({username:'test',password:'secret'});
+ h.views[0].webContents.emit('did-stop-loading');h.views[0].webContents.emit('did-start-navigation',{isMainFrame:true});await pause(220);assert.equal(count,0);
+ h.views[0].webContents.emit('did-stop-loading');h.portal.close();await pause(220);assert.equal(count,0);
+});
+test('course autofill reuses encrypted school settings, prefers course and respects the global switch',async()=>{
+ const h=harness();assert.equal((await h.portal.courseLogin()).credentials,null);
+ await h.credentials.save({username:'REPORT_ACCOUNT',password:'REPORT_PASSWORD'},'report');
+ assert.equal((await h.portal.courseLogin()).credentials.username,'REPORT_ACCOUNT');
+ await h.credentials.save({username:'COURSE_ACCOUNT',password:'COURSE_PASSWORD'},'course');
+ assert.equal((await h.portal.courseLogin()).credentials.username,'COURSE_ACCOUNT');
+ await h.portal.open();await h.action('set-auto-fill',null,{enabled:false});
+ assert.deepEqual(await h.portal.courseLogin(),{enabled:false});h.portal.close();
+});
+
+test('trusted dropdown hides and restores school view without changing navigation or credentials',async()=>{
+ const h=harness();await h.portal.open();const before=h.views[0].webContents.getURL();
+ assert.equal((await h.action('dropdown-visibility',undefined,{open:true})).ok,true);assert.equal(h.views[0].visible,false);
+ assert.equal((await h.action('dropdown-visibility',undefined,{open:false})).ok,true);assert.equal(h.views[0].visible,true);
+ assert.equal(h.views[0].webContents.getURL(),before);assert.equal((await h.action('dropdown-visibility',undefined,{open:'bad'})).ok,false);
+});
+
+test('embedded report uses isolated child views, trusts only toolbar, hides for host dialogs and never closes host',async()=>{
+ const h=harness(),host=new h.Window({}),bounds={x:230,y:140,width:850,height:620};
+ assert.equal((await h.portal.openEmbedded(host,bounds)).ok,true);assert.equal(h.windows.length,1);assert.equal(h.views.length,2);
+ const [toolbar,remote]=h.views;assert.deepEqual(toolbar.bounds,bounds);assert.deepEqual(remote.bounds,{x:230,y:216,width:850,height:544});
+ assert.equal(remote.options.webPreferences.nodeIntegration,false);assert.equal(remote.options.webPreferences.sandbox,true);assert.equal(remote.options.webPreferences.preload,undefined);
+ assert.equal(remote.webContents.getURL(),SCHOOL_URL);
+ const state=toolbar.webContents.messages.filter(m=>m[0]==='school-portal-state').at(-1)[1];assert.equal(state.embedded,true);assert.deepEqual(state.systems.map(s=>s.id),['report']);
+ assert.equal((await h.action('open-settings',{sender:remote.webContents,senderFrame:remote.webContents.mainFrame})).ok,false);
+ assert.equal((await h.action('open-settings',{sender:toolbar.webContents,senderFrame:toolbar.webContents.mainFrame})).ok,true);assert.equal(remote.visible,false);
+ await h.action('close-settings',{sender:toolbar.webContents,senderFrame:toolbar.webContents.mainFrame});assert.equal(remote.visible,true);
+ h.portal.updateEmbedded(host,bounds,false);assert.equal(toolbar.visible,false);assert.equal(remote.visible,false);
+ h.portal.updateEmbedded(host,bounds,true);assert.equal(remote.visible,true);
+ h.portal.close();assert.equal(host.isDestroyed(),false);assert.equal(remote.webContents.isDestroyed(),true);assert.equal(toolbar.webContents.isDestroyed(),true);
+});
+test('embedding refuses to discard a separately open school website',async()=>{
+ const h=harness();await h.portal.open();const existing=h.windows[0];const host=new h.Window({});assert.equal((await h.portal.openEmbedded(host,{x:200,y:100,width:800,height:600})).ok,false);assert.equal(existing.isDestroyed(),false);h.portal.close();
+});
+
+test('course settings and original school portal share the exact encrypted-account manager and auto-fill preference',async()=>{
+ const h=harness();const saved=await h.portal.accountSettings('save',{systemId:'course',username:'SHARED_ACCOUNT',password:'SHARED_PASSWORD'});assert.equal(saved.ok,true);assert.doesNotMatch(JSON.stringify(saved),/SHARED_/);
+ assert.equal((await h.portal.courseLogin()).credentials.username,'SHARED_ACCOUNT');
+ await h.portal.accountSettings('save',{systemId:'report',username:'REPORT_ACCOUNT',password:'REPORT_PASSWORD'});await h.portal.open();assert.equal((await h.action('credential-status')).configured,true);
+ await h.portal.accountSettings('set-auto-fill',{enabled:false});assert.equal(h.status().autoFillEnabled,false);assert.equal((await h.portal.courseLogin()).enabled,false);
+ await h.action('set-auto-fill',undefined,{enabled:true});assert.equal((await h.portal.accountSettings('status',{systemId:'course'})).autoFillEnabled,true);
+ await h.portal.accountSettings('delete',{systemId:'report'});assert.equal((await h.action('credential-status')).configured,false);assert.equal((await h.portal.accountSettings('status',{systemId:'course'})).configured,true);h.portal.close();
 });

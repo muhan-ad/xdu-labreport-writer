@@ -1,0 +1,34 @@
+'use strict';
+const {app,BrowserWindow}=require('electron'),fs=require('fs'),path=require('path'),assert=require('assert/strict');
+const work=process.env.LABREPORT_SMOKE_WORK,root=process.env.LABREPORT_TEST_APP_ASAR;
+const profile=fs.mkdtempSync(path.join(work,'packaged-2.1.5-profile-'));app.setPath('userData',profile);
+const log=path.join(work,'packaged-2.1.5-smoke.log');fs.writeFileSync(log,'START packaged 2.1.5 main and course integration\n');const record=s=>fs.appendFileSync(log,s+'\n');
+app.on('browser-window-created',(_,w)=>w.hide());
+const children=[],cp=require('child_process'),spawn=cp.spawn;cp.spawn=(...args)=>{const p=spawn(...args);children.push(p);return p;};
+const timer=setTimeout(()=>{record('FAIL timeout');app.exit(1)},60000);
+require(path.join(root,'main.js'));const delay=ms=>new Promise(r=>setTimeout(r,ms));
+app.whenReady().then(async()=>{try{
+ let main;
+ for(let i=0;i<200;i++){main=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('index.html'));if(main&&await main.webContents.executeJavaScript('typeof experiments!=="undefined"&&experiments.length===28').catch(()=>false))break;await delay(100);}
+ record('Main ready'); assert.ok(main,'main window ready');const ev=s=>main.webContents.executeJavaScript(s);
+ assert.equal(app.isPackaged,true);
+ assert.equal(JSON.parse(fs.readFileSync(path.join(root,'package.json'))).version,'2.1.5');
+ assert.equal(await ev('typeof window.labAPI.openCourseSelection'),'function');
+ assert.equal(await ev('document.getElementById("btnOpenCourseSelection").textContent'),'实验选课');
+ assert.equal(await ev('document.querySelector(".brand-title").textContent'),'实验搭子');
+ await ev('selectExperiment(experiments.find(e=>e.id==="电容与高电阻的测量"))');
+ assert.equal(await ev('getComputedStyle(document.getElementById("dataTableWrap")).maxHeight'),'none');
+ assert.equal(await ev('getComputedStyle(document.getElementById("dataTableWrap")).overflowY'),'visible');
+ record('Opening packaged course selection'); const result=await ev('window.labAPI.openCourseSelection()');assert.equal(result.ok,true,result.error);
+ const course=BrowserWindow.getAllWindows().find(w=>w!==main&&w.webContents.getURL().startsWith('http://127.0.0.1:'));assert.ok(course);course.hide();
+ record('Course window ready');const state=await course.webContents.executeJavaScript('({search:document.getElementById("openSearch").textContent,login:document.getElementById("accountButton").textContent,bridge:typeof window.labAPI,node:typeof require})');
+ assert.equal(state.search,'搜索实验');assert.equal(state.login,'登录学校账号');assert.equal(state.bridge,'undefined');assert.equal(state.node,'undefined');
+ record('PASS actual packaged course page DOM and permission isolation; hidden screenshot omitted');
+ assert.ok(children.some(p=>p.spawnargs.some(a=>a.endsWith('server.py'))),'packaged Python service actually started');
+ fs.writeFileSync(path.join(work,'packaged-2.1.5-children.json'),JSON.stringify(children.map(p=>({pid:p.pid,args:p.spawnargs})),null,2));
+ const helper = await new Promise((resolve,reject)=>cp.execFile(process.execPath,[],{env:{...process.env,LAB_COURSE_READER_MODE:'1',LAB_COURSE_READER_CONFIG:'{}'},windowsHide:true,timeout:15000},(error,stdout)=>error?reject(error):resolve(stdout)));
+ assert.match(helper,/ACADEMIC_RESULT:/);assert.match(helper,/reader_failed/);
+ record('PASS packaged helper mode exits on invalid configuration without launching report UI or visiting school');
+ record('PASS packaged main loads all 28 experiments; branding, single scrolling, actual course IPC, packaged Python dependencies, course page and sandbox permissions');
+ clearTimeout(timer);app.quit();
+}catch(e){record('FAIL '+e.stack);clearTimeout(timer);app.exit(1)}});

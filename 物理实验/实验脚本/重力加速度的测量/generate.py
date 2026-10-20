@@ -265,7 +265,6 @@ def _generate_docx(data: dict, output_path: str):
     # ── 零、实验标题 ──
     doc.add_title("重力加速度的测量")
     doc.add_student_info()
-    doc.add_paragraph("重力参考值来源及适用地点：" + str(data["g0_source"]))
 
     # ── 变体组合：实验原理 / 实验方法（存在 variants.json 且应用传入选择时生效）──
     variants = compose(SCRIPT_DIR, r)
@@ -284,7 +283,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_heading("二、数据处理", level=1)
 
     # （一）实验数据记录
-    doc.add_heading("（一）实验数据记录", level=2)
+    doc.add_heading("（一）周期与悬点距离计算结果", level=2)
 
     # 构建数据表
     col_labels = [f"第{i+1}孔" for i in range(N_HOLES)]
@@ -294,7 +293,7 @@ def _generate_docx(data: dict, output_path: str):
     # 支点位置行
     rows.append(["支点位置/cm"] + [f"{v:.1f}" for v in pivot_positions])
     # 8行10周期
-    for trial in range(N_TRIALS):
+    for trial in range(0 if getattr(doc, 'has_data_photo', False) else N_TRIALS):
         row_label = "10周期/s"
         row_data = [f"{trials_10T[hole][trial]:.2f}" for hole in range(N_HOLES)]
         rows.append([row_label] + row_data)
@@ -317,7 +316,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # 插入绘制的 T-h 曲线图
     if not render_custom_plot(doc, 1, width_cm=12):
-        doc.add_image(th_plot_path, width_cm=12)
+        doc.add_image(th_plot_path, width_cm=12, caption='图1 复摆周期与支点距离的关系曲线')
 
     doc.add_paragraph("")
     doc.add_run("在曲线最低点与左右两支共同覆盖的周期上限之间取中部高度，作水平线（图中黑色虚线），由分段线性插值自动求得两个交点：")

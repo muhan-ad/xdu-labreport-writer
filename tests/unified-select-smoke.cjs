@@ -1,0 +1,22 @@
+const {app,BrowserWindow}=require('electron'),fs=require('fs'),path=require('path'),assert=require('assert/strict');
+const root=path.join(__dirname,'..'),work=process.env.LAB_DROPDOWN_WORK;if(!work)throw Error('Isolated output directory required');fs.mkdirSync(work,{recursive:true});app.disableHardwareAcceleration();app.setPath('userData',fs.mkdtempSync(path.join(work,'profile-')));
+app.whenReady().then(async()=>{let win;const timer=setTimeout(()=>app.exit(1),20000);try{
+ const {pathToFileURL}=require('url');const css=pathToFileURL(path.join(root,'src/shared/unified-select.css')).href,js=pathToFileURL(path.join(root,'src/shared/unified-select.js')).href;
+ fs.writeFileSync(path.join(work,'fixture.html'),`<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self';script-src 'self';style-src 'self'"><link rel="stylesheet" href="${css}"><form id="form"><label for="provider">服务商</label><select id="provider"><option value="a">原始选项</option><option value="b">第二选项</option><option value="c" disabled>禁用选项</option></select><select id="hidden" hidden><option>隐藏</option></select><select id="disabled" disabled><option>禁用</option></select><button type="reset">重置</button></form><dialog id="dialog"><select id="inDialog"><option>甲</option><option>乙</option></select></dialog><script src="${js}"></script>`);
+ win=new BrowserWindow({show:false,width:1000,height:800,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});await win.loadFile(path.join(work,'fixture.html'));
+ const result=await win.webContents.executeJavaScript(`(async()=>{
+ const s=document.getElementById('provider'),trigger=()=>s.previousElementSibling.querySelector('.uds-trigger'),tick=()=>new Promise(r=>setTimeout(r,25));
+ let changes=0;s.addEventListener('change',()=>changes++);s.value='b';const propertySync=trigger().textContent.includes('第二选项');
+ trigger().click();const panel=document.querySelector('.uds-panel:popover-open');const b=panel.getBoundingClientRect(),positioned=b.left>=0&&b.top>=0&&b.right<=innerWidth&&b.bottom<=innerHeight;
+ const disabled=panel.querySelectorAll('[role=option]')[2].disabled;panel.querySelectorAll('[role=option]')[0].click();const selection=s.value==='a'&&changes===1;
+ trigger().dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));const firstFocus=document.activeElement;firstFocus.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown',bubbles:true}));const keyFocus=document.activeElement;s.value=s.value;const keyboard=keyFocus!==firstFocus&&document.activeElement===keyFocus;keyFocus.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+ s.innerHTML='<option value="new">动态选项</option>';await tick();const dynamic=trigger().textContent.includes('动态选项');
+ s.options[0].selected=true;const optionSync=trigger().textContent.includes('动态选项');
+ s.disabled=true;await tick();const stateDisabled=trigger().disabled;s.disabled=false;s.hidden=true;await tick();const hidden=s.previousElementSibling.hidden;s.hidden=false;
+ const added=document.createElement('select');added.id='newSelect';added.innerHTML='<option>新增</option>';document.body.append(added);await tick();const newControl=!!added.previousElementSibling?.classList.contains('uds');
+ const dialog=document.getElementById('dialog');dialog.showModal();document.querySelector('[data-select-id="inDialog"]').click();const inModal=dialog.contains(document.querySelector('.uds-panel:popover-open'));dialog.close();await tick();const closed=!document.querySelector('.uds-panel:popover-open');
+ s.disabled=false;document.getElementById('form').reset();await tick();
+ return {keyboard,propertySync,positioned,disabled,selection,dynamic,optionSync,stateDisabled,hidden,newControl,inModal,closed,noFootnote:!document.querySelector('.menu-foot'),noSearch:!document.querySelector('.uds-panel input'),valuesPreserved:s.value==='new',nativeCount:document.querySelectorAll('select.uds-native').length};
+ })()`);
+ for(const [key,value]of Object.entries(result))if(key!=='nativeCount')assert.equal(value,true,key);assert.equal(result.nativeCount,5);fs.writeFileSync(path.join(work,'result.json'),JSON.stringify({ok:true,...result},null,2));win.destroy();clearTimeout(timer);app.exit(0);
+ }catch(error){fs.writeFileSync(path.join(work,'result.json'),JSON.stringify({ok:false,error:error.stack}));win?.destroy();clearTimeout(timer);app.exit(1);}});

@@ -23,11 +23,13 @@ SCRIPTS = os.path.join(ROOT, "物理实验", "实验脚本")
 try:
     import win32com.client
 except ImportError:
-    print("SKIP: 无 win32com（未安装 Word 环境），Word 实物验收未执行")
-    sys.exit(0)
+    win32com = None
 
 
 def main():
+    if win32com is None:
+        print("SKIP: 无 win32com，Word 实物验收未执行")
+        return 0
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
     # 默认用「薄透镜焦距的测量（凸透镜）」——该实验原名「薄透镜焦距的测量」，
     # 改名后旧名已不存在，这里跟着更新（旧名会让测试直接 FAIL）。

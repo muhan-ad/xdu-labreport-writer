@@ -373,7 +373,7 @@ def _generate_docx(data: dict, output_path: str):
     # 理论值
     doc.add_paragraph("在水温 ")
     doc.add_inline_math(rf"t = {r['t']}\,^\circ\mathrm{{C}}")
-    doc.add_run(" 条件下，采用用户提供的参考声速 ")
+    doc.add_run(" 条件下，所记录的参考声速为 ")
     doc.add_inline_math(rf"v_{{\mathrm{{ref}}}} = {r['v_theory']:.3f}\,\mathrm{{m/s}}")
     doc.add_run("。")
 
@@ -399,15 +399,13 @@ def _generate_docx(data: dict, output_path: str):
     better = "共振干涉法" if r1['E'] < r2['E'] else "位相比较法"
     worse = "位相比较法" if r1['E'] < r2['E'] else "共振干涉法"
     doc.add_paragraph(
-        f"对比两种方法，{better}的测量精度更高"
-        f"（E = {min(r1['E'], r2['E']):.2f}%）。{worse}误差稍大，"
-        f"可能是由于李萨如图形判断同/反相点时人眼分辨率有限，"
-        f"引入额外的读数误差。总体而言，两种方法测量结果均与水中"
-        f"理论声速基本吻合。"
+        f"对比两种方法，{better}相对参考声速的偏差较小"
+        f"（E = {min(r1['E'], r2['E']):.2f}%）。偏差大小表示测量值与参考值的接近程度，"
+        "不能单独代表测量精密度；共振位置及李萨如图形的判读、声场和读数误差均可能影响结果。"
     )
-    doc.add_paragraph("验证了声波在水中传播时 ")
+    doc.add_paragraph("两种方法均以逐差法求取波长，再由 ")
     doc.add_inline_math(r"v = \lambda f")
-    doc.add_run(" 关系式以及逐差法处理数据的有效性。")
+    doc.add_run(" 计算声速；因此该关系式是计算依据，不能将计算结果本身作为对它的独立验证。")
 
     # 偏差分析 - 共振
     delta1 = abs(r1['v_theory'] - r1['v_meas'])
@@ -515,7 +513,7 @@ def _generate_docx(data: dict, output_path: str):
             doc.add_paragraph(
                 "水中声速随温度及介质条件变化。频率不变时波长随声速改变，"
                 "水温漂移或不均匀会影响位置间隔及逐差结果。应保持水温稳定并记录温度，"
-                "参考声速应来自适用于该温度和介质的模型或标定，不能套用示例条件。"
+                "参考声速与温度及介质成分有关，不同条件下的参考值不能直接比较。"
             )
 
             # ── 保存 ──

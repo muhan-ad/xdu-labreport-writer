@@ -295,6 +295,8 @@ def _compute(data: dict) -> dict:
     i_max = max(t1_i)
     df = (f2 - f1) if (f1 is not None and f2 is not None) else None
     q = (f0 / df) if (df is not None and df > 0) else None
+    q_result = (f"由半功率点法求得品质因数 $Q = {q:.6g}$。" if q is not None else
+                "本次数据未完整覆盖两侧半功率点，无法由半功率点法确定通频带和品质因数。")
 
     return {
         "f0": f0, "f0p": f0p, "eta": eta,
@@ -302,6 +304,7 @@ def _compute(data: dict) -> dict:
         "t2_f": t2_f, "t2_a": t2_a, "t2_b": t2_b, "t2_phi": t2_phi,
         "t2_signed_input": t2_signed_input,
         "i_max": i_max, "thr": thr, "f1": f1, "f2": f2, "df": df, "q": q,
+        "q_result": q_result,
     }
 
 
@@ -410,7 +413,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     doc.add_heading("2. 幅频特性的测量", level=2)
     doc.add_paragraph("由数据得到 I～f 特性曲线及通频带如下：")
     if not render_custom_plot(doc, 1, width_cm=14):
-        doc.add_image(amp_plot, width_cm=14)
+        doc.add_image(amp_plot, width_cm=14, caption='图1 RLC串联电路幅频特性曲线')
 
     # 3. 相频特性的测量
     doc.add_heading("3. 相频特性的测量", level=2)
@@ -421,7 +424,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     _write_phase_table(doc, t2_f, t2_a, t2_b, t2_phi)
     doc.add_paragraph("由数据得到 φ～f 特性曲线如下：")
     if not render_custom_plot(doc, 2, width_cm=14):
-        doc.add_image(phase_plot, width_cm=14)
+        doc.add_image(phase_plot, width_cm=14, caption='图2 RLC串联电路相频特性曲线')
 
     # ---- 三、实验结果分析 ----
     doc.add_heading("三、实验结果分析", level=1)
@@ -430,9 +433,8 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     if "结果分析" in variants:
         doc.add_paragraph_rich(variants["结果分析"])
     doc.add_paragraph(
-        "RLC 串联电路在谐振频率附近呈现明显的选频特性，电流达到最大，电压与电流同相。"
-        "实验测得的谐振频率与理论值基本一致，误差在合理范围内。"
-        "幅频曲线与相频曲线的变化趋势符合理论预期，验证了 RLC 串联电路的稳态特性。"
+        "理想 RLC 串联电路在谐振时电抗相互抵消，电流达到最大，电压与电流同相。"
+        "本次幅频和相频数据用于比较实际电路与理想模型，谐振峰及半功率点的定位受到采样间隔限制。"
         "可能的误差来自于读数误差，即示波器格值读取时存在视觉偏差。"
         "以及内阻与分布参数，即信号源内阻、导线电阻、分布电容等未被完全计入，"
         "影响谐振点的准确测量。"

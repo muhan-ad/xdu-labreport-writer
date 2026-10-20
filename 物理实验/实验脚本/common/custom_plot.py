@@ -72,14 +72,7 @@ def render_custom_plot(doc, index, width_cm=14):
             print("[WARNING] 自定义图不存在：%s" % item["path"])
         else:
             try:
-                doc.add_image(item["path"], width_cm=width_cm)
+                doc.add_image(item["path"], width_cm=width_cm, caption=item["caption"] or f"图{index} 自定义图表")
             except Exception as exc:                      # 损坏图片不应中断报告
                 print("[WARNING] 自定义图插入失败：%s（%s）" % (item["path"], exc))
-            else:
-                # 图片段此刻仍是"空段"（只有图形、没有文字），docx_report 的空段去重会把
-                # 紧接着的段落并进来（图注被挤在图片右侧、或后文贴进图片段）——落一个空格
-                # 让它不再算空段，后续内容一律另起一段。
-                doc.add_run(" ")
-                if item["caption"]:
-                    doc.add_paragraph_rich(item["caption"])
     return True

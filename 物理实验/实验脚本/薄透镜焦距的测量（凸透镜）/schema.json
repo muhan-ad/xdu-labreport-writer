@@ -68,11 +68,11 @@
       ]
     },
     {
-      "name": "实际仪器参数（不使用教材或示例数值）",
+      "name": "仪器参数",
       "fields": [
         {
           "key": "instrument_delta_instrument",
-          "label": "测量仪器限差（按实际仪器填写）",
+          "label": "测量仪器限差",
           "type": "number",
           "unit": "cm",
           "required": true,

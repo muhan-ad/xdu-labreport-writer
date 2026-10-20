@@ -76,11 +76,11 @@
       ]
     },
     {
-      "name": "实际仪器参数（不使用教材或示例数值）",
+      "name": "仪器参数",
       "fields": [
         {
           "key": "instrument_g",
-          "label": "当地重力加速度（按实际仪器填写）",
+          "label": "当地重力加速度",
           "type": "number",
           "unit": "m/s²",
           "required": true,
@@ -90,7 +90,7 @@
         },
         {
           "key": "instrument_d_inst_err",
-          "label": "直径测量仪器限差（按实际仪器填写）",
+          "label": "直径测量仪器限差",
           "type": "number",
           "unit": "mm",
           "required": true,
@@ -106,8 +106,7 @@
           "required": true,
           "default": null,
           "exclusiveMinimum": 0,
-          "bindConstant": "DELTA_L_M",
-          "hint": "按实际仪器限差填写，按均匀分布换算为标准不确定度。"
+          "bindConstant": "DELTA_L_M"
         },
         {
           "key": "instrument_delta_H",
@@ -117,8 +116,7 @@
           "required": true,
           "default": null,
           "exclusiveMinimum": 0,
-          "bindConstant": "DELTA_H_M",
-          "hint": "按实际仪器限差填写，按均匀分布换算为标准不确定度。"
+          "bindConstant": "DELTA_H_M"
         },
         {
           "key": "instrument_delta_D",
@@ -128,8 +126,7 @@
           "required": true,
           "default": null,
           "exclusiveMinimum": 0,
-          "bindConstant": "DELTA_D_MM",
-          "hint": "按实际仪器限差填写，按均匀分布换算为标准不确定度。"
+          "bindConstant": "DELTA_D_MM"
         }
       ]
     }

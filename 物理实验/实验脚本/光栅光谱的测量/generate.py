@@ -455,7 +455,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
             doc.add_math(r"\alpha = \text{arcsin}\left(\frac{\sin\theta_{K}"
                          r" + \sin\theta_{-K}}{2}\right)")
             doc.add_paragraph("")
-            doc.add_run("入射角的数值必须由本次正负级测量角度计算，不能采用示例调整角。")
+            doc.add_run("正负级谱线角位置的不对称反映入射光与光栅法线的偏离，入射角可由两侧角度联立光栅方程求得。")
 
     doc.save()
     doc.close()

@@ -90,6 +90,28 @@ def main():
     with open(os.path.join(fixture_dir, 'data.json'), 'w', encoding='utf-8') as f: json.dump(fixture_data, f)
     EXP_PATH, SCRIPTS_ROOT = fixture_dir, work
 
+    # RLC uses row-major matrices rather than standalone arrays.
+    rlc = os.path.join(work, 'RLC')
+    os.makedirs(rlc)
+    rlc_source = os.path.join(ROOT, '物理实验', '实验脚本', 'RLC电路的稳态特性研究实验')
+    shutil.copy2(os.path.join(rlc_source, 'schema.json'), os.path.join(rlc, 'schema.json'))
+    with open(os.path.join(rlc_source, 'test-data.json'), encoding='utf-8') as f:
+        rlc_data = json.load(f)
+    rlc_data['t1'][-1] = [None, None, None]
+    for invalid in (False, True):
+        if invalid:
+            rlc_data['t1'][0][2] = None
+        with open(os.path.join(rlc, 'data.json'), 'w', encoding='utf-8') as f:
+            json.dump(rlc_data, f)
+        proc, payload = run_helper(PREVIEW_PY, [
+            '--exp-path', rlc, '--x-field', 't1[0]', '--y-field', 't1[2]',
+            '--chart-type', 'line', '--output', os.path.join(work, 'rlc.png'),
+            '--scripts-root', work])
+        if not payload or payload.get('ok') != (not invalid):
+            problems.append('RLC 表格列预览或缺失值校验失败: %s' % payload)
+        elif not invalid and (not os.path.exists(os.path.join(work, 'rlc.png')) or 'VR/V' not in payload['title']):
+            problems.append('RLC 图像或列标签缺失')
+
     # ── 1) 预览：真实实验数据出图 ──
     out_png = os.path.join(work, 'preview.png')
     proc, payload = run_helper(PREVIEW_PY, [

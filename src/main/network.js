@@ -43,13 +43,32 @@ async function response(raw, options = {}, redirects = 0) {
   const idleRaw = options.idleTimeoutMs === undefined ? 15000 : Number(options.idleTimeoutMs);
   const idleMs = idleRaw > 0 ? idleRaw : 0;
   const reqOptions = { ...options, agent, lookup, headers: { 'User-Agent': 'labreport-writer', ...options.headers } };
+  const emit=(phase,detail={})=>{try{options.onTelemetry?.({phase,...detail});}catch{}};
+  delete reqOptions.onTelemetry;
+  if(options.onTelemetry)reqOptions.lookup=(host,opts,callback)=>{
+    const start=Date.now();lookup(host,opts,(error,...result)=>{
+      emit('dns_complete',{durationMs:Date.now()-start,code:error?.code||'',ok:!error});callback(error,...result);
+    });
+  };
   if (idleMs > 0) reqOptions.timeout = idleMs;
   const res = await new Promise((resolve, reject) => {
     const req = https.request(url, reqOptions, resolve);
+    if(options.onTelemetry){
+      req.once('socket',socket=>{
+        emit('socket_assigned',{reused:!!req.reusedSocket});
+        if(!req.reusedSocket){
+          socket.once('connect',()=>emit('tcp_connected',{remoteAddress:socket.remoteAddress}));
+          socket.once('secureConnect',()=>emit('tls_connected',{remoteAddress:socket.remoteAddress,authorized:socket.authorized}));
+        }
+      });
+      req.once('finish',()=>emit('request_sent',{requestBytes:Buffer.byteLength(options.body||'')}));
+    }
     req.on('error', reject);
     req.on('timeout', () => req.destroy(Error('网络连接超时')));
     req.end(options.body);
   });
+  emit('response_headers',{httpStatus:res.statusCode,
+    serverRequestId:String(res.headers['x-request-id']||res.headers['request-id']||'').slice(0,128)});
   if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
     res.resume();
     if (redirects >= 4 || (options.method && options.method !== 'GET')) throw Error('不允许此重定向');
@@ -66,16 +85,29 @@ async function json(url, options = {}) {
   const timeout = ms > 0 ? AbortSignal.timeout(ms) : null;
   const signal = timeout && options.signal ? AbortSignal.any([timeout, options.signal])
     : (options.signal || timeout || undefined);
-  const res = await response(url, { ...options, signal, idleTimeoutMs: options.idleTimeoutMs });
-  const chunks = []; let size = 0;
+  const chunks = []; let size = 0, phase='await_headers',res,progressAt=Date.now();
+  const emit=(name,detail={})=>{phase=name;try{options.onTelemetry?.({phase:name,...detail});}catch{}};
   // maxBytes：默认 1MB；显式传 0 表示不限制
   const maxBytes = options.maxBytes === undefined ? 1024 * 1024 : Number(options.maxBytes);
+  try {
+  res = await response(url, { ...options, signal, idleTimeoutMs: options.idleTimeoutMs });
+  phase='response_body';
   for await (const chunk of res) {
+    if(!size)emit('first_response_byte',{responseBytes:chunk.length});
     size += chunk.length;
+    if(Date.now()-progressAt>=5000){emit('response_progress',{responseBytes:size});progressAt=Date.now();}
     if (maxBytes > 0 && size > maxBytes) { res.destroy(); throw Error('响应内容过大'); }
     chunks.push(chunk);
   }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  emit('response_complete',{responseBytes:size});
+  phase='parse_json';
+  const parsed=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  emit('json_parsed',{responseBytes:size});
+  return parsed;
+  } catch(error){
+    error.networkPhase=phase;error.responseBytes=size;error.httpStatus=res?.statusCode;
+    throw error;
+  }
 }
 async function download(url, dest, { signal, maxBytes, expectedSize, allowedHost, progress }) {
   const res = await response(url, { signal, allowedHost });

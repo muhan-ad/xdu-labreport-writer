@@ -276,7 +276,7 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_paragraph("根据上表数据作 lnQ-t 图：")
     if not render_custom_plot(doc, 1, width_cm=14):
-        doc.add_image(plot_path, width_cm=14)
+        doc.add_image(plot_path, width_cm=14, caption='图1 放电电荷对数与时间的关系曲线')
 
     doc.add_paragraph("取首末两点计算直线斜率：")
     doc.add_math(
@@ -349,7 +349,7 @@ def _generate_docx(data: dict, output_path: str):
 
             doc.add_paragraph("最长放电时间应保证剩余电荷仍在仪器可可靠测量的范围内。设有效测量下限为 Q_min，由 Q(t)≥Q_min 得：")
             doc.add_math(r"t_{\max}\le RC_N\ln\left(\frac{Q_0}{Q_{\min}}\right)")
-            doc.add_paragraph(f"时间上限取决于标准电容、待测电阻、初始电荷、仪器分辨力与噪声以及允许误差，不能以 lnQ=0 确定通用上限。本次最大记录时间为{t_values[-1]:g} s，对应电荷{q_values[-1]:g} μC；缺少仪器有效测量下限时不虚构数值上限。")
+            doc.add_paragraph(f"时间上限取决于标准电容、待测电阻、初始电荷、仪器分辨力与噪声以及允许误差，不能以 lnQ=0 确定通用上限。本次最大记录时间为{t_values[-1]:g} s，对应电荷{q_values[-1]:g} μC；本次未记录仪器有效测量下限，因而尚不能确定数值形式的最长测量时间。")
 
     doc.save()
     doc.close()

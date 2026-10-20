@@ -7,17 +7,19 @@
   <title>实验搭子</title>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="ocr.css">
+<link rel="stylesheet" href="shared/unified-select.css">
+<link rel="stylesheet" href="api-tutorial.css">
+<link rel="stylesheet" href="shared/input-fields.css">
 </head>
 <body>
   <div class="app">
 
     <!-- 左侧边栏 -->
-    <aside class="sidebar">
+    <aside class="sidebar" id="experimentSidebar" aria-label="实验导航">
       <div class="sidebar-brand">
         <div class="brand-mark">物</div>
         <div class="brand-text">
-          <div class="brand-title">实验报告</div>
-          <div class="brand-sub">大学物理 · 自动编写</div>
+          <div class="brand-title">实验搭子</div>
         </div>
       </div>
 
@@ -82,10 +84,10 @@
 
       <!-- 自定义标题栏 -->
       <header class="titlebar">
+        <button type="button" class="sidebar-toggle" id="btnToggleSidebar" aria-controls="experimentSidebar" aria-expanded="true" aria-label="收起实验导航" title="收起实验导航">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/><path class="sidebar-toggle-chevron" d="m16 9-3 3 3 3"/></svg>
+        </button>
         <div class="titlebar-drag">
-          <div class="titlebar-logo">物</div>
-          <span class="titlebar-name">实验搭子</span>
-          <span class="notice-reminder" title="请先阅读设置中的必读公告">⚠ 务必阅读设置中的「必读公告」再使用</span>
         </div>
         <div class="titlebar-actions">
           <div class="search-box">
@@ -111,11 +113,11 @@
       <section class="school-portal-entry" aria-label="学校实验系统入口">
         <div class="school-portal-intro">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 10l9-6 9 6M5 10v10h14V10M9 20v-6h6v6M2 20h20"/><path d="M9 10h6"/></svg>
-          <div><strong>学校实验系统</strong><span>西安电子科技大学 · 在应用内打开，直接登录学校网站</span></div>
+          <div><strong>学校实验系统</strong></div>
         </div>
         <div class="school-portal-actions">
-          <button class="btn btn-outline btn-sm" id="btnExperimentPreparation" type="button" title="在默认浏览器中打开实验预习及要求">实验预习及要求 <span aria-hidden="true">↗</span></button>
-          <button class="btn btn-primary btn-sm" id="btnOpenSchoolPortal" type="button">打开学校实验系统 <span aria-hidden="true">↗</span></button>
+          <button class="btn btn-outline btn-sm" id="btnExperimentPreparation" type="button" title="在默认浏览器中打开实验预习">实验预习 <span aria-hidden="true">↗</span></button>
+          <button class="btn btn-primary btn-sm" id="btnOpenCourseSelection" type="button">一站通</button>
         </div>
       </section>
 
@@ -187,6 +189,9 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
                 打开数据模板
               </button>
+              <button class="btn btn-outline" id="btnExperimentPreparationDetail" type="button" title="在默认浏览器中打开当前实验的预习页面">
+                实验预习 <span aria-hidden="true">↗</span>
+              </button>
               <button class="btn btn-primary" id="btnGenerate">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
                 生成报告
@@ -201,7 +206,7 @@
               </button>
               <button class="btn btn-outline" id="btnPickReportDir2">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                选择保存路径
+                保存路径
               </button>
               <button class="btn btn-outline" id="btnContribute">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17l6-6 4 4 8-8"/><polyline points="14 7 21 7 21 14"/><path d="M21 3H3v18"/></svg>
@@ -234,7 +239,7 @@
                       识别图片
                     </button>
                     <button class="btn btn-sm btn-outline" id="btnFillTestData">填入测试数据</button>
-                    <button class="btn btn-sm btn-outline" id="btnFillDefaultData">初始化空白表单</button>
+                    <button class="btn btn-sm btn-outline" id="btnFillDefaultData">清除数据</button>
                     <button class="btn btn-sm btn-primary" id="btnSaveData" disabled>保存修改</button>
                   </div>
                 </div>
@@ -259,11 +264,6 @@
                   <!-- 可编辑表格 -->
                   <div class="data-table-wrap" id="dataTableWrap">
                     <div class="data-table-empty">选择实验后加载数据</div>
-                  </div>
-
-                  <div class="data-notice">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-                    <span>直接在表格中编辑测量数据，点击"保存修改"后再生成报告。目前表格数据仅为测试使用，请勿直接使用。</span>
                   </div>
                 </div>
               </div>
@@ -296,7 +296,6 @@
                   </div>
                 </div>
                 <div class="card-body">
-                  <div class="form-hint" id="chartModeHint">未选择模式 —— 点「预设」按字段快速出图，或点「自定义」用一句话让 AI 画图。</div>
                   <div class="chart-preview-wrap" id="chartPreviewWrap">
                     <div class="chart-preview-empty" id="chartPreviewEmpty">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:48px;height:48px;margin-bottom:12px;opacity:.4;"><path d="M3 17l6-6 4 4 8-8"/><polyline points="14 7 21 7 21 14"/></svg>
@@ -318,7 +317,6 @@
                 <div class="card-header"><h4>图表插入</h4></div>
                 <div class="card-body">
                   <label class="checkbox-label"><input type="checkbox" id="chkInsertChart" /> 生成报告后插入当前模式的图表（<span id="chartInsertModeHint">未选择</span>）</label>
-                  <div class="form-hint">插入的是当前模式（预设 / 自定义）生成的那张图，位置由该模式里的「插入报告位置」决定；重新生成报告后图会丢，需要再勾选一次插入。</div>
                 </div>
               </div>
             </div>
@@ -335,7 +333,6 @@
                 </div>
                 <div class="card-body">
                   <div id="variantsList"></div>
-                  <div class="variants-tip">每个章节选择一个变体组合成报告；选择"随机"则由应用随机挑选。可用"AI 调整"生成新的变体描述。</div>
                 </div>
               </div>
               <div class="card">
@@ -405,12 +402,10 @@
                     <div class="ai-option-group">
                       <label>润色对象（可多选）</label>
                       <div class="ai-check-group" id="aiScopeGroup"></div>
-                      <span class="ai-option-note">标注"可导入"的章节以报告源文为原文（公式保留 LaTeX），润色后可导入并重新生成报告</span>
                     </div>
                     <div class="ai-option-group">
                       <label>润色技能（自动应用已启用的技能）</label>
                       <div class="ai-check-group" id="aiSkillGroup"></div>
-                      <span class="ai-option-note">以上为本次将使用的技能；启用/停用在「设置 → AI 服务 → 技能」中管理</span>
                     </div>
                     <div class="ai-option-group">
                       <label class="checkbox-label"><input type="checkbox" id="chkKbOnly" checked /> 限定知识库：只依据本实验教材原理润色</label>
@@ -418,7 +413,6 @@
                     <div class="ai-option-group" style="flex-basis:100%">
                       <label for="aiUserPrompt">本实验的附加要求（提示词，可选）</label>
                       <textarea id="aiUserPrompt" rows="2" placeholder="例如：多用第一人称叙述；结论补充误差来源；不要出现“我们认为”这类表述……"></textarea>
-                      <span class="ai-option-note">只对当前实验生效，失焦即保存；与技能同属「优先遵循」，但不得违反格式与知识库硬性约束（上限 2000 字）</span>
                     </div>
                   </div>
                   <div class="ai-actions">
@@ -501,9 +495,14 @@
         <button class="modal-close" id="btnCloseChartPreset">×</button>
       </div>
       <div class="modal-body">
-        <div class="form-hint">按字段快速出图：选好 X/Y 字段与图表类型，点保存后在图表页点「生成图表」预览。</div>
+        <div class="chart-field-group">
+          <label for="chartPresetChoice">图表方案</label>
+          <select id="chartPresetChoice" class="chart-select"></select>
+        </div>
+        <p class="form-hint" id="chartOfficialGuide"></p>
+        <div id="chartOfficialSummary" class="form-hint" style="white-space:pre-line;line-height:1.9"></div>
         <div class="chart-controls">
-          <div class="chart-control-row">
+          <div class="chart-control-row chart-manual-row">
             <div class="chart-field-group">
               <label>X 轴字段</label>
               <select id="chartXField" class="chart-select"></select>
@@ -522,7 +521,7 @@
               </select>
             </div>
           </div>
-          <div class="chart-control-row">
+          <div class="chart-control-row chart-manual-row">
             <div class="chart-field-group">
               <label>标题</label>
               <input type="text" id="chartTitle" class="chart-input" placeholder="自动生成" />
@@ -638,6 +637,13 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="ocrResumeModal">
+    <div class="modal modal-small" role="dialog" aria-modal="true" aria-labelledby="ocrResumeTitle">
+      <div class="modal-header"><h3 id="ocrResumeTitle">继续上次识图？</h3><button class="modal-close" id="btnCloseOcrResume" aria-label="关闭">×</button></div>
+      <div class="modal-body"><p>当前实验已有成功识别的结果，可继续核对，也可以选择新图片。</p><p id="ocrResumeTime"></p></div>
+      <div class="modal-footer"><button class="btn btn-secondary" id="btnOcrNew">新识图</button><button class="btn btn-primary" id="btnOcrResume">上次识图结果</button></div>
+    </div>
+  </div>
   <!-- 数据表识别弹窗 -->
   <div class="modal-overlay" id="recognizeModal">
     <div class="modal modal-xwide">
@@ -675,11 +681,6 @@
 
         <!-- 阶段三：核对 -->
         <div id="recogResult" style="display:none;">
-          <div class="recog-banner" id="recogBanner">
-            <strong>识图准确率依赖训练数据：</strong>目前缺乏数据来拟合识图效果，希望各位顺手在
-            「数据贡献 → 识图数据」中贡献自己的识图数据 —— 核对导入后会自动生成
-            「原图 + AI 识别 + 人工校对」三件套，打码后即可提交，用于改进大家的识图效果。
-          </div>
           <div class="recog-toolbar">
             <div class="recog-summary" id="recogSummary"></div>
             <div class="recog-legend">
@@ -804,6 +805,7 @@
               <div class="ai-config-actions">
                 <button type="button" class="btn btn-outline btn-block" id="btnOpenApiConfig">API 配置</button>
                 <button type="button" class="btn btn-outline btn-block" id="btnOpenVisionConfig">识图模型配置</button>
+                <button type="button" class="btn btn-outline btn-block" id="btnApiTutorial">配置教程</button>
               </div>
               <div class="form-row ai-config-checks">
                 <label class="checkbox-label"><input type="checkbox" id="chkAiPolish" /> 生成后自动 AI 润色</label>
@@ -919,67 +921,31 @@
           </div>
           <!-- 使用说明页 -->
           <div class="settings-pane" id="paneHelp">
-            <div class="settings-section help-section">
-              <h4>快速上手</h4>
-              <ul class="help-list">
-                <li>左下角配置学生信息；</li>
-                <li>左侧选择实验，点击「清除数据」即可填写自己的数据，填写后「保存修改」；</li>
-                <li>在变体组合为各章节选择措辞或保持随机，目前 27 个实验目录（含薄透镜焦距的测量凸透镜 / 凹透镜两个版本）均支持变体；</li>
-                <li>点「生成报告」时会先自动保存当前修改，完成后可在报告预览查看，或用 Word 打开；</li>
-                <li><b>注意：</b>安装包与仓库自带的均为示例数据，生成前必须替换为本人真实测量值，严禁直接提交示例数据产出。</li>
-              </ul>
-            </div>
-            <div class="settings-section help-section">
-              <h4>AI 个性化润色</h4>
-              <ul class="help-list">
-                <li>先在「AI 服务」页进行相关配置；</li>
-                <li>润色对象说明：标注「可导入」的章节可进行 AI 润色后自动导入；「结果分析 / 全文」仅支持 AI 润色后自行复制结果；</li>
-                <li>限定知识库（默认开启）：润色只依据本实验教材原理，禁止引入知识库外的公式与结论；</li>
-                <li>润色技能可多选：技能是导入的外部 Skill 文件，在「AI 润色技能」区进行配置（应用内置的 Skill 已经满足要求，如果不太了解 Skill 可直接无视）；</li>
-                <li><b>注意：</b>关于 AI 润色的配置问题：请查看对策府库关于本应用的详细介绍；</li>
-              </ul>
-            </div>
-            <div class="settings-section help-section">
-              <h4>报告管理</h4>
-              <ul class="help-list">
-                <li>集中列出全部已生成报告，支持打开、文件夹定位、单个删除与「删除全部报告」；</li>
-                <li>删除仅移除报告文件，不影响测量数据、变体与已导入的润色文本。</li>
-              </ul>
-            </div>
-            <div class="settings-section help-section">
-              <h4>常见问题</h4>
-              <ul class="help-list">
-                <li>环境要求：Windows 10/11 即可，<b>生成报告不再需要安装 Microsoft Word</b>；生成的 .docx 可用 Word 或 WPS 打开查看；</li>
-                <li>生成失败：查看生成日志中的缺失字段提示，多为必填数据未填全；</li>
-                <li>取消生成：结束当前报告生成任务（报告由本机 Python 直接生成，不启动任何外部程序）；</li>
-                <li>隐私：学生信息、API Key、技能文件、润色导入文本均存储在本机应用数据目录，不进安装包升级路径之外的任何位置。</li>
-              </ul>
-            </div>
-            <div class="settings-section help-section">
-              <h4>开发者声明</h4>
-              <ul class="help-list">
-                <li>本应用的实验模板、原理数据和自动化脚本来源于对策府库，在此感谢对策府库各位小伙伴的开源精神！</li>
-                <li>本应用仅提供实验模板，不提供任何实验数据的生成，目前模板的实验数据由 AI 合理化生成，请勿直接使用！</li>
-                <li>对于本应用产生的实验报告，均需经用户亲自审查、校验、修改和完善，若直接提交，概不负责！</li>
-                <li>本应用的开源程序已经发布 GitHub，若有人想在此基础上进行功能的完善，可在对策府库官方群聊联系对策府库的小伙伴发起共创；如需联系开发者，请在「问题反馈」中说明情况并提供联系方式。</li>
-              </ul>
-            </div>
+<div class="settings-section help-section"><h4>快速上手</h4><ul class="help-list"><li>实验报告：选择实验，填写数据，生成报告</li>
+<li>一站通：物理实验各个网站的集成系统，在原版基础上增加了许多方便的功能</li>
+<li>实验预习：资源来源为实验室实验台上的二维码</li></ul></div>
+<div class="settings-section help-section"><h4>AI 个性化润色</h4><ul class="help-list"><li>先在「AI 服务」页进行相关API配置，解锁ai润色、自定义思考题、自定义绘图、识图填数据；</li>
+<li>润色对象说明：标注「可导入」的章节可进行 AI 润色后自动导入；「结果分析 / 全文」仅支持 AI 润色后自行复制结果；</li>
+<li>限定知识库（默认开启）：润色只依据本实验教材原理，禁止引入知识库外的公式与结论；</li></ul></div>
+<div class="settings-section help-section"><h4>常见问题</h4><ol class="help-list"><li><b>报错信息：未填写／未填写完整</b><br>原因及处理方式：必填数据缺失，补齐对应单元格。</li>
+<li><b>报错信息：数组长度错误</b><br>原因及处理方式：数据个数与模板不一致，核对表格；仍无法恢复时，使用“清除数据”重新录入。</li>
+<li><b>报错信息：矩阵维度错误</b><br>原因及处理方式：数据行数或列数不符合要求，按模板调整。</li>
+<li><b>报错信息：每行测量值须与偏转位置逐点对应</b><br>原因及处理方式：偏转位置数量与各组测量值数量不一致，补齐或删除多余测量点。</li>
+<li><b>报错信息：必须是有限数值</b><br>原因及处理方式：数字栏存在文字或无效数值，检查并填写正确数字。</li>
+<li><b>报错信息：不能小于／不能大于规定值</b><br>原因及处理方式：数据超出允许范围，检查数值、单位及小数点。</li>
+<li><b>报错信息：文件损坏，请从备份恢复：data.json</b><br>原因及处理方式：数据文件无法解析，可使用“清除数据”，程序会先备份旧文件，再重建空白表单。</li>
+<li><b>报错信息：内置实验资源缺失</b><br>原因及处理方式：安装资源缺失或被移动，运行“资源完整性检查”，根据结果修复或重新安装。</li>
+<li><b>报错信息：未配置 API Key</b><br>原因及处理方式：尚未配置 AI 服务密钥，前往“设置 → AI 服务”填写。</li>
+<li><b>报错信息：网络连接超时</b><br>原因及处理方式：网络连接异常或服务端响应过慢，检查网络和服务地址后重试。</li>
+<li><b>报错信息：模型返回无法解析</b><br>原因及处理方式：识图模型未返回有效数据格式，重试，或检查所选模型是否支持图片输入。</li>
+<li><b>报错信息：未生成报告文件，请查看日志中的缺失提示</b><br>原因及处理方式：生成过程未产出报告，根据生成日志中的具体提示补齐数据或处理错误。</li></ol></div>
+<div class="settings-section help-section"><h4>开发者声明</h4><ul class="help-list"><li>本应用的实验模板、原理数据和自动化脚本来源于对策府库，在此感谢对策府库各位小伙伴的开源精神！</li>
+<li>本应用仅提供实验模板，不提供任何实验数据的生成，目前模板的实验数据由 AI 合理化生成，请勿直接使用！</li>
+<li>对于本应用产生的实验报告，均需经用户亲自审查、校验、修改和完善，若直接提交，概不负责！</li>
+<li>本应用的开源程序已经发布 GitHub，若有人想在此基础上进行功能的完善，可在对策府库官方群聊联系对策府库的小伙伴发起共创；如需联系开发者，请在「问题反馈」中说明情况并提供联系方式。</li></ul></div>
           </div>
           <!-- 必读公告页 -->
-          <div class="settings-pane active" id="paneNotice">
-            <div class="settings-section notice-section">
-              <h4 class="notice-title">⚠ 必读公告</h4>
-              <ol class="notice-list">
-                <li>本应用目前仍处于测试阶段。生成实验报告后，请务必根据自己的实验数据和老师的具体要求认真检查，尤其注意数据格式、有效数字、单位和报告排版。</li>
-                <li>报告由本机直接生成，公式为 Word 原生可编辑公式，<b>无需安装 Microsoft Word</b>。若在某些第三方阅读器里公式显示异常，请用 Word 或 WPS 打开查看。</li>
-                <li>部分实验在不同学期可能采用不同内容。例如，声速测量可能分为空气中测量和水中测量，薄透镜焦距测量可能使用凸透镜或凹透镜。如果应用中的模板与实际实验不一致，请及时提交问题反馈，帮助我们针对性调整。</li>
-                <li>如果你有功能建议，或者在使用过程中遇到问题，欢迎通过「问题反馈」告诉我们。</li>
-                <li>应用功能或整体架构发生较大调整时，我们会通过「版本更新」发布；实验模板、实验内容等资料发生变化时，则会通过「实验数据更新」推送。建议每次使用前检查应用版本和实验数据是否为最新。</li>
-                <li>如果你发现某些实验有错误，比如实验表格的参数与实验不匹配，请通过「问题反馈」告诉我们。</li>
-                <li>某些实验报告要求图片需标注学生信息，如果有此类要求，直接在 Word 编辑图片添加即可。</li>
-              </ol>
-            </div>
-          </div>
+          <div class="settings-pane active" id="paneNotice"><div class="settings-section notice-section"><h4 class="notice-title">⚠ 必读公告</h4><ol class="notice-list"><li>生成报告后一定要自己检查</li><li>部分实验在不同学期可能采用不同内容。如果生成的报告与实验内容不一致，请联系开发者</li><li>建议每次使用前检查应用版本和实验数据是否为最新</li><li>某些实验报告要求图片需标注学生信息，如果有此类要求，直接在 Word 编辑图片添加即可。</li></ol></div></div>
           <!-- 感谢声明页（名单随实验数据更新同步） -->
           <div class="settings-pane" id="paneThanks">
             <div class="settings-section thanks-section">
@@ -1017,7 +983,7 @@
             <div class="settings-section update-card">
               <div class="update-card-heading">
                 <div><h4>实验数据更新</h4><p>实验模板、原理资料与实验脚本</p></div>
-                <div class="update-version"><span class="update-version-label">当前数据版本</span><span class="update-version-value" id="dataVersionText">1.0.0</span></div>
+                <div class="update-version"><span class="update-version-label">当前数据版本</span><span class="update-version-value" id="dataVersionText">1.2.0</span></div>
               </div>
               <div class="update-card-footer">
                 <p class="update-check-status" id="dataUpdateStatus" role="status">等待自动检查…</p>
@@ -1025,10 +991,16 @@
               </div>
             </div>
             <div class="settings-section update-card update-repair-card">
+              <h4>资源完整性检查</h4>
+              <p class="form-hint">核对内置实验、Python 运行环境、页面及音效等安装资源。</p>
+              <div class="update-card-footer"><p class="update-check-status" id="resourceCheckStatus" role="status">尚未检查</p><button class="btn btn-sm btn-primary" id="btnCheckResources" type="button">检查资源完整性</button></div>
+              <pre id="resourceCheckDetails" class="resource-check-details" hidden></pre>
+            </div>
+            <div class="settings-section update-card update-repair-card">
               <h4>实验资源维护</h4>
               <p class="form-hint" id="resourceSyncStatus" role="status"></p>
               <details class="update-repair-help"><summary>什么是内置实验修复？</summary><p>重新应用当前安装包内的官方脚本和模板，不联网下载。测量数据、报告与照片保留；旧资源先备份，自行修改的脚本可能被替换。</p></details>
-              <button class="btn btn-sm btn-outline" id="btnRestoreBuiltinResources" type="button" hidden>使用内置实验修复</button>
+              <button class="btn btn-sm btn-primary" id="btnRestoreBuiltinResources" type="button">使用内置实验修复</button>
             </div>
           </div>
           <!-- 意见反馈页 -->
@@ -1056,8 +1028,10 @@
               </div>
               <div class="form-row">
                 <div class="skill-actions">
+                  <button class="btn btn-sm btn-outline" id="btnFillAllTestData" type="button" hidden>全部填入测试数据</button>
                   <button class="btn btn-sm btn-outline" id="btnExportDiagnostics" type="button">导出诊断日志</button>
                 </div>
+                <div class="form-hint" id="allTestDataStatus" role="status"></div>
                 <div class="form-hint" id="diagnosticsStatus"></div>
               </div>
             </div>
@@ -1101,7 +1075,6 @@
         <div class="contribute-tabs">
           <button class="contribute-tab active" id="btnCVTabVariant" type="button">贡献变体</button>
           <button class="contribute-tab" id="btnCVTabReport" type="button">贡献实验报告</button>
-          <button class="contribute-tab" id="btnCVTabVision" type="button">识图数据</button>
         </div>
         <div id="cvPaneVariant" class="contribute-pane">
           <div id="cvVariantList"></div>
@@ -1144,13 +1117,6 @@
             <label>备注（可选）</label>
             <textarea id="cvReportNote" rows="2"></textarea>
           </div>
-        </div>
-        <div id="cvPaneVision" class="contribute-pane" style="display:none">
-          <div class="cv-vision-tip">
-            识图训练样本三件套（数据图片 + AI 识别 + 人工校对）来自「AI 识图 → 人工核对 → 导入数据」。
-            此处只展示<strong>当前实验最近一次</strong>的样本；提交前请完成隐私打码并检查 JSON 中的姓名 / 学号等信息。
-          </div>
-          <div id="cvVisionList"></div>
         </div>
         <div class="form-row">
           <label class="checkbox-label"><input type="checkbox" id="chkContributeAgree" /> 我同意：上述内容仅用于开发者审核与模板优化，不会被公开发布</label>
@@ -1273,8 +1239,14 @@
   <script src="shared/data-validation.js"></script>
   <script src="shared/report-integrity.js"></script>
   <script src="shared/ocr-number.js"></script>
+  <script src="sidebar.js"></script>
+  <script src="shared/experiment-chart-presets.js"></script>
+  <script src="shared/experiment-preparation.js"></script>
   <script src="renderer.js"></script>
+  <script src="science-exponents.js"></script>
+  <script src="api-tutorial.js"></script>
   <script src="ocr.js"></script>
   <script src="danger-effects.js"></script>
+<script src="shared/unified-select.js"></script>
 </body>
 </html>

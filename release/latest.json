@@ -1,15 +1,10 @@
 {
-  "version": "2.1.4",
-  "notes": "1. 新增润色历史管理、API连接测试与模型获取功能。\n2. 优化实验数据输入、实验日期、测试数据及报告图片处理。\n3. 修正实验计算、参数校验与公式展示；更新知识库及报告写作约束。\n4. 学校系统支持多站点选择；虚拟仿真与试题库使用默认浏览器打开。\n5. 接入新的实验数据发布公钥；实验数据更新至1.1.1，需要先升级应用。",
+  "version": "2.2.0",
+  "notes": "1. 一站通接入实验与教师评价、真实余量、场次筛选、冲突确认及72小时退课校验。\n2. 优化登录设置、预加载、页面切换和报告提交状态显示。\n3. 新增资源完整性检查、可重复资源修复，完善异常数据恢复及清除流程。\n4. 新增DeepSeek API配置教程，统一绿色输入框样式，更新使用说明及公告。\n5. 修复实验参数、计算校验、下标与报告说明，实验数据更新至1.2.0；上下学期版本共用对应预习资料。",
   "downloads": [
     {
-      "name": "GitHub",
-      "url": "https://github.com/muhan-ad/xdu-labreport-writer"
-    },
-    {
-      "name": "百度网盘",
-      "url": "https://pan.baidu.com/s/12urgZP7Ro6gMntpd_3WI1A?pwd=k65m",
-      "hint": "提取码：k65m"
+      "name": "GitHub Release",
+      "url": "https://github.com/muhan-ad/xdu-labreport-writer/releases/tag/v2.2.0"
     }
   ]
 }

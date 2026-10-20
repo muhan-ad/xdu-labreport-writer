@@ -1,0 +1,17 @@
+/* Application-owned text entry fields. Reserve the border so focusing never resizes a field. */
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]),textarea){
+ box-sizing:border-box;
+ border:2px solid var(--border,#dce4d8)!important;
+ border-radius:var(--radius,8px);
+ outline:none!important;
+ box-shadow:none!important;
+ transition:border-color .16s ease;
+}
+:where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="image"]),textarea):is(:focus,:focus-visible):not(:disabled){
+ border-color:#15803d!important;
+ outline:none!important;
+ outline-offset:0!important;
+ box-shadow:none!important;
+}
+.search-box:has(input){border-color:transparent!important;box-shadow:none!important}
+.search-box:focus-within{outline:none!important;box-shadow:none!important}

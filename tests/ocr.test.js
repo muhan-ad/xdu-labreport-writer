@@ -33,7 +33,7 @@ test('OCR UI and all experiment photo hooks are present', () => {
     .filter(item => item.isDirectory() && item.name !== 'common')
     .map(item => path.join(base, item.name, 'generate.py'))
     .filter(file => fs.existsSync(file));
-  assert.equal(scripts.length, 27);
+  assert.equal(scripts.length, 28);
   for (const file of scripts) assert.match(fs.readFileSync(file, 'utf8'), /doc\.add_data_photo\(/, path.basename(path.dirname(file)));
 });
 
@@ -201,7 +201,7 @@ test('review page reading skips the pick checkbox and closing clears the review 
   const rendererUi = fs.readFileSync(path.join(root, 'src', 'renderer.js'), 'utf8');
   assert.match(ocrUi, /wrap\.querySelectorAll\('\.field-input\[data-key\]'\)/,
     '核对页取值只收数据格（排除勾选框）');
-  assert.match(ocrUi, /function closeRecognizeModal\(\)\s*\{\s*cancelRecognition\(\);\s*\$\('recogFields'\)\.innerHTML = '';\s*closeModal\('recognizeModal'\);/,
+  assert.match(ocrUi, /function closeRecognizeModal\(\)\s*\{\s*rememberOcrResult\(true\);\s*cancelRecognition\(\);\s*\$\('recogFields'\)\.innerHTML = '';\s*closeModal\('recognizeModal'\);/,
     '统一关闭出口：取消识别 + 清空核对页');
   assert.match(ocrUi, /const closeAndCancel = \(\) => closeRecognizeModal\(\)/, '× / 取消按钮走统一出口');
   assert.match(ocrUi, /closeRecognizeModal\(\);\s*if \(sampleSaved\)/, '导入完成后也走统一出口');

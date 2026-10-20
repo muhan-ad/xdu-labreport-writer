@@ -1,0 +1,20 @@
+[
+  {"text":"$K=-1/(RC_N)$；$s^{-1}$","status":"allow"},
+  {"text":"$Q(0)/Q_0=1$；$s^{-10}$","status":"allow"},
+  {"text":"仪器分辨力为0.01 mV","status":"warn"},
+  {"text":"参考值1500 m/s","status":"warn"},
+  {"text":"误差4.8%","status":"warn"},
+  {"text":"R=94.02 MΩ","status":"warn"},
+  {"text":"R=94020 kΩ","status":"warn"},
+  {"text":"R_0=150250 kΩ","status":"warn"},
+  {"text":"例如R=10.48 MΩ","status":"warn"},
+  {"text":"R=10.48 MΩ","status":"block"},
+  {"text":"R_0=100 MΩ","status":"block"},
+  {"text":"测得电容为0.990 μF","status":"block"},
+  {"text":"focal_length=99.1","status":"block"},
+  {"text":"focal_length=15.13","status":"allow"},
+  {"text":"结果%%DATA:r_mohm:%.2f%% MΩ","status":"allow"},
+  {"text":"%%DATA:missing:%.2f%%","status":"block"},
+  {"text":"%%DATA:r_mohm:%q%%","status":"block"},
+  {"text":"%%DATA:r_mohm:","status":"block"}
+]

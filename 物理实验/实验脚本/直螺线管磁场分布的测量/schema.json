@@ -2,7 +2,7 @@
   "实验": "直螺线管磁场分布的测量",
   "groups": [
     {
-      "name": "已知参数（可按实际修改）",
+      "name": "已知参数",
       "fields": [
         {
           "key": "M_mH",
@@ -133,11 +133,11 @@
       ]
     },
     {
-      "name": "实际仪器参数（不使用教材或示例数值）",
+      "name": "仪器参数",
       "fields": [
         {
           "key": "instrument_delta_ammeter_a",
-          "label": "电流表仪器限差（按实际仪器填写）",
+          "label": "电流表仪器限差",
           "type": "number",
           "unit": "A",
           "required": true,
@@ -147,7 +147,7 @@
         },
         {
           "key": "instrument_delta_scale_mm",
-          "label": "标尺仪器限差（按实际仪器填写）",
+          "label": "标尺仪器限差",
           "type": "number",
           "unit": "mm",
           "required": true,

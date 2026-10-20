@@ -376,7 +376,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     ])
     doc.add_paragraph("由数据得到线性电阻的伏安特性曲线如下：")
     if not render_custom_plot(doc, 1, width_cm=14):
-        doc.add_image(plot_t1, width_cm=14)
+        doc.add_image(plot_t1, width_cm=14, caption='图1 线性电阻伏安特性曲线')
 
     # 线性电阻的阻值（含不确定度）：R = 1/k，u(R)/R = u(k)/k —— 拟合值在计算段已算好
     doc.add_paragraph("以 U 为横轴、I 为纵轴作最小二乘拟合 ")
@@ -437,7 +437,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     ])
     doc.add_paragraph("由数据得到钨丝灯泡的伏安特性曲线如下：")
     if not render_custom_plot(doc, 2, width_cm=14):
-        doc.add_image(plot_t2, width_cm=14)
+        doc.add_image(plot_t2, width_cm=14, caption='图2 灯泡伏安特性曲线')
 
     doc.add_paragraph("")
     doc.add_run("求 n、K：由 ")
@@ -472,7 +472,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     ])
     doc.add_paragraph("由数据得到二极管的正向伏安特性曲线如下：")
     if not render_custom_plot(doc, 3, width_cm=14):
-        doc.add_image(plot_t3, width_cm=14)
+        doc.add_image(plot_t3, width_cm=14, caption='图3 二极管正向伏安特性曲线')
 
     # 变体组合：误差分析 / 结论
     if "误差分析" in variants:

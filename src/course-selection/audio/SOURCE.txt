@@ -1,0 +1,5 @@
+Mechvibes / Hai Nguyen
+CherryMX Brown - PBT keycaps
+https://github.com/hainguyents13/mechvibes
+Commit: 326252a13e7bef4f1c35d08ef0189b5af6f8ba02
+License: MIT; see LICENSE.txt

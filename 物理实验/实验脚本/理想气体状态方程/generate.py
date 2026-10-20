@@ -287,7 +287,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
     doc.add_paragraph("以 1/p 为横轴、可视体积 V′ 为纵轴作图，取首末两点作直线（两点法），"
                       "得同一温度下测量气体压强与体积的关系图：")
     if not render_custom_plot(doc, 1, width_cm=14):
-        doc.add_image(boyle_plot, width_cm=14)
+        doc.add_image(boyle_plot, width_cm=14, caption='图1 等温过程压强与体积倒数的关系')
     doc.add_paragraph("由图可验证波义耳—马略特定律：")
     doc.add_math(r"k = nRT,\ T = " + f"{T_iso:.2f}"
                  + r"\ \mathrm{K},\ R = 8.31\ \mathrm{J/(mol·K)}")
@@ -323,7 +323,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
                          + "，图中同时绘出降温过程的测量数据以作对比（不参与计算）：")
     doc.add_paragraph(charles_intro)
     if not render_custom_plot(doc, 2, width_cm=14):
-        doc.add_image(charles_plot, width_cm=14)
+        doc.add_image(charles_plot, width_cm=14, caption='图2 等容过程压强与温度的关系')
     doc.add_paragraph("由查理定律，p–T 直线的斜率为：")
     doc.add_math(r"k = \frac{nR}{V' + V_{0}}")
     doc.add_paragraph("")

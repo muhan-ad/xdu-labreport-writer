@@ -25,7 +25,7 @@ T3_D, T3_R1000, T3_R900, T3_R800 = 16, 17, 18, 19   # 表3 磁偏转 I_m/mA
 
 
 def _row_values(data, row_no):
-    """从 data.json（load_data 得到的 dict）取某数据表行的 9 个测量值。
+    """从 data.json 读取该行实际填写的全部测量点，点数由用户数据决定。
 
     三张表各含：给定偏转量 D（array）与 3 行测量值（matrix，第 0/1/2 行对应
     U2=1000/900/800V）。键名与 schema.json、data.json 保持一致。
@@ -78,6 +78,13 @@ def _plot_fit_pair(x1000, reg1000, x800, reg800, d1000, d800,
 
 def _generate_docx(data: dict, output_path: str):
     """读取 → 计算 → 输出 docx"""
+    from common.data_validation import validate
+    import json
+    with open(os.path.join(SCRIPT_DIR, "schema.json"), encoding="utf-8") as f:
+        checked = validate(json.load(f), data)
+    if not checked["ok"]:
+        raise ValueError("实验数据无效：" + "；".join(e["label"] + "：" + e.get("reason", "未填写")
+                         for e in checked["missing"] + checked["invalid"]))
     # ---- 1. 读取 + 空值校验 ----
     rows = {}
     layout = (
@@ -177,10 +184,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_run(" 曲线，对数据点作最小二乘线性拟合，直线斜率即为 X 轴的电偏转灵敏度：")
     doc.add_math(r"\varepsilon_{x} = \frac{\Delta D}{\Delta U_{dx}}")
     if not render_custom_plot(doc, 1, width_cm=12):
-        doc.add_image(fig1_path, width_cm=12)
-        doc.add_paragraph("图1 ")
-        doc.add_inline_math(r"D - U_{dx}")
-        doc.add_run(" 关系曲线")
+        doc.add_image(fig1_path, width_cm=12, caption='图1 $D-U_{dx}$ 关系曲线')
     doc.add_paragraph("拟合得 ")
     doc.add_inline_math(r"U_{2} = 1000\,\mathrm{V}")
     doc.add_run(" 时 ")
@@ -205,10 +209,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_run(" 曲线并作最小二乘线性拟合，直线斜率即为 Y 轴的电偏转灵敏度：")
     doc.add_math(r"\varepsilon_{y} = \frac{\Delta D}{\Delta U_{dy}}")
     if not render_custom_plot(doc, 2, width_cm=12):
-        doc.add_image(fig2_path, width_cm=12)
-        doc.add_paragraph("图2 ")
-        doc.add_inline_math(r"D - U_{dy}")
-        doc.add_run(" 关系曲线")
+        doc.add_image(fig2_path, width_cm=12, caption='图2 $D-U_{dy}$ 关系曲线')
     doc.add_paragraph("拟合得 ")
     doc.add_inline_math(r"U_{2} = 1000\,\mathrm{V}")
     doc.add_run(" 时 ")
@@ -235,10 +236,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_run(" 曲线并作最小二乘线性拟合，直线斜率的绝对值即为磁偏转灵敏度：")
     doc.add_math(r"\delta_{m} = \left| \frac{\Delta D}{\Delta I_{m}} \right|")
     if not render_custom_plot(doc, 3, width_cm=12):
-        doc.add_image(fig3_path, width_cm=12)
-        doc.add_paragraph("图3 ")
-        doc.add_inline_math(r"D - I_{m}")
-        doc.add_run(" 关系曲线")
+        doc.add_image(fig3_path, width_cm=12, caption='图3 $D-I_m$ 关系曲线')
     doc.add_paragraph("拟合得 ")
     doc.add_inline_math(r"U_{2} = 1000\,\mathrm{V}")
     doc.add_run(" 时 ")

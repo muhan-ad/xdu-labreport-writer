@@ -278,44 +278,45 @@ def _generate_docx(data, output_path):
         doc.add_paragraph_rich(variants["实验方法"])
 
     doc.add_heading("二、数据记录", level=1)
-    doc.add_data_photo("原始测量照片未附；下列表格来自当前保存的数据。")
-    doc.add_paragraph("表1 同轴电缆模型：1～7 V 等位线，每30°记录一个半径，共12点。")
-    for start in (0, 6):
-        headers = ["电势"] + [f"{angle}°" for angle in ANGLES[start:start + 6]]
-        rows = [[f"{level} V"] + [f"{v:.2f}" for v in r["coax_radii"][i][start:start + 6]]
-                for i, level in enumerate(COAX_LEVELS)]
-        doc.add_table(headers, rows)
-    doc.add_paragraph("半径单位：cm。源模板角度行中的6 V第10列“70°”按其30°步进更正为270°。")
+    doc.add_data_photo("原始测量照片未附，请补充原始记录照片。")
+    if not getattr(doc, 'has_data_photo', False):
+        doc.add_paragraph("表1 同轴电缆模型：1～7 V 等位线，每30°记录一个半径，共12点。")
+        for start in (0, 6):
+            headers = ["电势"] + [f"{angle}°" for angle in ANGLES[start:start + 6]]
+            rows = [[f"{level} V"] + [f"{v:.2f}" for v in r["coax_radii"][i][start:start + 6]]
+                    for i, level in enumerate(COAX_LEVELS)]
+            doc.add_table(headers, rows, role="raw")
+        doc.add_paragraph("半径单位：cm。源模板角度行中的6 V第10列“70°”按其30°步进更正为270°。")
 
-    doc.add_paragraph("表3 平行线电极模型：3～8 V 等位线，每级10个(x,y)坐标。")
-    for start in (0, 5):
-        headers = ["电势", "坐标"] + [f"点{j}" for j in range(start + 1, start + 6)]
-        rows = []
-        for i, level in enumerate(PARALLEL_LEVELS):
-            rows.append([f"{level} V", "x/cm"] +
-                        [f"{r['parallel_x'][i][j]:.1f}" for j in range(start, start + 5)])
-            rows.append(["", "y/cm"] +
-                        [f"{r['parallel_y'][i][j]:.1f}" for j in range(start, start + 5)])
-        doc.add_table(headers, rows)
-    doc.add_paragraph("表中保留全部原始读数；平行线电极场图使用每级全部10个测量点拟合等势线。")
+        doc.add_paragraph("表3 平行线电极模型：3～8 V 等位线，每级10个(x,y)坐标。")
+        for start in (0, 5):
+            headers = ["电势", "坐标"] + [f"点{j}" for j in range(start + 1, start + 6)]
+            rows = []
+            for i, level in enumerate(PARALLEL_LEVELS):
+                rows.append([f"{level} V", "x/cm"] +
+                            [f"{r['parallel_x'][i][j]:.1f}" for j in range(start, start + 5)])
+                rows.append(["", "y/cm"] +
+                            [f"{r['parallel_y'][i][j]:.1f}" for j in range(start, start + 5)])
+            doc.add_table(headers, rows, role="raw")
+        doc.add_paragraph("表中保留全部原始读数；平行线电极场图使用每级全部10个测量点拟合等势线。")
 
     doc.add_page_break()
     doc.add_heading("三、数据处理与作图", level=1)
     doc.add_heading("（一）同轴电缆静电场分布", level=2)
     if not render_custom_plot(doc, 1, width_cm=9.8):
-        doc.add_image(coax_path, width_cm=9.8)
-    doc.add_paragraph("图1 各级等势线按12个实测半径取平均绘圆，浅色点为原始半径位置；箭头沿电位降低方向。")
+        doc.add_image(coax_path, width_cm=9.8, caption='图1 同轴电缆模型等势线及电场方向示意')
+        doc.add_paragraph("注：各级等势线按12个实测半径取平均绘圆，浅色点为原始半径位置；箭头沿电位降低方向。")
     doc.add_paragraph("表2 同轴电缆模型的 U_r/U_a 与 ln(r/cm) 关系。")
     doc.add_table(["U_r/V", "U_r/U_a", "平均r/cm", "ln(r/cm)"],
                   [[f"{u}", f"{r['u_r_ua'][i]:.3f}", f"{r['r'][i]:.3f}",
                     f"{r['ln_r'][i]:.3f}"] for i, u in enumerate(COAX_LEVELS)])
-    doc.add_paragraph("每级平均半径由表1的12个半径重新求算，未照抄源文档中个别不一致的平均值。")
+    doc.add_paragraph("每级平均半径由表1同一电位下的12个半径读数求得。")
     doc.add_math(r"\frac{U_r}{U_a}=\frac{\ln(r_b/\mathrm{cm})-\ln(r/\mathrm{cm})}{\ln(r_b/r_a)}")
     doc.add_paragraph(f"取 r_a={r['r_a']:.2f} cm、r_b={r['r_b']:.2f} cm，"
                       f"理论斜率={r['theory_slope']:.4f}，理论截距={r['theory_intercept']:.4f}。")
     if not render_custom_plot(doc, 2, width_cm=14):
-        doc.add_image(fit_path, width_cm=14)
-    doc.add_paragraph(f"图2 实验点、最小二乘拟合与理论关系。实验式："
+        doc.add_image(fit_path, width_cm=14, caption='图2 归一化电位与半径对数的关系')
+        doc.add_paragraph(f"注：实验点、最小二乘拟合与理论关系。实验式："
                       f"U_r/U_a = {r['slope']:.4f} ln(r/cm) + {r['intercept']:.4f}；"
                       f"R²={r['r_squared']:.4f}。")
     intercept_note = (f"截距相对误差={r['intercept_error']:.2f}%。" if r['intercept_error'] is not None
@@ -324,8 +325,8 @@ def _generate_docx(data, output_path):
 
     doc.add_heading("（二）平行线电极静电场分布", level=2)
     if not render_custom_plot(doc, 3, width_cm=14):
-        doc.add_image(parallel_path, width_cm=14)
-    doc.add_paragraph("图3 保留表3全部实测点，曲线仅为全点拟合近似；存在异常时采用虚线并取消电场方向箭头。"
+        doc.add_image(parallel_path, width_cm=14, caption='图3 平行线电极模型等势线及电场方向示意')
+        doc.add_paragraph("注：保留表3全部实测点，曲线仅为全点拟合近似；存在异常时采用虚线并取消电场方向箭头。"
                       "仅在共同测量区间内、曲线次序正常且近似竖直时绘制由高电位到低电位的方向示意。")
     for warning in r["warnings"]:
         doc.add_paragraph("拟合质量提示：" + warning)

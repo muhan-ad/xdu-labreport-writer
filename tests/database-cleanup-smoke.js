@@ -15,7 +15,7 @@ app.whenReady().then(async()=>{
   const wc=BrowserWindow.getAllWindows()[0].webContents,ev=s=>wc.executeJavaScript(s);
   wc.setBackgroundThrottling(false);
   const capture=async(name)=>{await delay(600);fs.writeFileSync(path.join(work,name),(await wc.capturePage(undefined,{stayHidden:true,stayAwake:true})).toPNG());};
-  await until(()=>ev('typeof experiments!=="undefined"&&experiments.length===27').catch(()=>false));
+  await until(()=>ev('typeof experiments!=="undefined"&&experiments.length===28').catch(()=>false));
   // Verify the shipped DOM and schema-driven initialization without touching real user files.
   assert.equal(await ev("document.getElementById('btnClearFormData')"),null);
   assert.equal(await ev("document.querySelectorAll('#btnAiModuleSkills svg').length"),0);
@@ -32,7 +32,7 @@ app.whenReady().then(async()=>{
     assert.equal(await ev("document.getElementById('btnFillDefaultData').textContent"),'初始化空白表单');
     await ev('isDataModified=false; notifyDataModified(); void (appConfirm=async()=>false)');
   }
-  record('PASS all 27 forms: single blank initialization, scalar/array/matrix dimensions, cancel and unsaved disk preservation');
+  record('PASS all 28 forms: single blank initialization, scalar/array/matrix dimensions, cancel and unsaved disk preservation');
   await ev('switchSettingsPane("reports"); switchSettingsModule("reports","polish")');
   assert.match(await ev('document.getElementById("polishHistoryList").textContent'),/暂无/);
   const historyExp=(await ev('experiments[0]'));
@@ -114,6 +114,6 @@ app.whenReady().then(async()=>{
    assert.equal(stale.ok,false);assert.deepEqual(fs.readFileSync(result.reportFile),latest);
    record('PASS '+name+' blank form / current context / actual IPC generation / stale polish rejected');
   }
-  record('PASS packaged renderer has 27 experiments and blank factory form policy');app.exit(0);
+  record('PASS packaged renderer has 28 experiments and blank factory form policy');app.exit(0);
  }catch(error){record('FAIL '+error.stack);app.exit(1);}
 });

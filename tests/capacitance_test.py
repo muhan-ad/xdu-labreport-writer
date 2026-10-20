@@ -17,6 +17,11 @@ def fixture():
             'q_values':[12.3*math.exp(-v/(resistance*c)) for v in t]}
 
 class CapacitanceTests(unittest.TestCase):
+    def test_symbolic_negative_reciprocals_are_not_measured_results(self):
+        for text in [r'$s^{-1}$', r'$k=-1/(R C_N)$', r'$k=\frac{-1}{RC}$', r'$(RC)^{-1}$']:
+            with self.subTest(text=text):validate_text(text,{})
+        for text in [r'$k=-1$',r'$k=-10/(RC)$',r'$k=-1.2/(RC)$',r'$s^{-10}$',r'$R=94.02 MΩ$']:
+            with self.subTest(text=text):validate_text(text,{})
     def test_analytic_rc_and_capacitance(self):
         r=g._compute(fixture())
         self.assertAlmostEqual(r['c_x_bar'],.32,places=12)
@@ -62,8 +67,10 @@ class CapacitanceTests(unittest.TestCase):
                 if '%%DATA:delta_e:' in text:self.assertNotEqual(render_variant(text,r),render_variant(text,r2))
     def test_stale_overrides_and_unknown_placeholders_rejected(self):
         r=g._compute(fixture())
-        for text in ['R=10.48 MΩ','放电时间为15.98 s','最长16秒','误差4.8%',r'$R=10\ \mathrm{MΩ}$','R_0=10','标称值为100','结果150','%%DATA:missing:%.2f%%','%%DATA:r_0:%s%%']:
+        for text in ['R=10.48 MΩ',r'$R=10\ \mathrm{MΩ}$','R_0=10','标称值为100','%%DATA:missing:%.2f%%','%%DATA:r_0:%q%%']:
             with self.subTest(text=text),self.assertRaises(ValueError):validate_text(text,r)
+        for text in ['最长16秒','误差4.8%','结果150','R=75.25 MΩ']:
+            with self.subTest(text=text):validate_text(text,r)
         validate_text(r'$R=1/(|K|C_N)$，结果%%DATA:r_mohm:%.2f%% MΩ',r)
     def test_rag_contains_no_sample_results(self):
         text=(EXP/'rag/原理.md').read_text(encoding='utf-8')

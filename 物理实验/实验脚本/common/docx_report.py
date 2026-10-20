@@ -365,6 +365,8 @@ def split_enumerated(text: str) -> list:
             if nxt.isdigit() or nxt == '…':
                 continue                # 区间列表：第 1、12、…、20 级
         if tok.startswith('第'):
+            if re.search(r'[（(]\s*(?:\d+|[一二三四五六七八九十]+)\s*[）)]\s*$', s[:i]):
+                continue                # （一）第一原因 is one point, not two markers
             tail = s[m.end():m.end() + 2]
             if any(tail.startswith(t) for t in _ENUM_ORDINAL_TAIL):
                 continue                # 序数词而非分点：第一位置读数
@@ -634,10 +636,17 @@ class DocxReportWriter:
             # 这一行用于区分生成管线：旧版是"遥控 Word（BuildUp）"，会把不支持的公式
             # 原样留成带反斜杠的文本；新版为纯 Python 转换，不需要 Word。
             print('[引擎] 报告生成：python-docx + OMML（无需 Microsoft Word）')
+        export_dir = os.environ.get('LAB_REPORT_OUTPUT_DIR', '').strip()
+        if export_dir:
+            if not os.path.isabs(export_dir) or not os.path.isdir(export_dir):
+                raise ValueError('报告保存目录无效')
+            output_path = os.path.join(export_dir, os.path.basename(output_path))
         self.output_path = os.path.abspath(output_path)
         self._tmp_path = self.output_path + ".~saving" + str(os.getpid()) + ".docx"
         self._closed = False
         self._body_font_size = BODY_SIZE
+        self._error_section_level = None
+        self._figure_count = 0
         self._cursor = None          # add_run / add_inline_math 的写入目标段落
         # 公式排版要反复探测宽度/试拆行，缓存转换结果避免同一条公式被反复转换
         self._omml_cache = {}        # (latex, display, jc) -> OMML 字符串
@@ -759,6 +768,8 @@ class DocxReportWriter:
         el = getattr(p, '_p', p)                # 兼容传入 Paragraph 或 lxml 元素
         if el is None:
             return True
+        if el.find('.//' + qn('w:drawing')) is not None:
+            return False
         if el.findall('.//' + qn('w:t')):
             return False
         return el.find('.//{%s}oMath' % M_NS) is None
@@ -838,6 +849,11 @@ class DocxReportWriter:
 
     def add_heading(self, text: str, level: int = 1):
         """章节标题。level 1=一级，level 2=二级。"""
+        if self._error_section_level is not None and level <= self._error_section_level:
+            self._error_section_level = None
+        title = re.sub(r'^[一二三四五六七八九十0-9、.（）()\s]+', '', text)
+        if title in ('误差分析', '实验误差分析', '实验误差来源'):
+            self._error_section_level = level
         if level == 1:
             return self._add_paragraph(text, font_name=HEADING_FONT, font_size=H1_SIZE,
                                        bold=True, space_before=12, space_after=6)
@@ -850,7 +866,10 @@ class DocxReportWriter:
         bold=True 用于「课后思考题」的题目这类需要突出的正文行——只加粗字重，
         不改成标题样式（题目是正文里的问句，不是章节标题）。
         """
-        pieces = split_enumerated(text)
+        if self._error_section_level is not None and text.strip():
+            from .report_style import error_points
+            text = error_points(text)
+        pieces = [v for line in text.splitlines() for v in split_enumerated(line)] or ['']
         p = None
         for piece in pieces:
             p = self._add_paragraph(piece, font_size=self._body_font_size, bold=bold,
@@ -864,6 +883,9 @@ class DocxReportWriter:
         转为居中显示公式（add_math），$...$ 内联公式随文字流动（add_inline_math），
         普通文字宋体正文（首行缩进）。含分点标记时每点单独成段。
         """
+        if self._error_section_level is not None:
+            from .report_style import error_points
+            text = error_points(text)
         for kind, content in split_rich_blocks(text):
             if kind == "math":
                 self.add_math(content)
@@ -891,8 +913,16 @@ class DocxReportWriter:
         字号始终与正文一致（不再按宽度自动缩小）。
         """
         formula = (latex or "").strip()
+        for delimiter in ('$$', '$'):
+            if formula.startswith(delimiter) and formula.endswith(delimiter) and len(formula)>2*len(delimiter):
+                formula=formula[len(delimiter):-len(delimiter)].strip()
+                break
         if formula:
-            self._emit_math(formula, first=True, last=True)
+            # Parallel equations stay separate even when they fit on one line.
+            blocks=_split_top(re.sub(r'\\qquad|\\quad', ' , ', formula), ';；,，')
+            if len(blocks)>1 and sum(bool(re.search(r'=|\\(?:approx|propto|sim|equiv)', b)) for b in blocks)>1:
+                for block in blocks:self._emit_math(block, first=True, last=True)
+            else:self._emit_math(formula, first=True, last=True)
 
     def _emit_math(self, formula: str, first: bool, last: bool):
         """公式排版决策阶梯：单行 → 分块 → 关系符拆行 → 运算符折行。"""
@@ -948,15 +978,26 @@ class DocxReportWriter:
     def add_inline_math(self, latex: str, bold: bool = False):
         """在当前段落内插入内联公式（不换行，随文字流动）。"""
         formula = (latex or "").strip()
+        for delimiter in ('$$', '$'):
+            if formula.startswith(delimiter) and formula.endswith(delimiter) and len(formula)>2*len(delimiter):
+                formula=formula[len(delimiter):-len(delimiter)].strip()
+                break
         if not formula:
+            return
+        blocks=_split_top(re.sub(r'\\qquad|\\quad', ' , ', formula), ';；,，')
+        if len(blocks)>1 and sum(bool(re.search(r'=|\\(?:approx|propto|sim|equiv)', b)) for b in blocks)>1:
+            for block in blocks:self.add_math(block)
+            self._cursor=None
             return
         if self._cursor is None:
             self._cursor = self._add_paragraph(space_after=6,
                                                first_line_indent=FIRST_LINE_INDENT)
         self._append_math(self._cursor, formula, display=False, bold=bold)
 
-    def add_table(self, headers: list, rows: list, col_widths: list = None):
-        """插入带边框的数据表格。表头与单元格均支持 $...$ 公式标记。"""
+    def add_table(self, headers: list, rows: list, col_widths: list = None, role: str = 'processed'):
+        """Processed tables stay; redundant raw-only tables yield to a real photo."""
+        if role == 'raw' and getattr(self, 'has_data_photo', False):
+            return None
         ncols = len(headers)
         nrows = 1 + len(rows)
         table = self._doc.add_table(rows=nrows, cols=ncols)
@@ -1029,7 +1070,7 @@ class DocxReportWriter:
             else:
                 self._add_text_runs(p, part, BODY_FONT, TABLE_SIZE, bold)
 
-    def add_image(self, image_path: str, width_cm: float = None):
+    def add_image(self, image_path: str, width_cm: float = None, caption=None, note=""):
         """插入图片并居中。width_cm 为可选宽度（cm），不指定则原尺寸。"""
         abs_path = os.path.abspath(image_path)
         if not os.path.exists(abs_path):
@@ -1041,6 +1082,25 @@ class DocxReportWriter:
             run.add_picture(abs_path, width=Cm(width_cm))
         else:
             run.add_picture(abs_path)
+        p.paragraph_format.keep_with_next = True
+        self._figure_count += 1
+        title = caption if caption is not None else f"图{self._figure_count} {os.path.splitext(os.path.basename(abs_path))[0]}"
+        self.add_caption(title, note)
+
+    def add_caption(self, caption, note=""):
+        from .report_style import split_caption
+        title, explanation = split_caption(caption)
+        notes = '\n'.join(v for v in (explanation, str(note or '').strip()) if v)
+        # Rich captions retain native inline formulas while keeping the title centered.
+        before = self._error_section_level
+        self._error_section_level = None
+        self.add_paragraph_rich(title)
+        self._format_paragraph(self._cursor, align=WD_ALIGN_PARAGRAPH.CENTER, first_line_indent=0, space_after=6)
+        self._cursor.paragraph_format.keep_with_next = bool(notes)
+        for line in notes.splitlines():
+            self.add_paragraph_rich(line if line.startswith('注：') else '注：' + line)
+            self._format_paragraph(self._cursor, align=WD_ALIGN_PARAGRAPH.LEFT, first_line_indent=0, space_after=6)
+        self._error_section_level = before
 
     def add_data_photo(self, fallback_text: str = "（请在此处粘贴原始数据记录照片。）",
                        width_cm: float = 14.0):
@@ -1048,11 +1108,13 @@ class DocxReportWriter:
         photo = os.environ.get("LAB_DATA_PHOTO")
         if photo and os.path.isfile(photo):
             try:
-                self.add_image(photo, width_cm=width_cm)
-                return
+                self.add_image(photo, width_cm=width_cm, caption="原始数据记录照片")
+                self.has_data_photo = True
+                return True
             except Exception as exc:
                 print("[警告] 原始数据照片插入失败（%s），改用占位文字：%s" % (exc, photo))
         self.add_paragraph(fallback_text)
+        return False
 
     def add_page_break(self):
         """插入分页符。"""
@@ -1067,6 +1129,8 @@ class DocxReportWriter:
 
     def _save_tmp(self):
         """保存到临时文件（close() 时原子替换到目标路径）。"""
+        from .report_style import normalize_document_paragraphs
+        normalize_document_paragraphs(self._doc)
         self._doc.save(self._tmp_path)
 
     def save(self):

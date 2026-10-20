@@ -20,7 +20,6 @@
           "default": null,
           "required": true,
           "exclusiveMinimum": 0,
-          "hint": "按实际光源的标称或校准值填写；可主动选择常用值，也可直接输入。",
           "presets": [
             {
               "label": "红光激光器 650 nm",
@@ -38,8 +37,7 @@
           "type": "number",
           "unit": "mm",
           "default": null,
-          "required": true,
-          "hint": "按实际狭缝的标称或校准值填写；不是本次反算得到的缝宽。"
+          "required": true
         }
       ]
     },
@@ -66,11 +64,11 @@
       ]
     },
     {
-      "name": "实际仪器参数（不使用教材或示例数值）",
+      "name": "仪器参数",
       "fields": [
         {
           "key": "instrument_ruler_division_mm",
-          "label": "光具座分度值（按实际仪器填写）",
+          "label": "光具座分度值",
           "type": "number",
           "unit": "mm",
           "required": true,
@@ -80,7 +78,7 @@
         },
         {
           "key": "instrument_drum_division_mm",
-          "label": "鼓轮分度值（按实际仪器填写）",
+          "label": "鼓轮分度值",
           "type": "number",
           "unit": "mm",
           "required": true,

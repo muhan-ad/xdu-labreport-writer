@@ -40,7 +40,7 @@
       "fields": [
         {
           "key": "r_0",
-          "label": "电阻标称值 R₀（请自行填写）",
+          "label": "电阻标称值 R₀",
           "type": "number",
           "unit": "MΩ",
           "required": true,

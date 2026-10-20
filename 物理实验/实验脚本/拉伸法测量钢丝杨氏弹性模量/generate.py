@@ -120,7 +120,8 @@ def _compute(data: dict) -> dict:
     # 课程 2-4：不确定度取 1~2 位（首位 ≥3 取 1 位、1/2 取 2 位，只进不舍），
     # 测得值末位与不确定度对齐 —— 由 common.format_number 统一实现；
     # 变体文本里写死 %.3f 之类的固定格式做不到这一点。
-    Y_pm = r"%s \pm %s" % (format_number(Y, Y_u), format_number(Y_u, Y_u))
+    # Y、Y_u 是以 10¹¹ Pa 为单位的系数；结论必须携带同一倍率。
+    Y_pm = r"(%s \pm %s) \times 10^{11}" % (format_number(Y, Y_u), format_number(Y_u, Y_u))
 
     return {
         "u_L": type_b(DELTA_L_M), "u_H": type_b(DELTA_H_M), "u_D_m": type_b(DELTA_D_MM) / 1000,
@@ -352,11 +353,11 @@ def _generate_docx(data: dict, output_path: str):
         doc.add_paragraph_rich(variants["结果分析"])
     doc.add_paragraph("")
     doc.add_run("本实验采用拉伸法和光杠杆放大技术测量钢丝的杨氏弹性模量。通过逐差法处理标尺读数，")
-    doc.add_run("充分利用了全部测量数据，减小了随机误差。测得杨氏模量 ")
+    doc.add_run("利用各组加载与读数的差值计算结果。测得杨氏模量 ")
     doc.add_inline_math(r"Y = (%s \pm %s) \times 10^{11} \text{ Pa}"
                         % (format_number(r["Y"], r["Y_u"]), format_number(r["Y_u"], r["Y_u"])))
     doc.add_run("（相对不确定度 " + format_percent(r["Y_u"] / r["Y"] * 100)
-                + "%），与钢丝的公认值（约 2.0×10¹¹ Pa）进行比较，可评估实验准确度。")
+                + "%）。钢丝的杨氏模量与材料成分及状态有关，未记录相应参考值及其来源时，不据此作准确性判断。")
 
     doc.add_paragraph("")
     doc.add_run("误差来源分析：")

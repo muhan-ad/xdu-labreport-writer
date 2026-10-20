@@ -344,7 +344,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_run("测量了 8 个不同长度下的电阻值并计算电阻率。电阻率 ")
     doc.add_inline_math(r"\rho = " + format_measure(r["rho_a"], r["rho_u"])
                         + r" \times 10^{-8}\,\Omega\cdot\mathrm{m}")
-    doc.add_run("，各长度点的电阻率一致性较好，说明实验数据可靠。")
+    doc.add_run("。不同长度点的结果同时受到直径、长度和电阻读数的影响，仅由相对分散程度不能判定数据准确性。")
 
     doc.add_paragraph("")
     doc.add_run("误差来源分析：")

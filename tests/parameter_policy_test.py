@@ -64,7 +64,7 @@ class ParameterPolicyTests(unittest.TestCase):
    finally:m.SCRIPT_DIR=original
 
  def test_new_parameters_blank_in_factories_and_validated(self):
-  cases={'劈尖干涉':['wavelength_nm'],'激光波长的测量':['lambda0_nm'],'重力加速度的测量':['g0_source'],'拉伸法测量钢丝杨氏弹性模量':['instrument_delta_L','instrument_delta_H','instrument_delta_D']}
+  cases={'劈尖干涉':['wavelength_nm'],'激光波长的测量':['lambda0_nm'],'重力加速度的测量':['g0'],'拉伸法测量钢丝杨氏弹性模量':['instrument_delta_L','instrument_delta_H','instrument_delta_D']}
   for name,keys in cases.items():
    schema=json.loads((BASE/name/'schema.json').read_text('utf-8'));d=fixture(name)
    self.assertTrue(validate(schema,d)['ok'])
@@ -72,5 +72,14 @@ class ParameterPolicyTests(unittest.TestCase):
     for filename in ('data.json','sample.json'):self.assertIsNone(json.loads((BASE/name/filename).read_text('utf-8'))[key])
     invalid=copy.deepcopy(d);invalid[key]='  ' if key=='g0_source' else None
     self.assertFalse(validate(schema,invalid)['ok'])
+
+ def test_gravity_source_field_is_no_longer_required_and_does_not_change_computation(self):
+  name='重力加速度的测量';m=load(name);d=fixture(name)
+  schema=json.loads((BASE/name/'schema.json').read_text('utf-8'))
+  self.assertFalse(any(f['key']=='g0_source' for g in schema['groups'] for f in g['fields']))
+  before=m._compute(d);d.pop('g0_source',None)
+  self.assertTrue(validate(schema,d)['ok'])
+  self.assertEqual(m._compute(d),before)
+  self.assertNotIn('g0_source',(BASE/name/'generate.py').read_text('utf-8'))
 
 if __name__=='__main__':unittest.main()

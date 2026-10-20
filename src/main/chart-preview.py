@@ -50,9 +50,35 @@ def _detect_arrays(data, exp_path):
             schema = json.load(f)
         for group in schema.get('groups', []):
             for field in group.get('fields', []):
-                if field.get('type') == 'array':
+                if field.get('type') == 'matrix':
+                    for col in range(field.get('cols', 0)):
+                        key = f"{field['key']}[{col}]"
+                        column_labels = field.get('colLabels', [])
+                        labels[key] = column_labels[col] if col < len(column_labels) else f'第 {col + 1} 列'
+                elif field.get('type') == 'array':
                     labels[field['key']] = field.get('label', field['key'])
     return arrays, labels
+
+
+def _field_values(data, field, labels):
+    import re
+    match = re.fullmatch(r'(.+)\[(\d+)\]', field)
+    if match and field in labels:
+        key, col = match.group(1), int(match.group(2))
+        matrix = data.get(key)
+        if not isinstance(matrix, list):
+            raise ValueError(f'字段不存在或不是表格: {field}')
+        values = []
+        for row in matrix:
+            if not isinstance(row, list) or col >= len(row):
+                raise ValueError(f'表格行长度不正确: {field}')
+            values.append(row[col])
+        return values
+    if field not in data:
+        raise ValueError(f'字段不存在: {field}')
+    if not isinstance(data[field], list) or any(isinstance(v, list) for v in data[field]):
+        raise ValueError('X 和 Y 字段必须是一维数组或表格列')
+    return data[field]
 
 
 def generate_chart(exp_path, x_field, y_field, chart_type='scatter',
@@ -81,14 +107,36 @@ def generate_chart(exp_path, x_field, y_field, chart_type='scatter',
 
     data = load_data(data_path)
 
-    if x_field not in data or y_field not in data:
-        raise ValueError(f'字段不存在: x="{x_field}", y="{y_field}"')
+    if chart_type == 'polar':
+        with open(os.path.join(exp_path, 'schema.json'), encoding='utf-8') as f:
+            preset = json.load(f).get('chartPreset', {})
+        if preset.get('kind') != 'polarization' or (x_field, y_field) != (preset.get('xField'), preset.get('yField')):
+            raise ValueError('极坐标预设仅支持第二学期偏振光的角度与三组光功率')
+        from common.polarization import compute, plot
+        result = compute(data)
+        if not output_path:
+            fd, output_path = tempfile.mkstemp(suffix='.png', prefix='polarization_')
+            os.close(fd)
+        os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+        plot(result, output_path)
+        return output_path, '第二学期偏振光三组光功率极坐标图'
 
-    x_data = data[x_field]
-    y_data = data[y_field]
-
-    if not isinstance(x_data, list) or not isinstance(y_data, list):
-        raise ValueError('X 和 Y 字段必须是数组类型')
+    _, labels = _detect_arrays(data, exp_path)
+    x_data = _field_values(data, x_field, labels)
+    y_data = _field_values(data, y_field, labels)
+    if len(x_data) != len(y_data):
+        raise ValueError('X 和 Y 字段长度不匹配')
+    import math
+    pairs = []
+    for index, (x, y) in enumerate(zip(x_data, y_data), 1):
+        if x in (None, '') and y in (None, ''):
+            continue
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in (x, y)):
+            raise ValueError(f'第 {index} 行的 X/Y 数据缺失或不是有限数值')
+        pairs.append((x, y))
+    if len(pairs) < 2:
+        raise ValueError('至少需要两组完整的 X/Y 数据')
+    x_data, y_data = map(list, zip(*pairs))
 
     if not output_path:
         fd, output_path = tempfile.mkstemp(suffix='.png', prefix='chart_')
@@ -141,16 +189,28 @@ def main():
     parser.add_argument('--x-field', required=True, help='X 轴字段名')
     parser.add_argument('--y-field', required=True, help='Y 轴字段名')
     parser.add_argument('--chart-type', default='scatter',
-                        choices=['scatter', 'line', 'fit', 'bar'],
+                        choices=['scatter', 'line', 'fit', 'bar', 'polar', 'official'],
                         help='图表类型')
     parser.add_argument('--title', default='', help='图表标题')
     parser.add_argument('--xlabel', default='', help='X 轴标签')
     parser.add_argument('--ylabel', default='', help='Y 轴标签')
     parser.add_argument('--output', default='', help='输出 PNG 路径')
     parser.add_argument('--scripts-root', default='', help='实验脚本根目录（含 common/）')
+    parser.add_argument('--official-preset', default='all', help='官网图组中的图ID或all')
     args = parser.parse_args()
 
     try:
+        if args.chart_type == 'official':
+            _setup_paths(args.exp_path, args.scripts_root)
+            from common.data_io import load_data
+            from common.official_charts import chart_specs, render_specs
+            with open(os.path.join(args.exp_path, 'schema.json'), encoding='utf-8-sig') as f:
+                name = json.load(f)['实验']
+            data = load_data(os.path.join(args.exp_path, 'data.json'))
+            specs = chart_specs(name, data, args.scripts_root, args.official_preset)
+            images = render_specs(specs, args.output, args.scripts_root)
+            print(json.dumps({'ok': True, 'path': images[0]['path'], 'title': '官网实验图组', 'images': images}, ensure_ascii=False))
+            return
         out_path, title = generate_chart(
             exp_path=args.exp_path,
             x_field=args.x_field,

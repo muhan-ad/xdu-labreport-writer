@@ -205,11 +205,11 @@ def _generate_docx(data: dict, output_path: str):
         headers=["参数", "实验设定值"],
         rows=params_rows,
         col_widths=[6.5, 5.5],
-    )
+     role="raw")
 
     # R-U 数据表
     doc.add_paragraph("")
-    doc.add_run("等偏转法测得的 R-U 数据如下（偏转距离 d 保持 ")
+    doc.add_run("用原始记录中的 R-U 数据进行拟合（偏转距离 d 保持 ")
     doc.add_inline_math(rf"{d_mm:.1f}\ \mathrm{{mm}}")
     doc.add_run(" 不变）：")
     doc.add_table(
@@ -219,7 +219,7 @@ def _generate_docx(data: dict, output_path: str):
             ["U / V"] + [f"{v:.3f}" for v in U],
         ],
         col_widths=[2.0] + [1.2] * 10,
-    )
+     role="raw")
 
     # 公式与回归
     doc.add_paragraph("由教材公式（3-17-10）：")
@@ -259,12 +259,12 @@ def _generate_docx(data: dict, output_path: str):
     )
     doc.add_paragraph(
         rf"其中 s = {format_number(s_res, sig_figs=4)} Ω 为最小二乘拟合的残差标准差。"
-        "按知识库口径，本实验只考虑由拟合残差引起的 A 类不确定度，忽略 B 类不确定度。"
+        "这里列出的是由拟合残差估计的 A 类分量，尚未计入电阻标定、仪表分辨力等 B 类分量，因此不代表完整的合成不确定度。"
     )
     doc.add_paragraph("")
     doc.add_run("相关系数 ")
     doc.add_inline_math(f"r^{{2}} = {r_squared:.4f}")
-    doc.add_run("，线性关系良好。")
+    doc.add_run("，用于描述本次数据的线性相关程度。")
 
     # 求 Ki
     doc.add_paragraph("由斜率求电流常数：")
@@ -365,9 +365,7 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_heading("4. 电路与电源误差", level=2)
     doc.add_paragraph("")
-    doc.add_run("接触电阻：导线与接线柱之间的接触电阻（通常 ")
-    doc.add_inline_math(r"0.1 \sim 0.5\ \mathrm{\Omega}")
-    doc.add_run(f"）。其影响应结合本次标准电阻 Rs（{data['rs']:g} Ω）判断，不能仅凭经验范围断定；接触电阻会影响分压比及 Ki、Rg 的计算。")
+    doc.add_run(f"接触电阻：导线与接线柱之间的接触电阻会改变分压比及 Ki、Rg 的计算。本次标准电阻 Rs 为 {data['rs']:g} Ω；接触电阻的实际大小未单独测量，因此这里仅讨论其影响途径。")
     doc.add_paragraph("电阻箱精度：电阻箱 R 和 R₁ 各档位的实际阻值与标称值存在偏差，尤其在小阻值档位（×1、×0.1），相对误差较大，影响回路总电阻的准确度。")
 
     doc.add_heading("（二）改进措施", level=2)
@@ -432,7 +430,7 @@ def _generate_docx(data: dict, output_path: str):
             doc.add_inline_math(r"U_s = U \frac{R_s}{R_1+R_s}")
             doc.add_run("，Rs 两端的电压由实际电阻比决定，该电压施加在 R + Rg 回路两端，通过电流计的电流 ")
             doc.add_inline_math(r"I_g = \frac{U_s}{R + R_g}")
-            doc.add_run("。应按本次实际电路参数检查电流是否低于所用仪器额定范围，不能用示例量级代替安全校验。")
+            doc.add_run("。电流计的安全使用取决于电路电流与仪器额定电流的比较；额定电流未知时，仅由上述计算不能判定是否过载。")
             doc.add_paragraph("此外，当电流计外部电路处于短路状态时（如 R = 0），线圈在磁场中摆动切割磁感线产生感应电流，短路形成的低阻闭合回路中感应电流产生电磁阻尼力矩，使线圈迅速停止摆动，起到对悬丝的机械保护作用。")
 
         # 题 3（必须留在函数体层级：缩进进上一问的 else 时，上一问有变体答案就整段不输出）

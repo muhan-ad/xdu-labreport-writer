@@ -14,6 +14,7 @@ async function testApi(params, {endpoint, defaultModel, getKey, network, makeDea
     let kind='network', error='连接失败，请检查网络或服务地址';
     if (deadline.aborted) {kind='timeout';error='测试超时（30秒），未取得完整回答';}
     else if (/401|403/.test(message)) {kind='auth';error='鉴权失败，请检查密钥及访问权限';}
+    else if (/402/.test(message)) {kind='balance';error='API余额不足，请在服务商开放平台检查余额';}
     else if (/429/.test(message)) {kind='rate';error='服务限流或额度不足';}
     else if (/400|404|422/.test(message)) {kind='model';error='接口或模型不可用，请检查地址和模型名称';}
     else if (/timeout|timed out|超时/i.test(message) || e.name==='TimeoutError' || e.cause?.name==='TimeoutError') {kind='timeout';error='测试超时（30秒），未取得完整回答';}

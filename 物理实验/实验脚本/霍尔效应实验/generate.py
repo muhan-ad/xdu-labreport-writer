@@ -160,6 +160,7 @@ def _generate_docx(data: dict, output_path: str):
     r = {
         "kh": kh, "i_work": i_work, "im_fixed": im_fixed,
         "k": reg.slope, "r_coef": reg.r, "b2_mean": b2_mean,
+        "b2_min": min(t2_b), "b2_max": max(t2_b), "b2_span": max(t2_b)-min(t2_b),
     }
     variants = compose(SCRIPT_DIR, r)
     if "实验原理" in variants:
@@ -188,20 +189,18 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("其余各列同法计算，B–Im 与 B–I 关系曲线如下图所示。")
 
     if not render_custom_plot(doc, 1, width_cm=12):
-        doc.add_image(fig1_path, width_cm=12)
-        doc.add_paragraph("图1 B–Im 关系曲线")
+        doc.add_image(fig1_path, width_cm=12, caption='图1 B–Im 关系曲线')
     doc.add_paragraph("对 B–Im 数据用最小二乘法作线性回归，得直线斜率")
     doc.add_math(r"k = " + f"{reg.slope:.4f}" + r"\,\mathrm{T/A}")
     doc.add_paragraph("相关系数 ")
     doc.add_inline_math(f"r = {reg.r:.5f}")
-    doc.add_run("，B 与励磁电流 Im 呈良好的线性关系。")
+    doc.add_run("。该系数描述本次数据的线性相关程度，拟合结果还受到电流读数及霍尔片定位的影响。")
 
     if not render_custom_plot(doc, 2, width_cm=12):
-        doc.add_image(fig2_path, width_cm=12)
-        doc.add_paragraph("图2 B–I 关系曲线")
-    doc.add_paragraph("由图2 可见，改变工作电流 I 时磁感应强度 B 基本保持恒定（平均值 ")
+        doc.add_image(fig2_path, width_cm=12, caption='图2 B–I 关系曲线')
+    doc.add_paragraph("固定励磁电流，改变工作电流 I，各测点换算的磁感应强度平均值为（")
     doc.add_inline_math(f"\\bar{{B}} = {b2_mean:.3f}" + r"\,\mathrm{T}")
-    doc.add_run("），验证了磁感应强度与工作电流无关。")
+    doc.add_run(f"），范围为 {min(t2_b):.6g}～{max(t2_b):.6g} T。理想模型中磁场由励磁条件决定；本次各点间的变化还包含电流及霍尔电压读数的影响。")
 
     # 变体组合：误差分析 / 结论
     if "误差分析" in variants:

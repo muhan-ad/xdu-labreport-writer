@@ -26,6 +26,30 @@ https.request = function stubbedRequest(url, options, cb) {
 
 const network = require('../src/main/network');
 
+test('optional telemetry reports response phases and identifiers without body or authorization',async()=>{
+ const events=[];
+ await network.json('https://example.com/v1/chat/completions',{method:'POST',body:'PRIVATE_IMAGE_AND_PROMPT',
+  headers:{Authorization:'Bearer PRIVATE_KEY'},onTelemetry:event=>events.push(event)});
+ for(const phase of ['response_headers','first_response_byte','response_complete','json_parsed'])assert.ok(events.some(e=>e.phase===phase),phase);
+ assert.equal(events.find(e=>e.phase==='response_complete').responseBytes,11);
+ assert.doesNotMatch(JSON.stringify(events),/PRIVATE/);
+});
+
+test('interrupted body reports its error code, phase, received bytes and HTTP status',async t=>{
+ const original=https.request;t.after(()=>{https.request=original;});
+ https.request=(url,options,callback)=>{
+  const req=new EventEmitter();req.destroy=()=>{};
+  req.end=()=>{
+   const res=Readable.from((async function*(){yield Buffer.from('{');throw Object.assign(new Error('aborted'),{code:'ECONNRESET'});})());
+   res.statusCode=200;res.headers={};process.nextTick(()=>callback(res));
+  };return req;
+ };
+ await assert.rejects(network.json('https://example.com/v1/test'),error=>{
+  assert.equal(error.code,'ECONNRESET');assert.equal(error.networkPhase,'first_response_byte');
+  assert.equal(error.responseBytes,1);assert.equal(error.httpStatus,200);return true;
+ });
+});
+
 test('connection pool carries no hidden socket timeout', () => {
   assert.ok(network.agent instanceof https.Agent, 'network 必须导出自建连接池');
   assert.ok(!network.agent.options.timeout,

@@ -29,7 +29,14 @@ def _compute(data: dict) -> dict:
     if isinstance(wavelength, bool) or not isinstance(wavelength, (int, float)) or not math.isfinite(wavelength) or wavelength <= 0:
         raise ValueError("光源波长 λ：请填写有限正数（nm）")
     LAMBDA = wavelength * 1e-6
-    rings = [int(v) for v in data["rings"]]          # 20, 19, ..., 11
+    rings = data.get("rings")
+    if (not isinstance(rings, list) or len(rings) != 10 or any(
+            isinstance(v, bool) or not isinstance(v, (int, float))
+            or not math.isfinite(v) or v <= 0 or v != int(v) for v in rings)):
+        raise ValueError("暗环序号应为10个连续递减的正整数，例如20、19、…、11")
+    rings = [int(v) for v in rings]
+    if any(rings[i] - rings[i + 1] != 1 for i in range(9)):
+        raise ValueError("本实验采用隔5项逐差法，暗环序号必须连续递减，不能跳号或重复")
     d_left = [float(v) for v in data["d_left"]]       # 左侧读数
     d_right = [float(v) for v in data["d_right"]]     # 右侧读数
 
@@ -172,7 +179,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("")  # 段落容器
     doc.add_run("采用逐差法处理数据，取环距 ")
     doc.add_inline_math(f"m - n = {SKIP_N}")
-    doc.add_run("，将环序 20~16 与 15~11 逐项配对，计算 ")
+    doc.add_run(f"，将环序 {r['rings'][0]}~{r['rings'][4]} 与 {r['rings'][5]}~{r['rings'][9]} 逐项配对，计算 ")
     doc.add_inline_math("D_m^2 - D_{m-5}^2")
     doc.add_run(f" 的 {len(r['diffs'])} 组差值。")
     doc.add_paragraph("曲率半径平均值：")

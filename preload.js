@@ -10,6 +10,9 @@ contextBridge.exposeInMainWorld('labAPI', {
   pickTableImage: () => ipcRenderer.invoke('pick-table-image'),
   saveTableImage: (expPath, dataUrl) => ipcRenderer.invoke('save-table-image', expPath, dataUrl),
   ocrRecognize: (params) => ipcRenderer.invoke('ocr-recognize', params),
+  readOcrResult: (expPath) => ipcRenderer.invoke('ocr-result-read', expPath),
+  saveOcrResult: (expPath, state, revision) => ipcRenderer.invoke('ocr-result-save', expPath, state, revision),
+  resetExperimentData: expPath => ipcRenderer.invoke('reset-experiment-data', expPath),
   // 识图训练样本（三件套：数据图片 + AI 识别 + 人工校对）
   saveVisionSample: (payload) => ipcRenderer.invoke('save-vision-sample', payload),
   listVisionSamples: () => ipcRenderer.invoke('list-vision-samples'),
@@ -46,6 +49,7 @@ contextBridge.exposeInMainWorld('labAPI', {
   // 方式三：schema/data 读写（表单模式）
   readSchema: (expPath) => ipcRenderer.invoke('read-schema', expPath),
   readData: (expPath) => ipcRenderer.invoke('read-data', expPath),
+  fillAllTestData: paths => ipcRenderer.invoke('fill-all-test-data', paths),
   readSampleData: (expPath) => ipcRenderer.invoke('read-sample-data', expPath),
   writeData: (expPath, data) => ipcRenderer.invoke('write-data', expPath, data),
   readCalculationContext: (expPath) => ipcRenderer.invoke('read-calculation-context', expPath),
@@ -79,7 +83,7 @@ contextBridge.exposeInMainWorld('labAPI', {
   copyText: (text) => ipcRenderer.invoke('copy-text', text),
   openDataFile: (expPath) => ipcRenderer.invoke('open-data-file', expPath),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
-  openSchoolPortal: () => ipcRenderer.invoke('open-school-portal'),
+  openCourseSelection: () => ipcRenderer.invoke('open-course-selection'),
   // 贡献数据上传（COS 直传）
   contributeGetCredentials: (payload) => ipcRenderer.invoke('contribute-get-credentials', payload),
   contributeUpload: (payload) => ipcRenderer.invoke('contribute-upload', payload),
@@ -122,6 +126,7 @@ contextBridge.exposeInMainWorld('labAPI', {
   importCustomVariants: () => ipcRenderer.invoke('import-custom-variants'),
   // 诊断日志导出（设置-开发者调试）
   exportDiagnostics: (payload) => ipcRenderer.invoke('export-diagnostics', payload),
+  checkResourceIntegrity: () => ipcRenderer.invoke('check-resource-integrity'),
   // 渲染进程事件转发到主进程日志
   logEvent: (msg) => ipcRenderer.send('log-event', msg),
   // 关闭前未保存提示

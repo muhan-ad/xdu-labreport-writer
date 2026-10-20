@@ -6,7 +6,7 @@
       "fields": [
         {
           "key": "kh",
-          "label": "霍尔片灵敏度 K_H（按元件标称值填写）",
+          "label": "霍尔片灵敏度 K_H",
           "type": "number",
           "unit": "V/(A·T)",
           "required": true,

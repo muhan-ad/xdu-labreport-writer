@@ -93,11 +93,11 @@
       ]
     },
     {
-      "name": "实际仪器参数（不使用教材或示例数值）",
+      "name": "仪器参数",
       "fields": [
         {
           "key": "instrument_delta_timer",
-          "label": "计时器仪器限差（按实际仪器填写）",
+          "label": "计时器仪器限差",
           "type": "number",
           "unit": "s",
           "required": true,
@@ -107,7 +107,7 @@
         },
         {
           "key": "instrument_delta_micrometer",
-          "label": "千分尺仪器限差（按实际仪器填写）",
+          "label": "千分尺仪器限差",
           "type": "number",
           "unit": "mm",
           "required": true,
@@ -117,7 +117,7 @@
         },
         {
           "key": "instrument_delta_ruler",
-          "label": "长度量具仪器限差（按实际仪器填写）",
+          "label": "长度量具仪器限差",
           "type": "number",
           "unit": "mm",
           "required": true,

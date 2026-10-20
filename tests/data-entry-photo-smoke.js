@@ -8,7 +8,7 @@ app.setPath('userData',profile);app.on('browser-window-created',(_,w)=>w.hide())
 require(path.join(process.env.LABREPORT_TEST_APP_ASAR || root,'main.js'));
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 app.whenReady().then(async()=>{try{
- let wc;for(let i=0;i<200;i++){wc=BrowserWindow.getAllWindows()[0]?.webContents;if(wc&&await wc.executeJavaScript('typeof experiments!=="undefined"&&experiments.length===27').catch(()=>false))break;await delay(200);}
+ let wc;for(let i=0;i<200;i++){wc=BrowserWindow.getAllWindows()[0]?.webContents;if(wc&&await wc.executeJavaScript('typeof experiments!=="undefined"&&experiments.length===28').catch(()=>false))break;await delay(200);}
  const ev=s=>wc.executeJavaScript(s);wc.setBackgroundThrottling(false);
  const launchWindow=BrowserWindow.fromWebContents(wc);launchWindow.hide();assert.equal(launchWindow.isVisible(),false);app.emit('second-instance',{},[],root);assert.equal(launchWindow.isVisible(),true);launchWindow.hide();record('PASS second-instance shows hidden window');
  assert.equal(await ev('loadStudentInfo().date===localToday()'),true);
@@ -49,6 +49,6 @@ app.whenReady().then(async()=>{try{
  assert.equal(prepareReportPhoto(photo,path.join(profile,'cache'),nativeImage),result);
  const small=path.join(profile,'small.png');fs.writeFileSync(small,nativeImage.createFromBitmap(Buffer.alloc(40*40*4,255),{width:40,height:40}).toPNG());
  assert.equal(prepareReportPhoto(small,path.join(profile,'cache'),nativeImage),small);
- record('PASS explicit presets + manual input + no default + layout / 27 test forms / unsaved original preservation / wavelength field / adjustable date + restart reset / photo <1MB + source preserved + cache');app.exit(0);
+ record('PASS explicit presets + manual input + no default + layout / 28 test forms / unsaved original preservation / wavelength field / adjustable date + restart reset / photo <1MB + source preserved + cache');app.exit(0);
 }catch(e){record(e.stack);app.exit(1)}});
 setTimeout(()=>{record("TIMEOUT");app.exit(2)},120000).unref();

@@ -45,7 +45,7 @@ app.whenReady().then(async () => {
     }));
     await until(() => BrowserWindow.getAllWindows().length > 0);
     const main = BrowserWindow.getAllWindows()[0], evaluate = code => main.webContents.executeJavaScript(code);
-    await until(() => evaluate('typeof experiments !== "undefined" && experiments.length === 27').catch(() => false));
+    await until(() => evaluate('typeof experiments !== "undefined" && experiments.length === 28').catch(() => false));
     const entry = await evaluate(`(() => { const b=document.getElementById('btnOpenSchoolPortal'), r=b.getBoundingClientRect();
       return {text:b.textContent,visible:r.width>0 && r.top>=0 && r.bottom<innerHeight, x:r.left, right:r.right, width:innerWidth}; })()`);
     assert.match(entry.text, /学校实验系统/); assert.equal(entry.visible, true); assert.ok(entry.right <= entry.width);
