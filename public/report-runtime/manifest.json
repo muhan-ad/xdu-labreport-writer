@@ -1,0 +1,182 @@
+{
+  "runtimeVersion": "0.29.3",
+  "source": "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/",
+  "files": {
+    "contourpy-1.3.1-cp313-cp313-pyodide_2025_0_wasm32.whl": {
+      "bytes": 132912,
+      "sha256": "bfb8aebbd6fe129eb04b9339eacc593f3ff31c9f3fe6067d48c59bf579269a94"
+    },
+    "cycler-0.12.1-py3-none-any.whl": {
+      "bytes": 8321,
+      "sha256": "a140384709bfc674001fbd3b1e32a3bf8b531c0413d02f98badbd2d8ecc924c1"
+    },
+    "desktop-LICENSE.txt": {
+      "bytes": 1056,
+      "sha256": "1126322e2cc8d165adc4c792eeb195717de2bcc7b39be1ce77959d78e87ef685"
+    },
+    "desktop-README.md.txt": {
+      "bytes": 3187,
+      "sha256": "c46b35f67e67b2c40b8c915a80d6cc0373bc1afa8cb57d99948340b4ecc7c44b"
+    },
+    "et_xmlfile-2.0.0-py3-none-any.whl": {
+      "bytes": 18059,
+      "sha256": "7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa"
+    },
+    "fonttools-4.56.0-py3-none-any.whl": {
+      "bytes": 1089800,
+      "sha256": "9d6518c8ad4d88019bc72045108eca154301014215222408aa047cf4955c726d"
+    },
+    "kiwisolver-1.4.8-cp313-cp313-pyodide_2025_0_wasm32.whl": {
+      "bytes": 36920,
+      "sha256": "74fef16f229c3280f386ace367f36ac5ad8597ebabef45c6cf8bc2fa8aa3be70"
+    },
+    "LabMakerSansSC.ttf": {
+      "bytes": 456812,
+      "sha256": "9367fd90aecb77f500f1b662fd48b1dcabe3ce60ece58350984d3422e7670b29"
+    },
+    "latex2mathml-3.81.0-py3-none-any.whl": {
+      "bytes": 79185,
+      "sha256": "d317710393fe20579aea39cfe8928fa2ad9b8780896e585326c75e89c1d1d1a4"
+    },
+    "lxml-6.0.2-cp313-cp313-pyodide_2025_0_wasm32.whl": {
+      "bytes": 1777696,
+      "sha256": "99b959a55eaeb41a2997fa022859892880c2b708af01ff336c34c7b125c80916"
+    },
+    "mathml2omml-0.0.2-py3-none-any.whl": {
+      "bytes": 23853,
+      "sha256": "6a2a1a10e90d7d8a672a1b37b6b49a6187e6720439aeb922949d254bb4656f25"
+    },
+    "matplotlib-3.8.4-cp313-cp313-pyodide_2025_0_wasm32.whl": {
+      "bytes": 6724331,
+      "sha256": "65f657efbb717a6aa7ccd10c0729a0e6993c1da757bd68601d97a2905362e8d4"
+    },
+    "NotoSansSC-OFL.txt": {
+      "bytes": 4388,
+      "sha256": "1c05c68c34f9708415aada51f17e1b0092d2cea709bf4a94cd38114f9e73d7d9"
+    },
+    "numpy-2.2.5-cp313-cp313-pyodide_2025_0_wasm32.whl": {
+      "bytes": 3103966,
+      "sha256": "6eaab6a7bb658d71ebe702911a3deab715323642462eb41b65565ca6a7cc23f1"
+    },
+    "openpyxl-3.1.5-py2.py3-none-any.whl": {
+      "bytes": 250910,
+      "sha256": "5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2"
+    },
+    "packaging-24.2-py3-none-any.whl": {
+      "bytes": 71930,
+      "sha256": "c18cde5592cc3d1823e9cc3a9a4fb436b02c15e3f8d7f5f69962f77b1b109da1"
+    },
+    "pillow-11.3.0-cp313-cp313-pyodide_2025_0_wasm32.whl": {
+      "bytes": 1058393,
+      "sha256": "7e1168616481f685f277d7fad1d197f3a625540542a2cd292cdc8958ab083d6e"
+    },
+    "pyodide-lock.json": {
+      "bytes": 4932,
+      "sha256": "b43cd356798a47878955103a704b3ac78f3be4dac89d51b0215e49ec4d4d3fbe"
+    },
+    "pyodide.asm.js": {
+      "bytes": 1074322,
+      "sha256": "1263f02b5b26099b96112378156f242dd98b39a8201ba7765e5fe3d455c5ce91"
+    },
+    "pyodide.asm.wasm": {
+      "bytes": 8647684,
+      "sha256": "e2f4ee75b325e35eb31bfb8c613d4dd5098f5502c156a97847686875b5025480"
+    },
+    "pyodide.js": {
+      "bytes": 18597,
+      "sha256": "718d40f1c015dd25ec724cc8fc4e2325d6a45a92ae225121ff6953f224a16f72"
+    },
+    "pyodide.mjs": {
+      "bytes": 17616,
+      "sha256": "23213d27e9dacbda6f25f955fb38dabfc40ada082c04ee253047ea5dddcaa3b5"
+    },
+    "pyparsing-3.2.1-py3-none-any.whl": {
+      "bytes": 107717,
+      "sha256": "8f314b856e7e87cb3a426ce4db341308199157f6a757256e215e4d418e216d86"
+    },
+    "python_dateutil-2.9.0.post0-py2.py3-none-any.whl": {
+      "bytes": 229892,
+      "sha256": "ddca13fc1046572701872b9517622b57f847c77eea4bf9fdc995256e6c82beaf"
+    },
+    "python_docx-1.2.0-py3-none-any.whl": {
+      "bytes": 252987,
+      "sha256": "3fd478f3250fbbbfd3b94fe1e985955737c145627498896a8a6bf81f4baf66c7"
+    },
+    "python_stdlib.zip": {
+      "bytes": 2423989,
+      "sha256": "4298b6ee445cb724c3973437da47789752b9e6ff4e26619026b283ec801fc46b"
+    },
+    "pytz-2025.2-py2.py3-none-any.whl": {
+      "bytes": 509225,
+      "sha256": "5a9c9286f6c03a4d16ee4ced15d511097568e1e41329d3499b597ecd7f1d317e"
+    },
+    "report-sources.json": {
+      "bytes": 1756009,
+      "sha256": "b6cf9c77832d8b8da0ace35aa79c7d4b328ac5341b30a6a5a4aee51d6907b413"
+    },
+    "six-1.17.0-py2.py3-none-any.whl": {
+      "bytes": 11050,
+      "sha256": "1f715fc699e802b31e53290ead6c16a4d6a8da462a225d2e06097fce45ab70b9"
+    },
+    "typing_extensions-4.16.0-py3-none-any.whl": {
+      "bytes": 45571,
+      "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
+    },
+    "runner.py": {
+      "bytes": 44201,
+      "sha256": "243c91b77e4e7bb8990159b3d1fe41382ead01921273e8d6a53dff67f6133842"
+    },
+    "catalog.json": {
+      "bytes": 42804,
+      "sha256": "dc903d7a5631b7ad97344921ea972c93a629028fcf463e8b9684e37f4fd6401d"
+    },
+    "package.json": {
+      "bytes": 19,
+      "sha256": "fa6944a20ca5e6fbaf98fd202eb8c7004d5b4ab786e36b9ed02ee31dbe196c9f"
+    },
+    "Pyodide-LICENSE.txt": {
+      "bytes": 16725,
+      "sha256": "1f256ecad192880510e84ad60474eab7589218784b9a50bc7ceee34c2b91f1d5"
+    },
+    "Pyodide-SOURCE.txt": {
+      "bytes": 242,
+      "sha256": "d96517deac84d3d5c45beef3b6c3a452a732d9b447cc3cdd0e8c8d5ef83ad262"
+    },
+    "chart_preview.py": {
+      "bytes": 10205,
+      "sha256": "b129bf08282dc6419895911e2bb14060bc155630473729cf62b99177170eeada"
+    },
+    "insert_chart.py": {
+      "bytes": 10353,
+      "sha256": "f20c2d004a9ffd7097e55bc494215b0ecc30b600eb5d9022782f53d060e19789"
+    },
+    "ai_plot.py": {
+      "bytes": 7699,
+      "sha256": "ea815e545e72cb3f706320290f868c5022231deb6790f539b4482a242fc048e1"
+    },
+    "scipy-1.14.1-cp313-cp313-pyodide_2025_0_wasm32.whl": {
+      "bytes": 13258840,
+      "sha256": "96fbc718e81cf54ac7df7d8a2c24e370fa3c45086e917c3d58752207d85d21af"
+    },
+    "libopenblas-0.3.26.zip": {
+      "bytes": 2119540,
+      "sha256": "f8f5db65c9367ed7f057d0ee853d94ddb3c007968aa8138253461dad42537fa2"
+    },
+    "pandas-2.3.3-cp313-cp313-pyodide_2025_0_wasm32.whl": {
+      "bytes": 4493384,
+      "sha256": "5b1c0acfc8555be16057e8609e9eb7f279037c2469032bcc23e2a691380a50ae"
+    },
+    "variant_edits.py": {
+      "bytes": 4781,
+      "sha256": "2f15e12ab7485923969e49e4755fc23a089a77c96cb2c7adce38b2e0692e3016"
+    }
+  },
+  "pureWheels": [
+    "python_docx-1.2.0-py3-none-any.whl",
+    "openpyxl-3.1.5-py2.py3-none-any.whl",
+    "et_xmlfile-2.0.0-py3-none-any.whl",
+    "latex2mathml-3.81.0-py3-none-any.whl",
+    "mathml2omml-0.0.2-py3-none-any.whl",
+    "typing_extensions-4.16.0-py3-none-any.whl"
+  ]
+}

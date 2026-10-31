@@ -1,0 +1,3 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {measurementLabel} from '../src/domain/measurement-label.ts';
+test('measurement labels render subscripts and superscripts using shared safe formatting',()=>{assert.equal(measurementLabel('位置 L_i'),'位置 L<sub>i</sub>');assert.equal(measurementLabel('n_{i} 与 x^2'),'n<sub>i</sub> 与 x<sup>2</sup>');assert.equal(measurementLabel('λ_{m1}'),'λ<sub>m1</sub>');assert.equal(measurementLabel('i_R^2'),'i<sub>R</sub><sup>2</sup>');});
+test('measurement formatting does not inject executable HTML',()=>{const out=measurementLabel('<img src=x onerror=alert(1)> L_i & n_{<script>}');assert.doesNotMatch(out,/<img|<script|<\/script>/);assert.match(out,/&lt;img/);assert.match(out,/L<sub>i<\/sub>/);});

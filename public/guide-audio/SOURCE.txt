@@ -1,0 +1,8 @@
+Mechvibes / Hai Nguyen
+CherryMX Brown - PBT keycaps
+https://github.com/hainguyents13/mechvibes
+Commit: 326252a13e7bef4f1c35d08ef0189b5af6f8ba02
+License: MIT; see LICENSE.txt
+
+Mobile derivative: 25 used key clips, 44.1 kHz stereo PCM16 WAV; 20 ms gaps.
+Prepared by scripts/prepare-keyboard-sprite.mjs; original recording and config retained in scripts/assets/guide-audio for reproducible development only.

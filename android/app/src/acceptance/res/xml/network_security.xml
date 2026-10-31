@@ -1,0 +1,5 @@
+<network-security-config>
+    <!-- Only the disposable acceptance package may use the loopback mock. -->
+    <base-config cleartextTrafficPermitted="false"><trust-anchors><certificates src="system" /></trust-anchors></base-config>
+    <domain-config cleartextTrafficPermitted="true"><domain>wlsy.xidian.edu.cn</domain><domain>127.0.0.1</domain></domain-config>
+</network-security-config>

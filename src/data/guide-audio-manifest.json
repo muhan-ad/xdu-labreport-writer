@@ -1,0 +1,18 @@
+{
+  "keyboard.wav": {
+    "bytes": 905188,
+    "sha256": "13a2ff3b54df8bdaa2b190b2d336b439ea2c9ab5a6d5316b82cc8664fcf7afd8"
+  },
+  "config.json": {
+    "bytes": 1824,
+    "sha256": "5dcaf7791f4438d01cd5a7c2a0da965672d90d16081cd1546170a332c5a6e3f8"
+  },
+  "LICENSE.txt": {
+    "bytes": 1067,
+    "sha256": "398acd97a6d32c449f5f1c6a7cb87a7907e6ae56ecfa4e433a00673a76449df5"
+  },
+  "SOURCE.txt": {
+    "bytes": 410,
+    "sha256": "89c56519de67da2e110b094e065e3f11dca6eb42abebe71fc5ddbdc2bc5c113a"
+  }
+}

@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';import fs from 'node:fs';import {openBrowserTest} from './browser-test-harness.mjs';
+const b=await openBrowserTest(process.cwd(),'tests/fixtures/measurement-recovery-ui.ts','<main id="app"></main>');
+try{
+ const start="import('/test.mjs').then(async m=>{window.fixture=m;await m.start();return true})";
+ await b.evaluate(start);await b.wait("!!document.querySelector('[data-open]')");await b.evaluate("document.querySelector('[data-open]').click()");await b.wait("!!document.querySelector('input.measurement')");
+ await b.evaluate("const e=document.querySelector('input.measurement');e.value='53.2';e.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('[data-action=save]').click()");await b.wait("document.querySelector('#save-state').textContent.includes('已保存')");
+ await b.evaluate("fixture.failAfterWrites(1);document.querySelector('[data-action=more]').click()");await b.wait("document.querySelector('#modal').open");await b.evaluate("document.querySelector('[data-menu=clear]').click()");await b.wait("document.querySelector('#modal-title').textContent.includes('清除')");await b.evaluate("document.querySelector('[data-dialog-confirm]').click()");await b.wait("document.querySelector('#toast').textContent.includes('清除未完成')");
+ await b.cdp('Page.reload');await b.wait("document.readyState==='complete'");await b.evaluate(start);await b.wait("!!document.querySelector('input.measurement')");
+ assert.equal(await b.evaluate("document.querySelector('input.measurement').value"),'53.2');assert.match(await b.evaluate("document.querySelector('#toast').textContent"),/清除未完成/);
+ await b.evaluate("document.querySelector('[data-action=more]').click()");await b.wait("document.querySelector('#modal').open");await b.evaluate("document.querySelector('[data-menu=clear]').click()");await b.wait("document.querySelector('#modal-title').textContent.includes('清除')");await b.evaluate("document.querySelector('[data-dialog-confirm]').click()");await b.wait("document.querySelector('#toast').textContent.includes('已清除')");
+ await b.cdp('Page.reload');await b.wait("document.readyState==='complete'");await b.evaluate(start);await b.wait("!!document.querySelector('input.measurement')");assert.equal(await b.evaluate("document.querySelector('input.measurement').value"),'');assert.equal(b.errors.length,0);
+ fs.writeFileSync('artifacts/verification/clear-journal-reload-ui.json',JSON.stringify({checks:['partial clear write restores saved value after full page reload','completed clear stays empty after full page reload'],scope:'actual UI and isolated Chromium storage; page reload, not Android process termination'},null,2));console.log(JSON.stringify({passed:2}));
+}finally{await b.close();}

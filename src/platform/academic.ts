@@ -1,0 +1,6 @@
+import {Capacitor,registerPlugin} from '@capacitor/core';
+import {parseAcademicResult,type AcademicResult} from '../domain/academic.ts';
+export interface AcademicPort {status(account:string):Promise<AcademicResult>;connect(account:string,id:string):Promise<AcademicResult>;cancel(id:string):Promise<void>;clear(account:string):Promise<void>;retrySave?(account:string):Promise<void>;}
+const native=registerPlugin<{status(v:{account:string}):Promise<unknown>;connect(v:{account:string;id:string}):Promise<unknown>;cancel(v:{id:string}):Promise<void>;clear(v:{account:string;confirmed:boolean}):Promise<void>;retrySave(v:{account:string}):Promise<void>}>('LabAcademic');
+function supported(){if(Capacitor.getPlatform()!=='android')throw Error('当前平台的教务认证窗口尚未接入');}
+export const academic:AcademicPort={retrySave:async account=>{supported();await native.retrySave({account});},status:async account=>{supported();return parseAcademicResult(await native.status({account}),account);},connect:async(account,id)=>{supported();return parseAcademicResult(await native.connect({account,id}),account);},cancel:async id=>{supported();await native.cancel({id});},clear:async account=>{supported();await native.clear({account,confirmed:true});}};

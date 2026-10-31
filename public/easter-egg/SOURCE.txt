@@ -1,0 +1,1 @@
+Original desktop danger-effects.js and do-not-click.mp3, ported at user request. Credits: 怀山 / 实验搭子. Source JS SHA256: bbe931d1667bfe4a7bcff5d3310cf96d66b2780ee653ba198186e59873cb0790. Audio SHA256: f6fe9d00f696ecda0b9fea7b4d12fc05b2af765d97aab0e192b801817b7cd681. The source effect pool is preserved; mobile integration runs in an opaque sandbox and adapts desktop window calls.

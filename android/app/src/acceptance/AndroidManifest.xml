@@ -1,0 +1,15 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity android:name="com.labmaker.app.NativeInstallerActivity"
+            android:exported="true" android:label="本地系统安装验收" />
+        <!-- Local acceptance APK only. Never merged into debug/release delivery. -->
+        <activity android:name="com.labmaker.app.NativeFileReceiverActivity"
+            android:exported="true" android:label="本地文件验收">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

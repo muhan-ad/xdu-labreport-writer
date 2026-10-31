@@ -1,60 +1,14 @@
-# 依赖
 node_modules/
-
-# 构建产物
 dist/
-out/
-build/
-
-# 日志
-*.log
-npm-debug.log*
-
-# 系统文件
-.DS_Store
-Thumbs.db
-
-# 编辑器
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# 临时文件
-*.tmp
-*.bak
-*.old
-
-# 保留 lock-config.json（锁定配置，需要同步）
-# 不要排除 lock-config.json
-
-# 方式三：嵌入式 Python 运行时、本地备份/临时产物体积大，不入库
-python-runtime/
-backup-*/
-*.tar.gz
-.mimosa/
-# 注：data.json / schema.json / variants.json / rag/ 是运行所需数据与知识库，保持入库
-
-# Python 字节码与运行时生成产物，不入库
-__pycache__/
-*.pyc
-物理实验/实验脚本/**/*.png
-物理实验/实验脚本/**/*.docx
-# AI 按章节润色的源文缓存（本机运行产物，可能含润色文本，不入库）
-物理实验/实验脚本/*/.lab_sections.json
-# 遗留 Excel 数据模板（方式三后数据真相为 data.json，不再入库）
-物理实验/实验脚本/*/数据.xlsx
-# 旧架构测试原型目录（已于 2026-09 移除，防止误加回）
-test/
-*.docx
-
-.zcode/
-
-# 本地凭据与发布私钥（客户端公钥仍入库）
-.env
-.env.*
+artifacts/
+.env*
 !.env.example
-.labreport-release/
-data-update-ed25519.pem
-*.pfx
-*.p12
+android/.gradle/
+android/local.properties
+android/.idea/
+android/**/build/
+*.jks
+*.keystore
+ios/App/Pods/
+ios/App/DerivedData/
+.DS_Store

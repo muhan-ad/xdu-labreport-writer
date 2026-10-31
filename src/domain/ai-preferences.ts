@@ -1,0 +1,4 @@
+export interface AIPreferences {version:1;style:'rigorous'|'concise'|'detailed';instruction:string;}
+export const defaultAIPreferences=():AIPreferences=>({version:1,style:'rigorous',instruction:''});
+export function validAIPreferences(raw:unknown):raw is AIPreferences {const p=raw as AIPreferences;return !!p&&p.version===1&&['rigorous','concise','detailed'].includes(p.style)&&typeof p.instruction==='string'&&p.instruction.length<=2000;}
+export function preferencePrompt(raw?:AIPreferences){const p=raw??defaultAIPreferences();if(!validAIPreferences(p))throw Error('AI 写作偏好无效');const styles={rigorous:'严谨学术风格：使用规范的物理学术语，逻辑严密，表述精确，符合大学物理实验报告的学术规范。',concise:'简洁明了风格：语言简练，直击要点，避免冗余修饰，用最少的文字表达完整的实验内容。',detailed:'详细充实风格：内容丰富，对实验现象和数据进行深入分析，补充必要的物理意义解释，使报告更加充实完整。'};return styles[p.style]+(p.instruction.trim()?'\n【本实验自定义要求：与技能共同遵循，不得违反任务格式、知识与数据硬约束】\n'+p.instruction.trim():'');}

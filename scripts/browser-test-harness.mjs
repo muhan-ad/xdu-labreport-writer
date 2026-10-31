@@ -1,0 +1,39 @@
+import fs from 'node:fs';import path from 'node:path';import http from 'node:http';import crypto from 'node:crypto';import {spawn} from 'node:child_process';import {build} from 'vite';
+export async function openBrowserTest(root,entry,body,options={}){
+ const runtimeFiles=options.runtime?new Set(['manifest.json',...Object.keys(JSON.parse(fs.readFileSync(path.join(root,'public/report-runtime/manifest.json'))).files)]):new Set();
+ const base=path.resolve('E:/tools/app-maker/browser-tests'),profile=path.join(base,'account-ui-'+Date.now()+'-'+crypto.randomUUID());fs.mkdirSync(profile,{recursive:true});
+ const built=options.production?null:await build({root,configFile:false,logLevel:'error',build:{write:false,minify:false,rollupOptions:{output:{inlineDynamicImports:true}},lib:{entry:path.resolve(root,entry),formats:['es']}}});
+ const script=built?(Array.isArray(built)?built[0]:built).output.find(file=>file.type==='chunk'&&file.isEntry).code:'',sockets=new Set(),productionFiles=new Map();
+ if(options.production){const base=options.productionDirectory?path.resolve(options.productionDirectory):path.join(root,'dist');const visit=(directory)=>{for(const item of fs.readdirSync(directory,{withFileTypes:true})){const file=path.join(directory,item.name);if(item.isSymbolicLink())continue;if(item.isDirectory())visit(file);else if(item.isFile())productionFiles.set('/'+path.relative(base,file).replaceAll('\\','/'),file);}};visit(base);}
+ let probeRequests=0,productionFailedOnce=false;const server=http.createServer((req,res)=>{
+  const route=new URL(req.url,'http://localhost').pathname;if(options.easterEggAudio&&route==='/egg-network-probe'){probeRequests++;res.setHeader('Access-Control-Allow-Origin','*');res.end('probe');return;}
+  if(options.production){const file=productionFiles.get(route==='/'?'/index.html':route);if(!file){res.writeHead(404);res.end();return;}if(options.productionFailFile===route&&!productionFailedOnce){productionFailedOnce=true;res.writeHead(503);res.end('Simulated missing local module');return;}const send=()=>{if(res.destroyed)return;res.setHeader('Content-Type',({'.html':'text/html; charset=utf-8','.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.json':'application/json','.wasm':'application/wasm','.png':'image/png','.svg':'image/svg+xml'})[path.extname(file)]||'application/octet-stream');res.end(fs.readFileSync(file));};if(options.productionDelayMs&&(options.productionDelayedFile?route===options.productionDelayedFile:/\/ai-history-manager-[^/]+[.]js$/.test(route)))setTimeout(send,options.productionDelayMs);else send();return;}
+  if(route==='/'){res.setHeader('Content-Type','text/html; charset=utf-8');res.end('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/style.css"></head><body>'+body+'</body></html>');}
+  else if(route==='/test.mjs'){res.setHeader('Content-Type','text/javascript');res.end(script);}
+  else if(route==='/style.css'){res.setHeader('Content-Type','text/css');res.end(fs.readFileSync(path.join(root,'src/style.css')));}
+  else if(options.easterEggAudio&&route==='/easter-egg/do-not-click.mp3'){res.setHeader('Content-Type','audio/mpeg');res.end(fs.readFileSync(path.join(root,'public/easter-egg/do-not-click.mp3')));}
+  else if(options.guideAudio&&[options.guideAudioSource?'/guide-audio/keyboard.ogg':'/guide-audio/keyboard.wav','/guide-audio/config.json'].includes(route)){res.setHeader('Content-Type',route.endsWith('.ogg')?'audio/ogg':route.endsWith('.wav')?'audio/wav':'application/json');const directory=options.guideAudioSource?'scripts/assets/guide-audio':'public/guide-audio';res.end(fs.readFileSync(path.join(root,directory,path.basename(route))));}
+  else if(options.runtime&&(route==='/report-worker.js'||(route.startsWith('/report-runtime/')&&runtimeFiles.has(route.slice('/report-runtime/'.length))))){const file=route.slice(1);res.setHeader('Content-Type',file.endsWith('.js')||file.endsWith('.mjs')?'text/javascript':file.endsWith('.json')?'application/json':file.endsWith('.wasm')?'application/wasm':'application/octet-stream');res.end(fs.readFileSync(path.join(root,'public',file)));}
+  else{res.writeHead(404);res.end();}
+ });server.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const browser=spawn('C:/Program Files/Google/Chrome/Application/chrome.exe',['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--disable-extensions','--disable-background-networking','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{windowsHide:true,stdio:'ignore'});
+ const sleep=ms=>new Promise(r=>setTimeout(r,ms));let socket,id=0;const pending=new Map(),errors=[];
+ const cdp=(method,params={},sessionId)=>new Promise((resolve,reject)=>{const key=++id,timer=setTimeout(()=>{pending.delete(key);reject(Error('CDP timeout '+method));},30000);pending.set(key,{resolve,reject,timer});socket.send(JSON.stringify({id:key,method,params,...(sessionId?{sessionId}:{})}));});
+ const evaluate=async expression=>{const r=await cdp('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(r.exceptionDetails.exception?.description||r.exceptionDetails.text);return r.result.value;};
+ async function close(){
+  try{if(socket?.readyState===1)await Promise.race([cdp('Browser.close'),sleep(1500)]);}catch{}socket?.close();for(const p of pending.values()){clearTimeout(p.timer);p.reject(Error('Browser closed'));}pending.clear();
+  if(browser.exitCode===null){await Promise.race([new Promise(r=>browser.once('exit',r)),sleep(1500)]);if(browser.exitCode===null)browser.kill();}
+  const closing=new Promise(r=>server.close(r));for(const s of sockets)s.destroy();await closing;
+  if(path.resolve(profile).startsWith(base+path.sep)&&/^account-ui-\d+-[a-f0-9-]{36}$/.test(path.basename(profile)))try{fs.rmSync(profile,{recursive:true,force:true,maxRetries:2});}catch{}
+ }
+ try{
+  const file=path.join(profile,'DevToolsActivePort');for(let i=0;!fs.existsSync(file);i++){if(browser.exitCode!==null||i>200)throw Error('Owned test browser failed to start');await sleep(50);}
+  let port=0;for(let i=0;i<100;i++){try{const lines=fs.readFileSync(file,'utf8').trim().split('\n'),candidate=Number(lines[0]);if(lines.length>=2&&Number.isInteger(candidate)&&candidate>0&&candidate<65536){port=candidate;break;}}catch(e){if(!['EBUSY','ENOENT'].includes(e.code))throw e;}if(browser.exitCode!==null)throw Error('Owned test browser exited during startup');await sleep(25);}if(!port)throw Error('Owned test browser port was not readable');
+  const targets=await(await fetch('http://127.0.0.1:'+port+'/json')).json(),target=targets.find(t=>t.type==='page');
+  socket=new WebSocket(target.webSocketDebuggerUrl);await new Promise((resolve,reject)=>{socket.onopen=resolve;socket.onerror=reject;});
+  socket.onmessage=({data})=>{const m=JSON.parse(data);if(m.id&&pending.has(m.id)){const p=pending.get(m.id);pending.delete(m.id);clearTimeout(p.timer);m.error?p.reject(Error(m.error.message)):p.resolve(m.result);}else if(m.method==='Runtime.exceptionThrown')errors.push(m.params.exceptionDetails.text);};
+  await cdp('Page.enable');await cdp('Runtime.enable');if(options.initScript)await cdp('Page.addScriptToEvaluateOnNewDocument',{source:options.initScript});await cdp('Page.navigate',{url:'http://127.0.0.1:'+server.address().port+'/'});
+  for(let i=0;await evaluate('document.readyState')!=='complete';i++){if(i>200)throw Error('Test page did not load');await sleep(25);}
+  return {cdp,evaluate,close,errors,get probeRequests(){return probeRequests;},wait:async expression=>{for(let i=0;i<400;i++){if(await evaluate(expression))return;await sleep(25);}throw Error('UI wait timed out: '+expression);}};
+ }catch(error){await close();throw error;}
+}

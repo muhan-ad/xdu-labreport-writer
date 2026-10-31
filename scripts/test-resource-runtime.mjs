@@ -1,0 +1,16 @@
+// Uses the same offline WASM runtime as reports; no user data or network services.
+import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';
+import {loadPyodide} from '../public/report-runtime/pyodide.mjs';
+const root=path.resolve(import.meta.dirname,'..'),dir=path.join(root,'public/report-runtime'),manifest=JSON.parse(fs.readFileSync(path.join(dir,'manifest.json')));
+const py=await loadPyodide({indexURL:dir+path.sep,stdout:()=>{},stderr:()=>{}});await py.loadPackage(['numpy','matplotlib','lxml','pillow']);
+const site=py.runPython('import site;site.getsitepackages()[0]');for(const name of manifest.pureWheels)py.unpackArchive(new Uint8Array(fs.readFileSync(path.join(dir,name))),'zip',{extractDir:site});
+py.FS.mkdirTree('/lab');for(const name of ['report-sources.json','LabMakerSansSC.ttf','variant_edits.py'])py.FS.writeFile('/lab/'+name,fs.readFileSync(path.join(dir,name)));
+py.FS.writeFile('/lab/catalog.json',fs.readFileSync(path.join(root,'src/data/catalog.json')));await py.runPythonAsync(fs.readFileSync(path.join(root,'src/engine/runner.py'),'utf8'));
+const call=async()=>JSON.parse(await py.runPythonAsync('diagnose_runtime()')),checks=[];
+const first=await call();assert.equal(first.complete,true,JSON.stringify(first.problems));assert.equal(first.experiments,28);assert.equal(first.templates,28);assert.ok(first.scripts>40);checks.push('actual WASM, document/math/image libraries and all 28 source/template groups pass');
+const snapshot=py.runPython("json.dumps({str(p):__import__('hashlib').sha256(p.read_bytes()).hexdigest() for p in BASE.rglob('*') if p.is_file()},sort_keys=True)");
+py.runPython("diagnostic_backup=dict(SOURCES);diagnostic_catalog=list(CATALOG);diagnostic_source=CATALOG[0]['sourceId'];SOURCES['common/bad.py']='def broken(';SOURCES.pop(diagnostic_source+'/generate.py');SOURCES[diagnostic_source+'/variants.json']='{';SOURCES[diagnostic_source+'/schema.json']='{}'");
+const bad=await call();assert.equal(bad.complete,false);for(const name of ['common/bad.py','/generate.py','/variants.json','/schema.json'])assert.ok(bad.problems.some(p=>p.path.includes(name)),name);checks.push('missing generator, malformed source/schema/template are all reported rather than passing partially');
+py.runPython('SOURCES.clear();SOURCES.update(diagnostic_backup);CATALOG.append(CATALOG[0])');const duplicate=await call();assert.equal(duplicate.complete,false);assert.ok(duplicate.problems.some(p=>p.reason.includes('重复')));py.runPython('CATALOG[:]=diagnostic_catalog');checks.push('duplicate experiment identities fail the runtime check');
+assert.equal((await call()).complete,true);assert.equal(py.runPython("json.dumps({str(p):__import__('hashlib').sha256(p.read_bytes()).hexdigest() for p in BASE.rglob('*') if p.is_file()},sort_keys=True)"),snapshot);assert.equal(py.runPython("len(list(Path('/lab/jobs').iterdir()))"),0);checks.push('repeated diagnostic recovers and does not mutate source files or create report jobs');
+const out=path.join(root,'artifacts/verification/resource-runtime');fs.mkdirSync(out,{recursive:true});fs.writeFileSync(path.join(out,'results.json'),JSON.stringify({scope:'Actual offline WASM diagnosis; no Android cache operation or numerical accuracy claim',summary:first,checks},null,2));console.log(JSON.stringify({passed:checks.length,...first}));

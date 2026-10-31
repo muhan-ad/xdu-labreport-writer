@@ -1,0 +1,21 @@
+import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';import {openBrowserTest} from './browser-test-harness.mjs';
+const root=path.resolve(import.meta.dirname,'..'),out=path.join(root,'artifacts/verification/ios-signed-import');fs.mkdirSync(out,{recursive:true});
+const fallback=process.argv.includes('--simulate-no-ed25519');
+const init="window.CapacitorCustomPlatform={name:'ios'};"+(fallback?"(()=>{const original=crypto.subtle.importKey.bind(crypto.subtle);crypto.subtle.importKey=(format,key,algorithm,...rest)=>algorithm?.name==='Ed25519'?Promise.reject(new DOMException('模拟不支持','NotSupportedError')):original(format,key,algorithm,...rest)})()":"");
+const b=await openBrowserTest(root,'tests/fixtures/ios-signed-import-ui.ts','<main id="app"><div id="updates-host"></div></main>',{runtime:true,initScript:init});
+const ready=()=>b.wait("!document.querySelector('[data-update=status]').disabled"),click=a=>b.evaluate(`document.querySelector('[data-update=${a}]').click()`),status=()=>b.evaluate("document.querySelector('[data-update-status]').textContent");
+try{
+ await b.evaluate("import('/test.mjs').then(async m=>{window.fixture=await m.createImportFixture()})");await ready();assert.equal(await b.evaluate("document.querySelector('[data-update=online]').hidden"),true);
+ await b.evaluate("fixture.pick('tampered')");await ready();assert.match(await status(),/签名/);assert.equal(await b.evaluate("document.querySelector('[data-update=apply]').hidden"),true);
+ await b.evaluate("fixture.pick('good')");await ready();assert.equal(await b.evaluate("document.querySelector('[data-update=apply]').hidden"),false);await click('apply');
+ for(let i=0;i<240;i++){if(await b.evaluate("!document.querySelector('[data-update=status]').disabled"))break;if(i===239)throw Error('Offline preflight timed out');await new Promise(r=>setTimeout(r,250));}
+ const message=await status();assert.match(message,/已准备/);const installed=await b.evaluate('fixture.status()');assert.equal(installed.version,'1.0.1');assert.equal(await b.evaluate('fixture.preflights()'),1);assert.equal(await b.evaluate("document.querySelector('[data-update=reload]').hidden"),false);
+ await b.evaluate('fixture.session()');await ready();assert.match(await b.evaluate("document.querySelector('[data-update-version]').textContent"),/1.0.1/);
+ await b.evaluate("fixture.pick('broken')");await ready();assert.equal(await b.evaluate("document.querySelector('[data-update=apply]').hidden"),false);await click('apply');
+ for(let i=0;i<240;i++){if(await b.evaluate("!document.querySelector('[data-update=status]').disabled"))break;if(i===239)throw Error('Broken package preflight timed out');await new Promise(r=>setTimeout(r,250));}
+ assert.match(await status(),/运行检查未通过/);assert.equal((await b.evaluate('fixture.status()')).version,'1.0.1');assert.equal(await b.evaluate('fixture.preflights()'),2);
+ await click('apply');await b.wait("fixture.preflights()===3 && !document.querySelector('[data-update=stop]').hidden");await click('stop');await ready();assert.match(await status(),/停止/);assert.equal((await b.evaluate('fixture.status()')).version,'1.0.1');
+ await click('restore');await ready();const restored=await b.evaluate('fixture.status()');assert.equal(restored.version,'0.0.0');assert.equal(restored.highestVersion,'1.0.1');assert.equal(await b.evaluate("document.querySelector('[data-update=reload]').hidden"),false);assert.equal(await b.evaluate("document.querySelector('[data-update=apply]').hidden"),true);assert.equal(await b.evaluate("document.querySelector('[data-update-summary]').textContent"),'');
+ for(const width of [320,390,768,1024]){await b.cdp('Emulation.setDeviceMetricsOverride',{width,height:800,deviceScaleFactor:1,mobile:true});assert.equal(await b.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),true);const shot=await b.cdp('Page.captureScreenshot',{format:'png'});fs.writeFileSync(path.join(out,`${width}.png`),Buffer.from(shot.data,'base64'));}
+ assert.equal(b.errors.length,0);fs.writeFileSync(path.join(out,fallback?'results-no-ed25519.json':'results.json'),JSON.stringify({passed:7,fallback,scope:'real signed import UI, web Filesystem fallback, actual offline WASM; simulated iOS, ephemeral test key',noRealPublishing:true},null,2));console.log(JSON.stringify({passed:7,fallback,out}));
+}finally{await b.close()}

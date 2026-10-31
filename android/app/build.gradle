@@ -1,0 +1,116 @@
+apply plugin: 'com.android.application'
+
+android {
+    compileOptions { coreLibraryDesugaringEnabled true }
+    namespace = "com.labmaker.app"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "com.labmaker.app"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 141
+        versionName "0.138.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    buildTypes {
+        // Side-by-side local native acceptance: distinct UID/storage/Keystore, never a delivery package.
+        acceptance {
+            initWith debug
+            applicationIdSuffix ".acceptance"
+            matchingFallbacks = ['debug']
+            resValue 'string', 'app_name', '实验搭子·本地验收'
+            resValue 'string', 'title_activity_main', '实验搭子·本地验收'
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation "androidx.webkit:webkit:1.14.0"
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs_nio:2.1.5'
+    implementation 'org.jsoup:jsoup:1.23.2'
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+    testImplementation 'org.json:json:20240303'
+    testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+android { buildFeatures { buildConfig true } }
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}
+
+android { signingConfigs { debug { storeFile file('E:/tools/app-maker/config/android/debug.keystore') } } }
+
+// Compress native OCR libraries in the universal APK instead of storing all four ABIs verbatim.
+android { packaging { jniLibs { useLegacyPackaging = true } } }
+// Generate the inventory AFTER all app/dependency assets and stripped OCR libraries are merged.
+// Kept in the same merge task so compressed/package assets always include the fresh inventory.
+android.applicationVariants.all { variant ->
+    def cap = variant.name.capitalize()
+    variant.mergeAssetsProvider.configure {
+        dependsOn("strip${cap}DebugSymbols")
+        inputs.property('resourceIntegritySchema', 1)
+        inputs.property('resourceIntegrityVersion', variant.versionName)
+        inputs.dir(layout.buildDirectory.dir("intermediates/stripped_native_libs/${variant.name}/strip${cap}DebugSymbols/out/lib"))
+        doLast {
+            def merged = file("$buildDir/intermediates/assets/${variant.name}/merge${cap}Assets")
+            def natives = file("$buildDir/intermediates/stripped_native_libs/${variant.name}/strip${cap}DebugSymbols/out/lib")
+            def required = ['public/index.html','public/report-worker.js','public/preview/index.html','public/report-runtime/manifest.json','report-reader.js','report-aliases.json','capacitor.config.json','capacitor.plugins.json']
+            required.each { if (!new File(merged,it).isFile()) throw new GradleException("Required resource missing: $it") }
+            def runtime = new groovy.json.JsonSlurper().parse(new File(merged,'public/report-runtime/manifest.json'))
+            def sha = { File f ->
+                def digest = java.security.MessageDigest.getInstance('SHA-256')
+                f.withInputStream { stream -> byte[] block = new byte[65536]; int n; while ((n=stream.read(block))!=-1) digest.update(block,0,n) }
+                digest.digest().encodeHex().toString()
+            }
+            runtime.files.each { name, expected ->
+                def f = new File(merged, 'public/report-runtime/'+name)
+                if (!f.isFile() || f.length()!=expected.bytes || sha(f)!=expected.sha256) throw new GradleException("Offline report resource mismatch: $name")
+            }
+            if (!natives.isDirectory() || fileTree(natives).matching { include '**/*.so' }.files.empty) throw new GradleException('Native OCR resources missing')
+            if (!new File(merged,'mlkit-google-ocr-models').isDirectory()) throw new GradleException('Bundled OCR models missing')
+            def inventory=[]
+            fileTree(merged).files.sort { it.path }.each { f ->
+                def relative=merged.toPath().relativize(f.toPath()).toString().replace('\\','/')
+                if(relative!='resource-integrity.json') inventory.add([path:'assets/'+relative,bytes:f.length(),sha256:sha(f)])
+            }
+            fileTree(natives).matching { include '**/*.so' }.files.sort { it.path }.each { f ->
+                def relative=natives.toPath().relativize(f.toPath()).toString().replace('\\','/')
+                inventory.add([path:'lib/'+relative,bytes:f.length(),sha256:sha(f)])
+            }
+            new File(merged,'resource-integrity.json').setText(groovy.json.JsonOutput.toJson([schema:1,version:variant.versionName,files:inventory]),'UTF-8')
+        }
+    }
+}

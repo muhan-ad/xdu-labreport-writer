@@ -1,0 +1,53 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import {openBrowserTest} from './browser-test-harness.mjs';
+const root=path.resolve(import.meta.dirname,'..'),production=process.argv.includes('--production');
+const out=path.join(root,'artifacts/verification/skill-download-ui',production?'production':'source');
+fs.mkdirSync(out,{recursive:true});
+const b=await openBrowserTest(root,'src/main.ts','<main id="app"></main>',{production});
+const checks=[],url='https://pan.baidu.com/s/1UzAla9IiEZ2KZ-Dvdtp_aA?pwd=f2dh';
+const click=action=>b.evaluate(`document.querySelector('[data-skill="${action}"]').click()`);
+try{
+ if(!production)await b.evaluate("import('/test.mjs').then(()=>true)");
+ await b.wait("!!document.querySelector('button[data-nav=settings]')");
+ await b.evaluate(`window.copied=[];window.opened=[];window.copyFail=false;Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{if(window.copyFail)throw Error('copy failed');window.copied.push(text)}}});window.open=(...args)=>{window.opened.push(args);return null};location.hash='#/ai-skills'`);
+ await b.wait("!!document.querySelector('[data-skill=import]:not(:disabled)')");
+ const before=await b.evaluate("[...document.querySelectorAll('[data-skill-toggle]')].map(e=>[e.dataset.skillToggle,e.checked])");
+ assert.equal(await b.evaluate('opened.length+copied.length'),0);
+ assert.equal(await b.evaluate("document.querySelector('.skill-download').open"),false);
+ await b.evaluate("document.querySelector('.skill-download summary').click()");
+ assert.equal(await b.evaluate("document.querySelector('[aria-label=技能分享链接]').value"),url);
+ assert.match(await b.evaluate("document.querySelector('.skill-download').textContent"),/f2dh/);
+ checks.push('actual skills page exposes collapsed desktop sharing address without opening or copying automatically');
+ await click('copy-link');await b.wait("document.querySelector('[data-skill-download-status]').textContent==='链接已复制'");
+ assert.deepEqual(await b.evaluate('copied'),[url]);
+ await b.evaluate('window.copyFail=true');await click('copy-link');
+ await b.wait("document.querySelector('[data-skill-download-status]').textContent.includes('长按')");
+ assert.equal(await b.evaluate("document.querySelector('[aria-label=技能分享链接]').readOnly"),true);
+ await b.evaluate('window.copyFail=false');await click('copy-link');
+ await b.wait("document.querySelector('[data-skill-download-status]').textContent==='链接已复制'");
+ checks.push('copy uses full link including code; clipboard refusal retains selectable text and supports retry');
+ await click('open-link');await b.wait('opened.length===1');
+ assert.deepEqual(await b.evaluate('opened[0]'),[url,'_blank','noopener,noreferrer']);
+ assert.deepEqual(await b.evaluate("[...document.querySelectorAll('[data-skill-toggle]')].map(e=>[e.dataset.skillToggle,e.checked])"),before);
+ checks.push('explicit open is isolated and leaves all skill contents and enabled states unchanged');
+ for(const [width,height] of [[320,568],[360,800],[390,844],[568,320],[768,1024],[1024,768]]){
+  await b.cdp('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:true});
+  assert.equal(await b.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),true,'page overflow '+width);
+  assert.equal(await b.evaluate("(()=>{const r=document.querySelector('.skill-download textarea').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth+1})()"),true);
+  const shot=await b.cdp('Page.captureScreenshot',{format:'png',captureBeyondViewport:true});
+  fs.writeFileSync(path.join(out,`${width}x${height}.png`),Buffer.from(shot.data,'base64'));
+ }
+ checks.push('expanded address and controls fit six phone, landscape and tablet sizes');
+ await b.evaluate("window.finishCopy=null;navigator.clipboard.writeText=()=>new Promise(resolve=>window.finishCopy=resolve)");
+ await click('copy-link');await b.wait('!!window.finishCopy');await b.evaluate("location.hash='#/settings'");
+ await b.wait("!document.querySelector('.skill-download')");await b.evaluate("window.finishCopy();location.hash='#/ai-skills'");
+ await b.wait("!!document.querySelector('[data-skill=import]:not(:disabled)')");
+ assert.equal(await b.evaluate("document.querySelector('[data-skill-download-status]').textContent"),'');
+ assert.equal(await b.evaluate("document.querySelector('.skill-download').open"),false);
+ checks.push('late clipboard result after leaving does not write into a newly mounted page');
+ assert.deepEqual(b.errors,[]);
+ fs.writeFileSync(path.join(out,'results.json'),JSON.stringify({production,checks},null,2));
+ console.log(JSON.stringify({production,passed:checks.length,checks},null,2));
+}finally{await b.close();}

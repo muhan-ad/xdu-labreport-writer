@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Reuse the original transparent artwork without an adaptive background plate. -->
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/icon_transparent" android:gravity="fill" android:filter="true" />

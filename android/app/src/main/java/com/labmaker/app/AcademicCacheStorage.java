@@ -1,0 +1,13 @@
+package com.labmaker.app;
+import android.content.Context;import android.util.*;import android.security.keystore.*;import java.io.*;import java.nio.charset.StandardCharsets;import java.security.KeyStore;import javax.crypto.*;
+final class AcademicCacheStorage {
+ private static AcademicCache instance;private static final String ALIAS="lab-maker-academic-cache-v1";
+ static synchronized AcademicCache open(Context context){if(instance!=null)return instance;File directory=new File(context.getNoBackupFilesDir(),"academic-cache-v1");
+  instance=new AcademicCache(new AcademicCache.Store(){
+   private AtomicFile file(String name)throws Exception{if(!name.matches("[a-f0-9]{64}\\.json"))throw new IOException("课表缓存名称异常");if(!directory.isDirectory()&&!directory.mkdirs())throw new IOException("课表缓存目录无法创建");return new AtomicFile(new File(directory,name));}
+   public String read(String name)throws Exception{try(InputStream in=file(name).openRead();ByteArrayOutputStream bytes=new ByteArrayOutputStream()){byte[] block=new byte[8192];int n;while((n=in.read(block))!=-1){if(bytes.size()+n>12*1024*1024)throw new IOException("课表缓存过大");bytes.write(block,0,n);}return bytes.toString(StandardCharsets.UTF_8.name());}catch(FileNotFoundException e){if(file(name).getBaseFile().exists())throw e;return null;}}
+   public void write(String name,String value)throws Exception{AtomicFile target=file(name);FileOutputStream out=null;try{out=target.startWrite();out.write(value.getBytes(StandardCharsets.UTF_8));target.finishWrite(out);out=null;if(!value.equals(read(name)))throw new IOException("课表缓存回读失败");}catch(Exception e){if(out!=null)target.failWrite(out);throw e;}}
+   public void remove(String name)throws Exception{AtomicFile target=file(name);target.delete();if(target.getBaseFile().exists())throw new IOException("课表缓存未能删除");}
+  },create->{KeyStore store=KeyStore.getInstance("AndroidKeyStore");store.load(null);if(!store.containsAlias(ALIAS)){if(!create)throw new IOException("课表缓存密钥不可用");KeyGenerator generator=KeyGenerator.getInstance("AES","AndroidKeyStore");generator.init(new KeyGenParameterSpec.Builder(ALIAS,KeyProperties.PURPOSE_ENCRYPT|KeyProperties.PURPOSE_DECRYPT).setKeySize(256).setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).setRandomizedEncryptionRequired(true).build());generator.generateKey();}return (SecretKey)store.getKey(ALIAS,null);},new AcademicCache.Codec(){public String encode(byte[] value){return Base64.encodeToString(value,Base64.NO_WRAP);}public byte[] decode(String value){return Base64.decode(value,Base64.NO_WRAP);}});return instance;
+ }
+}
