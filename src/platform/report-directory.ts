@@ -1,0 +1,11 @@
+import {Capacitor,registerPlugin} from '@capacitor/core';import type {SavedReport} from '../domain/reports.ts';import {safeReportFilename} from '../domain/reports.ts';
+import {shareReport} from './reports.ts';
+export interface DirectoryState {configured:boolean;writable:boolean;name:string;cancelled?:boolean;}
+export interface ReportDirectoryPort {status():Promise<DirectoryState>;choose():Promise<DirectoryState>;clear():Promise<void>;}
+const native=registerPlugin<{directoryStatus():Promise<DirectoryState>;chooseDirectory():Promise<DirectoryState>;clearDirectory(value:{confirmed:boolean}):Promise<void>;saveToDirectory(value:{experimentId:string;generation:string;name:string}):Promise<{name:string;bytes:number;verified:boolean}>}>('LabReportFiles');
+function supported(){if(Capacitor.getPlatform()!=='android')throw Error('当前平台请使用分享保存报告');}
+function state(value:DirectoryState){if(!value||typeof value.configured!=='boolean'||typeof value.writable!=='boolean'||typeof value.name!=='string'||value.name.length>500||value.writable&&!value.configured)throw Error('保存目录状态无法核实');return value;}
+export const reportDirectory:ReportDirectoryPort={status:async()=>{supported();return state(await native.directoryStatus());},choose:async()=>{supported();const result=await native.chooseDirectory();return result.cancelled?{configured:false,writable:false,name:'',cancelled:true}:state(result);},clear:async()=>{supported();await native.clearDirectory({confirmed:true});}};
+export async function saveReportToDirectory(report:SavedReport){if(Capacitor.getPlatform()==='ios'){await shareReport(report);return {mode:'share' as const};}supported();let target:DirectoryState|null=null;try{target=await reportDirectory.status();}catch{}if(!target?.writable){target=await reportDirectory.choose();if(target.cancelled)throw Error('已取消选择保存目录');if(!target.writable)throw Error('请重新选择可写入的目录');}
+ const result=await native.saveToDirectory({experimentId:report.experimentId,generation:report.generation,name:safeReportFilename(report.name)});if(!result||result.verified!==true||!Number.isInteger(result.bytes)||result.bytes<1||typeof result.name!=='string'||result.name.length>500)throw Error('报告保存结果尚未核实，请检查目标目录');return {...result,mode:'saved' as const};
+}

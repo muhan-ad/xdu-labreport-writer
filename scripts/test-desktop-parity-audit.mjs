@@ -1,0 +1,11 @@
+// Copy only known static resource paths into an isolated fixture, never desktop user data.
+import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';import {spawnSync} from 'node:child_process';import assert from 'node:assert/strict';
+const desktop='E:/apps/xdu-labreport-writer-master/物理实验/实验脚本',fixture=path.resolve('artifacts/verification/parity-fixture-'+crypto.randomUUID()),target=path.join(fixture,'物理实验/实验脚本'),archive=JSON.parse(fs.readFileSync('public/report-runtime/report-sources.json','utf8')),experiments=JSON.parse(fs.readFileSync('src/data/catalog.json','utf8')).experiments;
+const paths=new Set([...Object.keys(archive),...experiments.flatMap(e=>[e.sourceId+'/schema.json',e.sourceId+'/variants.json'])]);
+for(const name of paths){const from=path.resolve(desktop,...name.split('/')),to=path.resolve(target,...name.split('/'));assert.ok(from.startsWith(path.resolve(desktop)+path.sep)&&to.startsWith(target+path.sep));fs.mkdirSync(path.dirname(to),{recursive:true});fs.copyFileSync(from,to);}
+const audit=()=>spawnSync(process.execPath,['scripts/audit-desktop-parity.mjs',fixture],{encoding:'utf8'});assert.equal(audit().status,0,'fixture baseline must match');
+for(const [name,mutate] of [['低电阻的测量/variants.json',v=>{v.__test_mutation=['not a real variant'];}],['声速的测量（水中）/schema.json',v=>{v.groups[0].fields[0].label+=' changed';}]]){
+ const file=path.join(target,...name.split('/')),original=fs.readFileSync(file),parsed=JSON.parse(original.toString('utf8').replace(/^\uFEFF/,''));mutate(parsed);fs.writeFileSync(file,JSON.stringify(parsed));const failed=audit();assert.equal(failed.status,1,'must reject drift: '+name);fs.writeFileSync(file,original);
+}
+assert.equal(audit().status,0,'restored fixture must pass');const live=spawnSync(process.execPath,['scripts/audit-desktop-parity.mjs'],{encoding:'utf8'});assert.equal(live.status,0,'live desktop static resources must match');
+fs.writeFileSync('artifacts/verification/desktop-parity/mutation-tests.json',JSON.stringify({passed:4,scope:'isolated copied static resources; intentional variants and schema drift rejected; live desktop only read'},null,2));console.log(JSON.stringify({passed:4,fixture}));

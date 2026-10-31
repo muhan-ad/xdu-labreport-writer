@@ -1,0 +1,2 @@
+Unmodified Pyodide 0.29.3 runtime. Source and build scripts: https://github.com/pyodide/pyodide/tree/0.29.3
+CPython version and built dependency versions are pinned in pyodide-lock.json. Wheel distributions retain their dist-info licenses.

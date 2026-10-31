@@ -1,0 +1,4 @@
+export const copyScopeLabels={'@copy:analysis':'结果分析','@copy:quiz':'思考题正文'} as const;
+export function isCopyScope(section:string){return Object.hasOwn(copyScopeLabels,section);}
+export function validCopyText(raw:unknown):raw is Record<string,string>{return !!raw&&typeof raw==='object'&&!Array.isArray(raw)&&Object.keys(raw).every(k=>['analysis','quiz'].includes(k))&&Object.values(raw).every(v=>typeof v==='string'&&v.length>0&&v.length<=20000);}
+export function polishOriginal(report:{sections:Record<string,unknown>;copySections?:Record<string,string>;copyIssues?:Record<string,string>},section:string){if(isCopyScope(section)){const key=section.slice(6);const text=report.copySections?.[key];if(typeof text!=='string'||!text.trim())throw Error(report.copyIssues?.[key]??'请重新生成报告，以读取实际章节原文');return text;}const text=report.sections[section];if(typeof text!=='string')throw Error('请选择可润色的章节');return text;}

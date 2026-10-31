@@ -1,0 +1,6 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {sameReportInputs,defaultReportSettings,validSavedReport} from '../src/domain/reports.ts';import {recordBlank} from '../src/domain/model.ts';import fs from 'node:fs';
+const exp=JSON.parse(fs.readFileSync(new URL('../src/data/catalog.json',import.meta.url))).experiments[0];
+test('resource identity makes old report input snapshots stale without deleting them or changing legacy builtin matching',()=>{
+ const snapshot={record:recordBlank(exp),profile:{name:'',studentId:'',className:''},photoPath:null,settings:defaultReportSettings()};assert.equal(sameReportInputs(snapshot,structuredClone(snapshot)),true);const changed={...snapshot,resourceHash:'a'.repeat(64)};assert.equal(sameReportInputs(snapshot,changed),false);assert.equal(sameReportInputs(changed,{...changed,resourceHash:'b'.repeat(64)}),false);
+ const report={version:1,experimentId:exp.id,generation:'01234567-89ab-cdef-0123-456789abcdef',createdAt:new Date().toISOString(),name:'测试报告.docx',formulaCount:1,sections:{},charts:[],snapshot:changed};assert.equal(validSavedReport(exp,report),true);assert.equal(validSavedReport(exp,{...report,snapshot:{...changed,resourceHash:'invalid'}}),false);assert.equal(snapshot.resourceHash,undefined);
+});

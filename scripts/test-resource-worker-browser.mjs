@@ -1,0 +1,9 @@
+import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';import {openBrowserTest} from './browser-test-harness.mjs';
+const root=path.resolve(import.meta.dirname,'..'),out=path.join(root,'artifacts/verification/resource-worker');fs.mkdirSync(out,{recursive:true});
+const b=await openBrowserTest(root,'tests/fixtures/resource-engine-ui.ts','<main id="app"></main>',{runtime:true}),checks=[];
+try{
+ await b.evaluate("import('/test.mjs').then(m=>window.fixture=m)");await b.evaluate('fixture.start()');await b.wait('!fixture.state().pending');const first=await b.evaluate('fixture.state()');assert.equal(first.error,'');assert.equal(first.result.complete,true);assert.equal(first.result.experiments,28);assert.equal(first.result.templates,28);assert.equal(first.result.scripts,56);checks.push('production ReportEngine and worker initialize real offline WASM and return all experiment checks');
+ await b.evaluate('fixture.start();fixture.stop()');await b.wait('!fixture.state().pending');assert.match((await b.evaluate('fixture.state()')).error,/取消/);assert.equal((await b.evaluate('fixture.state()')).result,null);checks.push('cancelling diagnostic terminates worker and cannot yield successful old result');
+ await b.evaluate('fixture.start()');await b.wait('!fixture.state().pending');assert.equal((await b.evaluate('fixture.state()')).result.complete,true);checks.push('fresh worker self-check works after stop without page reload');
+ assert.equal(b.errors.length,0);fs.writeFileSync(path.join(out,'results.json'),JSON.stringify({scope:'Actual browser ReportEngine, production worker and offline WASM; native WebView cache action not device accepted',checks,summary:first.result},null,2));console.log(JSON.stringify({passed:checks.length}));
+}finally{await b.close();}

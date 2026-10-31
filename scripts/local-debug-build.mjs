@@ -1,0 +1,2 @@
+import path from 'node:path';import {registerDebugBuild,resolveDebugBuild} from './lib/local-debug-build.mjs';
+const root=path.resolve(import.meta.dirname,'..');try{const [mode,file,certificate]=process.argv.slice(2);if(mode==='register'&&file&&certificate)console.log(JSON.stringify(registerDebugBuild(root,path.resolve(file),certificate)));else if(mode==='resolve')console.log(JSON.stringify(resolveDebugBuild(root)));else throw Error('Usage: local-debug-build.mjs register APK CERT_SHA256 | resolve');}catch(error){console.error(error.message);process.exitCode=1;}

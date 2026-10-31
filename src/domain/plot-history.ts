@@ -1,0 +1,5 @@
+import {validChartWidth} from './chart-width.ts';
+export interface PlotHistoryEntry {widthCm?:number;id:string;experimentId:string;createdAt:string;sourceHash:string;requirement:string;code:string;caption:string;section:string;embed:boolean;}
+export type PlotHistorySummary=Pick<PlotHistoryEntry,'id'|'createdAt'|'sourceHash'|'requirement'>;
+export function validPlotSummary(raw:unknown):raw is PlotHistorySummary {const r=raw as PlotHistorySummary;return !!r&&typeof r.id==='string'&&/^[a-f0-9-]{36}$/.test(r.id)&&typeof r.createdAt==='string'&&Number.isFinite(Date.parse(r.createdAt))&&typeof r.sourceHash==='string'&&/^[a-f0-9]{64}$/.test(r.sourceHash)&&typeof r.requirement==='string'&&r.requirement.length<=2000;}
+export function validPlotHistory(raw:unknown):raw is PlotHistoryEntry {const r=raw as PlotHistoryEntry;return validPlotSummary(r)&&typeof r.experimentId==='string'&&/^[a-f0-9]{12}$/.test(r.experimentId)&&typeof r.code==='string'&&!!r.code.trim()&&r.code.length<=30000&&typeof r.caption==='string'&&r.caption.length<=200&&typeof r.section==='string'&&!!r.section.trim()&&r.section.length<=100&&typeof r.embed==='boolean'&&validChartWidth(r.widthCm);}

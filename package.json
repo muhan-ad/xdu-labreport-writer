@@ -1,133 +1,33 @@
 {
-  "name": "labreport-writer",
-  "version": "2.2.0",
-  "description": "大学物理实验报告自动编写应用",
-  "main": "main.js",
+  "name": "lab-maker-app",
+  "version": "0.138.0",
+  "private": true,
+  "type": "module",
   "scripts": {
-    "test": "node scripts/verify.js",
-    "start": "electron .",
-    "build": "electron-builder",
-    "build:win": "electron-builder --win",
-    "verify": "node scripts/verify.js",
-    "test:desktop": "node scripts/test-desktop.js",
-    "test:course": "python-runtime\\python.exe -m unittest discover -s src/course-selection -p test_*.py && node --test src/course-selection/test_*.cjs"
-  },
-  "keywords": [
-    "物理实验",
-    "报告生成",
-    "Electron"
-  ],
-  "author": "",
-  "license": "ISC",
-  "devDependencies": {
-    "electron": "^44.2.0",
-    "electron-builder": "^26.15.3"
+    "dev": "vite --host 127.0.0.1",
+    "test": "node --test tests/*.test.mjs",
+    "build": "node scripts/sync-report-assets.mjs && tsc --noEmit && vite build && node scripts/build-web-integrity.mjs",
+    "preview": "vite preview --host 127.0.0.1",
+    "sync:android": "npm run build && cap sync android",
+    "sync:ios": "npm run build && cap sync ios",
+    "test:reports": "node scripts/test-report-runtime.mjs --all",
+    "test:science": "node scripts/test-science.mjs"
   },
   "dependencies": {
-    "docx-preview": "^0.4.0",
-    "ipaddr.js": "2.5.0",
-    "jszip": "3.10.2",
-    "mammoth": "^1.12.2",
-    "sanitize-html": "2.17.7"
+    "@capacitor/android": "8.5.3",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/browser": "8.0.5",
+    "@capacitor/clipboard": "8.0.1",
+    "@capacitor/core": "8.5.3",
+    "@capacitor/filesystem": "8.1.5",
+    "@capacitor/ios": "8.5.3",
+    "@capacitor/share": "8.0.3",
+    "@noble/ed25519": "3.2.0"
   },
-  "build": {
-    "afterPack": "scripts/after-pack.cjs",
-    "afterSign": "scripts/after-pack.cjs",
-    "appId": "com.labreport.writer",
-    "productName": "实验搭子",
-    "directories": {
-      "output": "dist"
-    },
-    "files": [
-      "main.js",
-      "preload.js",
-      "src/**/*",
-      "package.json",
-      "!src/.mimosa/**",
-      "!src/course-selection/test*",
-      "!src/course-selection/__pycache__/**",
-      "!src/course-selection/bridge*"
-    ],
-    "extraResources": [
-      {
-        "from": "python-runtime",
-        "to": "python-runtime"
-      },
-      {
-        "from": "skills",
-        "to": "skills"
-      },
-      {
-        "from": "物理实验",
-        "to": "物理实验",
-        "filter": [
-          "**/*",
-          "!**/*.xlsx",
-          "!**/*.xls",
-          "!**/*.docx",
-          "!**/*.png",
-          "!**/.lab_sections.json",
-          "!**/__pycache__/**",
-          "!**/.mimosa/**"
-        ]
-      },
-      {
-        "from": "src/course-selection",
-        "to": "course-selection",
-        "filter": [
-          "server.py",
-          "academic.py",
-          "course_metadata.py",
-          "academic_reader.cjs",
-          "edge_reader.cjs",
-          "app.js",
-          "index.html",
-          "style.css",
-          "academic_bridge.py",
-          "timetable_reader.js",
-          "guide-content.js",
-          "guide-ui.js",
-          "guide-reviews.js",
-          "course-filters.js",
-          "filter-ui.js",
-          "cancellation.py",
-          "guide-ui.css",
-          "guide_selection.py",
-          "audio/**/*"
-        ]
-      },
-      {
-        "from": "src/shared",
-        "to": "shared",
-        "filter": [
-          "unified-select.js",
-          "unified-select.css",
-          "input-fields.css"
-        ]
-      }
-    ],
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "src/icon.ico"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "实验搭子",
-      "installerIcon": "src/icon.ico",
-      "uninstallerIcon": "src/icon.ico"
-    }
-  },
-  "engines": {
-    "node": ">=22.12.0"
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3",
+    "linkedom": "^0.18.12",
+    "typescript": "5.9.3",
+    "vite": "8.3.5"
   }
 }
