@@ -26,6 +26,9 @@ test('unsigned desktop manifests and tampered signed metadata cannot authorize a
 });
 test('version, runtime, layout and fixed download source gates reject incompatible packages',async()=>{
  for(const patch of [{dataVersion:'1.0.0'},{dataVersion:'01.0.1'},{minAppVersion:'1.0.0'},{runtimeHash:'f'.repeat(64)},{layoutHash:'f'.repeat(64)},{size:8*1024*1024+1},{adapterVersion:2}])await assert.rejects(verifyDataManifest(sign({...pack.manifest,...patch}),context));
+ await assert.rejects(verifyDataManifest(manifest,{...context,appVersion:'0.39.0'}),/请先更新应用/);
+ await assert.rejects(verifyDataManifest(manifest,{...context,runtimeHash:'f'.repeat(64)}),/报告运行环境与当前应用不匹配/);
+ await assert.rejects(verifyDataManifest(manifest,{...context,experiments:context.experiments.slice(1)}),/录入字段与当前应用不匹配/);
  for(const url of ['http://labreport-1485394950.cos.ap-guangzhou.myqcloud.com/mobile-data/data.json','https://example.com/mobile-data/data.json',manifest.url+'?other=1',manifest.url+'#x','https://user@labreport-1485394950.cos.ap-guangzhou.myqcloud.com/mobile-data/data.json',manifest.url.replace('/mobile-data/','/../')])await assert.rejects(verifyDataManifest(sign({...pack.manifest,url}),context),/来源/);
  assert.equal(compareDataVersion('1.10.0','1.9.9'),1);assert.equal(compareDataVersion('1.0.1','1.0.1'),0);
 });

@@ -43,7 +43,7 @@ public class LabReportPortalPlugin extends Plugin {
     CookieManager.getInstance().removeAllCookies(ignored->{
       if(epoch!=generation){call.reject("报告会话已清除","STALE_SESSION");return;}
       web=new WebView(getContext());web.setAlpha(0);web.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);web.setFocusable(false);
-      WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(false);settings.setSaveFormData(false);settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);settings.setCacheMode(WebSettings.LOAD_DEFAULT);settings.setSupportMultipleWindows(false);settings.setJavaScriptCanOpenWindowsAutomatically(false);settings.setUserAgentString(settings.getUserAgentString()+" LabMakerMobile/"+BuildConfig.VERSION_NAME);settings.setOffscreenPreRaster(true);reportAgent=settings.getUserAgentString();
+      WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(false);settings.setSaveFormData(false);settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);settings.setCacheMode(WebSettings.LOAD_DEFAULT);settings.setSupportMultipleWindows(false);settings.setJavaScriptCanOpenWindowsAutomatically(false);settings.setUserAgentString(settings.getUserAgentString()+" LabMakerMobile/"+BuildConfig.VERSION_NAME);settings.setOffscreenPreRaster(true);reportAgent=settings.getUserAgentString();
       CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);
       web.setWebChromeClient(new WebChromeClient(){
         @Override public void onPermissionRequest(PermissionRequest request){request.deny();}
@@ -200,7 +200,7 @@ public class LabReportPortalPlugin extends Plugin {
       int page=call.getInt("page",0);String fingerprint=call.getString("fingerprint","");
       JSONObject current=freshRow(fingerprint,page,generation);uploadAllowed(current,generation);
       if(!matchesReport(id,current.getString("name")))throw new IOException("本机报告与官网实验名称不对应");
-      prepared=new ReportUploadTicket(source,new File(getContext().getCacheDir(),"report-uploads"),call.getString("fileName",""),fingerprint,page,id,generation,uploadNow());
+      prepared=new ReportUploadTicket(source,new File(getContext().getCacheDir(),"report-uploads"),call.getString("fileName",""),fingerprint,page,id,generation,uploadNow(),ReportUploadImages::optimize);
       if(generation!=epoch)throw new IOException("报告会话已清除");if(uploadTicket!=null)uploadTicket.delete();uploadTicket=prepared;
       JSONObject value=new JSONObject().put("ticket",prepared.id).put("fileName",prepared.fileName).put("size",prepared.size).put("sha256",prepared.sha256).put("previewPath","report-uploads/"+prepared.id+"/report.docx").put("expiresIn",Math.max(1,(prepared.expires-uploadNow())/1000)).put("row",current);
       call.resolve(JSObject.fromJSONObject(value));

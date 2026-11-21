@@ -107,12 +107,15 @@ test("paired electronic-deflection arrays resize together, preserve values and c
   const n = d[f.key].length;
   d[f.key][0] = "0";
   d[f.pairedMatrix][0][0] = "2";
-  for (let i = 0; i < 15; i++) d = resizePoints(e.schema, d, f.key, 1);
-  assert.equal(d[f.key].length, n + 15);
-  assert.ok(d[f.pairedMatrix].every((r) => r.length === n + 15));
+  const original = structuredClone(d);
+  d = resizePoints(e.schema, d, f.key, 1);
+  assert.deepEqual(d[f.key], ["", ...original[f.key], ""]);
+  assert.deepEqual(d[f.pairedMatrix], original[f.pairedMatrix].map(row => ["", ...row, ""]));
+  for (let i = 1; i < 15; i++) d = resizePoints(e.schema, d, f.key, 1);
+  assert.equal(d[f.key].length, n + 30);
+  assert.ok(d[f.pairedMatrix].every((r) => r.length === n + 30));
   for (let i = 0; i < 15; i++) d = resizePoints(e.schema, d, f.key, -1);
-  assert.equal(d[f.key][0], "0");
-  assert.equal(d[f.pairedMatrix][0][0], "2");
+  assert.deepEqual(d, original);
   assert.ok(validateDraft(e.schema, d));
   const bad = structuredClone(d);
   bad[f.pairedMatrix][0].pop();
@@ -285,4 +288,49 @@ test("transient measurement read errors do not clear OCR drafts or write blank r
  const backend=store(),old=recordBlank(exp),field=exp.schema.groups.flatMap(g=>g.fields).find(f=>f.type==='number');old.draft[field.key]='7';await new Repository(backend).save(exp,old);backend.data.set('ocr-'+exp.id+'-a','preserved draft');let writes=0;
  const faulty={...backend,async read(k){if(k.startsWith('record-'))throw Error('存储暂不可读');return backend.read(k);},async write(k,v){if(k.startsWith('record-'))writes++;return backend.write(k,v);}};
  await assert.rejects(new Repository(faulty).reset(exp,async()=>{}),/存储暂不可读/);assert.equal(writes,0);assert.equal(backend.data.get('ocr-'+exp.id+'-a'),'preserved draft');assert.equal((await new Repository(backend).load(exp)).record.draft[field.key],'7');
+});
+
+test("textbook units migrate legacy records and imports without reinterpreting current inputs", () => {
+  const hall = experiments.find(e => e.sourceId === "霍尔效应实验");
+  const diffraction = experiments.find(e => e.sourceId === "衍射光强分布的测量");
+  const legacyHall = {t1_im:[200,300,null,500],im_fixed:500};
+  const legacyDiffraction = {L:850,x:[0,1]};
+  for (const [experiment, old, key, expected] of [
+    [hall, legacyHall, "t1_im_a", [0.2,0.3,null,0.5,null,null,null,null,null]],
+    [diffraction, legacyDiffraction, "L_cm", 85],
+  ]) {
+    const draft = makeDraft(experiment.schema, old);
+    assert.deepEqual(convert(experiment.schema, draft).data[key], expected);
+    const imported = importMeasurements(experiment, experiment === hall
+      ? {...old,t1_im:[200,300,null,500,null,null,null,null,null]}
+      : {L:850});
+    assert.deepEqual(convert(experiment.schema, imported).data[key], expected);
+    const blank = makeDraft(experiment.schema, {...old,[key]:null});
+    assert.equal(convert(experiment.schema, blank).data[key]?.[0] ?? null, null);
+  }
+  const wrong = makeDraft(hall.schema, {t1_im_a:[200],im_fixed:500});
+  assert.ok(inspect(hall.schema, wrong, false).some(issue => issue.key === "t1_im_a"));
+  assert.equal(convert(hall.schema, wrong).data.im_fixed, 500);
+});
+
+test("existing mobile draft is restored from its verified storage envelope", async () => {
+  const experiment = experiments.find(e => e.sourceId === "霍尔效应实验");
+  const previous = structuredClone(experiment);
+  const field = fields(previous.schema).find(f => f.key === "t1_im_a");
+  Object.assign(field, {key:"t1_im", unit:"mA"});
+  delete field.legacyKey;
+  delete field.legacyScale;
+  const backend = store();
+  const old = new Repository(backend);
+  const draft = recordBlank(previous);
+  draft.draft.t1_im.splice(0, 4, "200", "300", "", "1e");
+  draft.draft.im_fixed = "500";
+  await old.save(previous, draft);
+  const current = new Repository(backend);
+  const {record} = await current.load(experiment);
+  assert.deepEqual(record.draft.t1_im_a.slice(0,4), ["0.2", "0.3", "", "1e"]);
+  assert.equal(record.draft.im_fixed, "500");
+  assert.ok(!Object.hasOwn(record.draft, "t1_im"));
+  await current.save(experiment, record);
+  assert.deepEqual((await new Repository(backend).load(experiment)).record, record);
 });

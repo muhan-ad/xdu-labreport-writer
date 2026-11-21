@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
   chartFields,
+  chartForRender,
+  defaultChartAxes,
   chartValues,
   validateChart,
   validChartSpec,
@@ -114,4 +116,45 @@ test("saved chart settings validate limits and participate in report snapshot id
   const changed = structuredClone(snapshot);
   changed.settings.customCharts[0].embed = true;
   assert.equal(sameReportInputs(snapshot, changed), false);
+});
+
+test("all catalog chart axes resolve to original measurements and sensible defaults", () => {
+  assert.equal(catalog.length, 28);
+  for (const exp of catalog) {
+    const data = samples[exp.id];
+    const options = chartFields(exp, data);
+    const visible = options.filter(option => !option.legacy);
+    assert.ok(visible.length, exp.name);
+    assert.equal(new Set(visible.map(option => option.label)).size, visible.length, exp.name);
+    for (const option of visible) {
+      assert.ok(Array.isArray(chartValues(data, option.key)), exp.name + " " + option.key);
+      assert.ok(!option.label.includes("行序"), exp.name);
+    }
+    for (const field of exp.schema.groups.flatMap(group => group.fields).filter(field => field.type === "matrix")) {
+      const axes = options.filter(option => option.key.startsWith(field.key + "["));
+      assert.ok(axes.some(option => option.legacy) && axes.some(option => !option.legacy), exp.name + " " + field.key);
+    }
+    const {x,y} = defaultChartAxes(exp,data);
+    if (!x) {
+      assert.equal(y,"");
+      continue;
+    }
+    assert.notEqual(x,y,exp.name);
+    assert.ok(visible.some(option=>option.key===x) && visible.some(option=>option.key===y),exp.name);
+    assert.equal(chartValues(data,x).length,chartValues(data,y).length,exp.name);
+  }
+});
+
+test("inertia uses short row names and units while keeping saved column keys valid", () => {
+  const exp = catalog.find(exp => exp.id === "0ae99b58d017");
+  const data = samples[exp.id];
+  const options = chartFields(exp, data);
+  assert.deepEqual(options.filter(option=>!option.legacy).map(option=>option.label), ["r","R","T₀","H","d","D","T"]);
+  const legacy = {...spec,x:"measurements[0]",y:"measurements[1]"};
+  assert.deepEqual(validateChart(exp,data,legacy),data.measurements.map(row=>row.slice(0,2)));
+  assert.equal(chartForRender(exp,data,legacy).xlabel,"");
+  const row = {...spec,x:"measurements[row:0]",y:"measurements[row:2]"};
+  assert.equal(chartForRender(exp,data,row).xlabel,"r / cm");
+  assert.equal(chartForRender(exp,data,row).ylabel,"T₀ / s");
+  assert.equal(chartForRender(exp,data,{...row,xlabel:"自定义"}).xlabel,"自定义");
 });

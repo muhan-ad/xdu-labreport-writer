@@ -6,6 +6,7 @@ import {calculationMeasurements,recordSource} from './sound-phase.ts';
 import {variantChoices} from './variant-edits.ts';
 import {plotFigures} from './ai-plot.ts';
 import {chartWidth} from './chart-width.ts';
+import {chartForRender} from './charts.ts';
 import {textHash} from './ai-library.ts';
 import type {EngineJob,EngineResult} from '../engine/client.ts';
 import {ReportPreparationError,type PreparedQuiz} from './generation-quiz.ts';
@@ -46,7 +47,7 @@ export class ReportGeneration {
     if(selected.experimentId!==exp.id||selected.sourceHash!==await textHash(source))throw Error('AI 图表对应的数据已变化，请重新预览并采用，或移除旧图');
     aiPlotImages=[];for(const figure of plotFigures(selected).filter(f=>f.embed))aiPlotImages.push({base64:await this.port.plot(exp.id,figure.image),sha256:figure.image.sha256,caption:figure.caption,section:figure.section,...(selected.widthCm===undefined?{}:{widthCm:selected.widthCm})});
    }
-   await guard();const result=await this.port.generate({experimentId:exp.id,data:measurements,profile:snapshot.profile,date:snapshot.record.date,options:{variants:choices,disabledSections:settings.disabledSections,...(quiz?{customQuiz:quiz}:{}),...(imported?.polish?{polish:imported.polish}:{}),...(settings.variantEdits?{variantEdits:settings.variantEdits}:{}),...(settings.customVariants?{customVariants:settings.customVariants}:{}),customCharts:settings.customCharts??[],...(settings.officialCharts?{officialCharts:settings.officialCharts}:{})},...(photo?{photoBase64:photo}:{}),...(aiPlotImages?{aiPlotImages}:{})},s=>{if(!signal.aborted)progress(s);});
+   await guard();const result=await this.port.generate({experimentId:exp.id,data:measurements,profile:snapshot.profile,date:snapshot.record.date,options:{variants:choices,disabledSections:settings.disabledSections,...(quiz?{customQuiz:quiz}:{}),...(imported?.polish?{polish:imported.polish}:{}),...(settings.variantEdits?{variantEdits:settings.variantEdits}:{}),...(settings.customVariants?{customVariants:settings.customVariants}:{}),customCharts:(settings.customCharts??[]).map(chart=>chartForRender(exp,measurements,chart)),...(settings.officialCharts?{officialCharts:settings.officialCharts}:{})},...(photo?{photoBase64:photo}:{}),...(aiPlotImages?{aiPlotImages}:{})},s=>{if(!signal.aborted)progress(s);});
    await guard();phase('saving');progress('正在保存报告与图表…');staged=true;const charts=await this.port.stage(exp.id,generation,result);await guard();
    const saved:SavedReport={version:1,experimentId:exp.id,generation,createdAt:new Date().toISOString(),name:reportFilename(exp.name),formulaCount:result.metadata.formulaCount,...(notices.length?{notices}:{}),sections:result.metadata.sections,copySections:result.metadata.copySections,copyIssues:result.metadata.copyIssues,headings:result.metadata.headings,charts,snapshot};
    // A failed publish may have written one recovery copy. Keep staged files then.

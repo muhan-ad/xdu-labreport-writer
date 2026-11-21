@@ -16,6 +16,7 @@ export interface ReportSettings {
   customCharts?: ChartSpec[];
   officialCharts?:OfficialChartSelection;
   aiPlot?:AdoptedAIPlot;
+  quizQuestions?:string[];
   customQuestions?:string[];
   ai?: {
     source: string;
@@ -115,6 +116,7 @@ export function validReportSettings(raw: unknown): raw is ReportSettings {
     Array.isArray(x.disabledSections) &&
     x.disabledSections.length <= 32 &&
     x.disabledSections.every((k) => typeof k === "string" && k.length <= 100) &&
+    (x.quizQuestions===undefined||Array.isArray(x.quizQuestions)&&(x.quizQuestions.length===0||validQuizQuestions(x.quizQuestions)))&&
     (x.customQuestions===undefined||validQuizQuestions(x.customQuestions))&&validAIOptions(x.ai)
   );
 }
@@ -230,7 +232,7 @@ export function sameReportInputs(a: ReportSnapshot, b: ReportSnapshot) {
       date: s.record.date,
       profile: s.profile,
       photo: s.settings.embedPhoto ? s.photoPath : null,
-      settings: s.settings,
+      settings: Object.fromEntries(Object.entries(s.settings).filter(([key])=>key!=="quizQuestions")),
     });
   return stable(a) === stable(b);
 }

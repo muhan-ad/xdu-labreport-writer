@@ -1,6 +1,7 @@
 node_modules/
 dist/
 artifacts/
+public/preview/pdf-pages.bundle.js
 .env*
 !.env.example
 android/.gradle/

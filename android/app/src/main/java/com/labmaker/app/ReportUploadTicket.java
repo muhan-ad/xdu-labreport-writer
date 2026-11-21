@@ -10,6 +10,9 @@ final class ReportUploadTicket {
   final File file;final int page;final long size,epoch,expires;
   private boolean consumed=false;
   ReportUploadTicket(File source,File cache,String name,String fingerprint,int page,String experimentId,long epoch,long now)throws Exception {
+    this(source,cache,name,fingerprint,page,experimentId,epoch,now,snapshot->{});
+  }
+  ReportUploadTicket(File source,File cache,String name,String fingerprint,int page,String experimentId,long epoch,long now,java.util.function.Consumer<File> optimizer)throws Exception {
     if(!name.endsWith(".docx")||name.length()>100||name.matches("(?s).*[<>:\"/\\\\|?*\\p{Cntrl}].*")||!experimentId.matches("[a-f0-9]{12}")||fingerprint.isEmpty()||fingerprint.length()>1500||page<1||page>100)throw new IOException("报告标识无效");
     if(source.length()>128L*1024*1024)throw new IOException("报告超过 128 MB");
     this.fileName=name;this.fingerprint=fingerprint;this.page=page;this.epoch=epoch;this.experimentId=experimentId;
@@ -18,7 +21,8 @@ final class ReportUploadTicket {
       long count=0;try(InputStream in=new FileInputStream(source);OutputStream out=new FileOutputStream(file)){byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1){count+=n;if(count>128L*1024*1024)throw new IOException("报告超过 128 MB");out.write(b,0,n);}}
       if(count<1)throw new IOException("报告文件为空");
       try(ZipFile zip=new ZipFile(file)){if(zip.size()>10000||zip.getEntry("[Content_Types].xml")==null||zip.getEntry("word/document.xml")==null)throw new IOException("不是有效的 Word 报告");}
-      size=count;sha256=digest(file);expires=now+120000;
+      optimizer.accept(file);
+      size=file.length();sha256=digest(file);expires=now+120000;
     }catch(Exception e){delete();throw e;}
   }
   static String digest(File f)throws Exception{MessageDigest d=MessageDigest.getInstance("SHA-256");try(InputStream in=new FileInputStream(f)){byte[] b=new byte[65536];int n;while((n=in.read(b))!=-1)d.update(b,0,n);}StringBuilder s=new StringBuilder();for(byte b:d.digest())s.append(String.format(Locale.ROOT,"%02x",b&255));return s.toString();}

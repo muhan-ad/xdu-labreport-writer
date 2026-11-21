@@ -37,8 +37,10 @@ def validate_sound_phase(exp,data):
         raise ValueError('当前实验数据包的谐振频率计算不完整，请恢复内置实验数据或更新数据包')
     if exp['sourceId']=='扭摆法测量钢丝切变模量' and _TORSION_OLD in SOURCES.get(_TORSION_SOURCE,''):
         raise ValueError('当前实验数据包的计时限差公式不完整，请恢复内置实验数据或更新数据包')
-    if exp['sourceId']=='低电阻的测量' and '# MOBILE_LOW_RESISTANCE_V1' not in SOURCES.get(exp['sourceId']+'/generate.py',''):
-        raise ValueError('当前实验数据包的低电阻不确定度计算尚未修正，请恢复内置实验数据或更新数据包')
+    if exp['sourceId'] == '低电阻的测量':
+        source = SOURCES.get(exp['sourceId'] + '/generate.py', '')
+        if not any(marker in source for marker in ('# XDU_LOW_RESISTANCE_T_V2', '# MOBILE_LOW_RESISTANCE_V1')):
+            raise ValueError('当前实验数据包的低电阻不确定度计算尚未修正，请恢复内置实验数据或更新数据包')
     if exp['sourceId'] not in ('声速的测量（空气）','声速的测量（水中）'):return
     value=data.get('phase_step')
     if isinstance(value,bool) or value not in (0.5,1.0):raise ValueError('请选择位相法相邻记录点间隔')
@@ -241,21 +243,23 @@ def section_name(value):
 def section_filter(disabled):
     # Keep all generation calculations and object-returning methods unchanged. Remove only
     # complete heading ranges immediately before writing, including nested paragraphs/tables.
+    legacy_pagination = not getattr(OriginalWriter, 'handles_report_pagination', False)
     class FilteredWriter(OriginalWriter):
         def __init__(self,*args,**kwargs):
             super().__init__(*args,**kwargs);self._mobile_markers=[];self._mobile_filtered=False;self._mobile_section=''
         def add_heading(self,text,level=1):
             if level==1:self._mobile_section=section_name(text)
             paragraph=super().add_heading(text,level)
-            paragraph.paragraph_format.keep_with_next=True
+            if legacy_pagination:paragraph.paragraph_format.keep_with_next=True
             self._mobile_markers.append((paragraph._p,level,section_name(text)))
             return paragraph
         def add_paragraph(self,text,bold=False):
             paragraph=super().add_paragraph(text,bold)
-            if bold and self._mobile_section=='思考题' and paragraph is not None:paragraph.paragraph_format.keep_with_next=True
+            if legacy_pagination and bold and self._mobile_section=='思考题' and paragraph is not None:paragraph.paragraph_format.keep_with_next=True
             return paragraph
         def _style_table(self,table,ncols,col_widths):
             widths=super()._style_table(table,ncols,col_widths)
+            if not legacy_pagination:return widths
             from docx.oxml import OxmlElement
             from docx.oxml.ns import qn
             for index,row in enumerate(table.rows):
@@ -269,20 +273,17 @@ def section_filter(disabled):
         def _save_tmp(self):
             if not self._mobile_filtered:
                 body=self._doc._element.body;elements=list(body);remove=set()
-                # A few questions are assembled from runs and inline equations, so they
-                # cannot be identified in add_paragraph until their content is complete.
-                from docx.oxml import OxmlElement
-                from docx.oxml.ns import qn
-                heading_nodes={node:(level,name) for node,level,name in self._mobile_markers}
-                quiz=False
-                for node in elements:
-                    marker=heading_nodes.get(node)
-                    if marker and marker[0]==1:quiz=marker[1]=='思考题'
-                    if quiz and node.tag==qn('w:p'):
-                        text=''.join(node.itertext()).strip()
-                        if re.match(r'^\d+\s*[.、．)）]',text) and text.endswith(('?','？')):
-                            properties=node.get_or_add_pPr()
-                            if properties.find(qn('w:keepNext')) is None:properties.append(OxmlElement('w:keepNext'))
+                if legacy_pagination:
+                    from docx.oxml.ns import qn
+                    heading_nodes={node:(level,name) for node,level,name in self._mobile_markers}
+                    quiz=False
+                    for node in elements:
+                        marker=heading_nodes.get(node)
+                        if marker and marker[0]==1:quiz=marker[1]=='思考题'
+                        if quiz and node.tag==qn('w:p'):
+                            text=''.join(node.xpath('.//w:t/text() | .//m:t/text()')).strip()
+                            if re.match(r'^\d+\s*[.、．)）]',text) and text.endswith(('?','？')):
+                                node.get_or_add_pPr().get_or_add_keepNext().val = True
                 markers=[(elements.index(node),level,name) for node,level,name in self._mobile_markers if node in elements]
                 for i,(start,level,name) in enumerate(markers):
                     if name not in disabled:continue
@@ -348,6 +349,10 @@ def draw_custom(exp,data,chart,folder):
     def values(selector):
         match=re.fullmatch(r'(.+)\[(row:)?(\d+)\]',selector)
         key=match[1] if match else selector;field=fields.get(key)
+        if selector == 't1_im' and fields.get('t1_im_a', {}).get('legacyKey') == selector:
+            amperes = data.get('t1_im_a')
+            if not isinstance(amperes, list):raise ValueError('所选字段不是数据列')
+            return [v * 1000 if isinstance(v, (float, int)) and not isinstance(v, bool) else v for v in amperes], '励磁电流 / mA'
         if not field or field['type'] not in ('array','matrix'):raise ValueError('绘图字段不属于当前实验')
         raw=data.get(key);label=field['label']
         if not isinstance(raw,list):raise ValueError('所选字段不是数据列')

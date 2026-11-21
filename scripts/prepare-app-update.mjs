@@ -12,7 +12,7 @@ const hash=crypto.createHash('sha256');for await(const block of fs.createReadStr
 const manifest={kind:'lab-maker-mobile-app',schema:1,appId:'com.labmaker.app',version:pkg[3],versionCode:Number(pkg[2]),minAndroid:Number(min[1]),size:fs.statSync(apk).size,sha256:hash.digest('hex'),certificateSha256:certs[0][1],url:`https://labreport-1485394950.cos.ap-guangzhou.myqcloud.com/mobile-app/lab-maker-app-${pkg[3]}.apk`,notes:arg('--notes')?fs.readFileSync(path.resolve(arg('--notes')),'utf8'):'',signature:''};
 const keyPath=arg('--key');
 if(keyPath){
- if(manifest.certificateSha256==='57d6f58780b1cbce1457f31a6fb5756b847883d036c75c5a50d6ac07f1f0adc4')throw Error('Debug APK cannot become a signed production update candidate');
+ if(manifest.certificateSha256==='57d6f58780b1cbce1457f31a6fb5756b847883d036c75c5a50d6ac07f1f0adc4'&&!(process.argv.includes('--local-test-channel')&&manifest.notes.includes('测试版')))throw Error('Debug APK requires explicit --local-test-channel and 测试版 release notes; production signing remains blocked');
  manifest.signature=crypto.sign(null,Buffer.from(appSigningText(manifest)),fs.readFileSync(path.resolve(keyPath))).toString('base64');
  await verifyAppManifest(manifest,fs.readFileSync(path.join(root,'src/data/update-public-key.pem'),'utf8'));
 }

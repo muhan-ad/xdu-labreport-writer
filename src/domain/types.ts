@@ -19,6 +19,7 @@ export interface Field {
   displayTranspose?: boolean;
   rowLabels?: string[];
   colLabels?: string[];
+  choicesOnly?: boolean;
   presets?: { label: string; value: number }[];
   expSuggestions?: number[];
   legacyKey?: string;

@@ -1,3 +1,4 @@
+import {defaultAIKnowledgePolicy} from '../domain/ai-knowledge-policy.ts';
 import {ReportGeneration} from '../domain/report-generation.ts';
 import {calculationMeasurements} from '../domain/sound-phase.ts';
 import {generateQuiz,type QuizPort} from '../domain/generation-quiz.ts';
@@ -8,6 +9,6 @@ export const defaultGenerationAI={status:ai.status.bind(ai),complete:ai.complete
 export type GenerationAI=typeof defaultGenerationAI;
 export function reportGenerator(repo:Repository,engine:ReportEngine,options:{ai?:GenerationAI;confirm?:QuizPort['confirm']}={}){
  const adapter=options.ai??defaultGenerationAI;
- const quiz:QuizPort={status:()=>adapter.status('chat'),skills:adapter.skills,knowledge:adapter.knowledge,knowledgePolicy:()=>repo.loadAIKnowledgePolicy(),preferences:id=>repo.loadAIPreferences(id),calculate:(exp,snapshot,progress)=>engine.calculate({experimentId:exp.id,data:calculationMeasurements(exp,snapshot.record,convert(exp.schema,snapshot.record.draft).data),profile:{name:'',studentId:'',className:''},date:snapshot.record.date,options:{}},progress),complete:(messages,signal)=>adapter.complete('chat',messages,signal),confirm:options.confirm??(async()=>false)};
+ const quiz:QuizPort={status:()=>adapter.status('chat'),skills:adapter.skills,knowledge:adapter.knowledge,knowledgePolicy:async()=>defaultAIKnowledgePolicy(),preferences:id=>repo.loadAIPreferences(id),calculate:(exp,snapshot,progress)=>engine.calculate({experimentId:exp.id,data:calculationMeasurements(exp,snapshot.record,convert(exp.schema,snapshot.record.draft).data),profile:{name:'',studentId:'',className:''},date:snapshot.record.date,options:{}},progress),complete:(messages,signal)=>adapter.complete('chat',messages,signal),confirm:options.confirm??(async()=>false)};
  return new ReportGeneration({generate:(job,progress)=>engine.generate(job,progress),cancel:()=>engine.cancel(),quiz:(exp,snapshot,signal,fresh,progress)=>generateQuiz(quiz,exp,snapshot,signal,fresh,progress),photo:photoBase64,plot:async(id,image)=>binaryBase64(await readAIPlotImage(id,image)),stage:stageReport,publish:(exp,saved)=>repo.saveReport(exp,saved),remove:removeReportGeneration,prune:pruneReportFiles});
 }

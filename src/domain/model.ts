@@ -30,28 +30,11 @@ export function parseNumber(raw: string): number | null {
     throw Error("数值过小，转换后会变成零");
   return n;
 }
-// Decimal unit shifts avoid introducing binary tails such as 0.014 * 100.
-function legacyValue(value: number, scale: number): number {
-  const power = Math.log10(scale);
-  if (scale > 0 && Number.isInteger(power)) {
-    const [mantissa, exponent = "0"] = String(value).split(/e/i);
-    return Number(`${mantissa}e${Number(exponent) + power}`);
-  }
-  return value * scale;
-}
 export function makeDraft(
   schema: Schema,
   raw: unknown = validation.blank(schema),
 ): Draft {
-  const source = plain(raw) ? { ...raw } : {};
-  for (const f of fields(schema))
-    if (
-      source[f.key] == null &&
-      f.legacyKey &&
-      typeof source[f.legacyKey] === "number"
-    )
-      source[f.key] = legacyValue(source[f.legacyKey] as number, f.legacyScale ?? 1);
-  const data = validation.forEditing(schema, source),
+  const data = validation.forEditing(schema, raw),
     draft: Draft = {};
   const text = (v: unknown) =>
     typeof v === "number" && Number.isFinite(v) ? String(v) : "";
@@ -195,6 +178,34 @@ export function recordBlank(exp: Experiment): RecordData {
     draft: makeDraft(exp.schema),
   };
 }
+export function restoreDraft(schema: Schema, draft: Record<string, unknown>) {
+  const restored = {...draft};
+  for (const field of fields(schema)) {
+    const oldKey = field.legacyKey;
+    if (oldKey && Object.hasOwn(restored, oldKey)) {
+      if (!Object.hasOwn(restored, field.key)) {
+        const raw = restored[oldKey];
+        const convertValue = (value: unknown) => {
+          if (typeof value !== "string") return value;
+          try {
+            const parsed = parseNumber(value);
+            if (parsed === null) return value;
+            return String(validation.scaleUnitValue(parsed, field.legacyScale ?? 1));
+          } catch {
+            return value;
+          }
+        };
+        restored[field.key] = field.type === "array" && Array.isArray(raw)
+          ? raw.map(convertValue)
+          : convertValue(raw);
+      }
+      delete restored[oldKey];
+    }
+    if (field.type === "number" && !field.required && !Object.hasOwn(restored, field.key))
+      restored[field.key] = "";
+  }
+  return restored;
+}
 export function validRecord(exp: Experiment, raw: unknown): raw is RecordData {
   return (
     plain(raw) &&
@@ -207,7 +218,7 @@ export function validRecord(exp: Experiment, raw: unknown): raw is RecordData {
         !Number.isNaN(Date.parse(raw.date)) &&
         new Date(raw.date).toISOString().slice(0, 10) === raw.date)) &&
     typeof raw.updatedAt === "string" &&
-    validateDraft(exp.schema, raw.draft)
+    plain(raw.draft) && validateDraft(exp.schema, restoreDraft(exp.schema, raw.draft))
   );
 }
 export function resizePoints(
@@ -220,16 +231,16 @@ export function resizePoints(
   if (!f?.variableLength) throw Error("该组测点不可增减");
   const clone = structuredClone(draft),
     row = clone[key] as string[],
-    length = f.allowedLengths ? (delta > 0 ? f.allowedLengths.find(n=>n>row.length) : [...f.allowedLengths].reverse().find(n=>n<row.length)) ?? row.length : row.length + delta;
+    length = f.allowedLengths ? (delta > 0 ? f.allowedLengths.find(n=>n>row.length) : [...f.allowedLengths].reverse().find(n=>n<row.length)) ?? row.length : row.length + delta * (f.pairedMatrix ? 2 : 1);
   if (length < (f.minLength ?? 3) || length > (f.maxLength ?? 100))
     throw Error(`测量点数应为 ${f.minLength ?? 3}～${f.maxLength ?? 100}`);
-  while (row.length < length) row.push("");
-  while (row.length > length) row.pop();
   if (f.pairedMatrix) {
-    const matrix = clone[f.pairedMatrix] as string[][];
-    for (const r of matrix)
-      if (delta === 1) r.push("");
-      else r.pop();
+    const resize = (values: string[]) => delta > 0 ? ["", ...values, ""] : values.slice(1, -1);
+    clone[key] = resize(row);
+    clone[f.pairedMatrix] = (clone[f.pairedMatrix] as string[][]).map(resize);
+  } else {
+    while (row.length < length) row.push("");
+    while (row.length > length) row.pop();
   }
   return clone;
 }
@@ -247,14 +258,13 @@ export function importMeasurements(exp: Experiment, raw: unknown): Draft {
     if (!plain(raw.data)) throw Error("文件缺少测量数据");
     data = raw.data;
   }
+  const migrated = validation.migrateUnits(exp.schema, data);
+  if (!plain(migrated)) throw Error("文件缺少测量数据");
   const selected: Record<string, unknown> = {};
   let found = false;
   for (const f of fields(exp.schema)) {
-    if (Object.hasOwn(data, f.key)) {
-      selected[f.key] = data[f.key];
-      found = true;
-    } else if (f.legacyKey && typeof data[f.legacyKey] === "number") {
-      selected[f.key] = legacyValue(data[f.legacyKey] as number, f.legacyScale ?? 1);
+    if (Object.hasOwn(migrated, f.key)) {
+      selected[f.key] = migrated[f.key];
       found = true;
     }
   }

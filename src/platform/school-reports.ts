@@ -124,12 +124,14 @@ export class SchoolReports {
     g: number,
     deadline: number,
     update: (s: SchoolReportState) => void,
+    expectedPage?: number,
   ): Promise<SchoolReportState> {
     while (Date.now() < deadline) {
       const state = await this.read(update, g);
       this.check(g);
       if (
         state.phase === "ready" &&
+        (expectedPage === undefined || state.page === expectedPage) &&
         !state.rows.some((r) => r.imageState === "loading")
       )
         return state;
@@ -142,7 +144,10 @@ export class SchoolReports {
       await delay(500);
       this.check(g);
     }
-    throw Error("报告列表读取超时，可刷新重试");
+    throw Error(expectedPage === undefined ? "报告列表读取超时，可刷新重试" : "官网未能加载目标页，请刷新报告状态后重试");
+  }
+  readReady(update: (s: SchoolReportState) => void) {
+    return this.waitForList(this.generation, Date.now() + 45000, update);
   }
   async read(update: (s: SchoolReportState) => void, g = this.generation) {
     this.platform();
@@ -166,7 +171,17 @@ export class SchoolReports {
         job = native.recognize({ image: row.gradeImage });
         this.images.set(row.gradeImage, job);
       }
-      const result = await job;
+      let result: unknown;
+      try {
+        result = await job;
+      } catch {
+        this.check(g);
+        this.images.delete(row.gradeImage);
+        // An unreadable status image must not block reports on other rows.
+        state.rows[i] = applyReportRecognition(row, null);
+        update({ ...state, rows: [...state.rows] });
+        continue;
+      }
       this.check(g);
       this.recognized.set(row.gradeImage, result);
       state.rows[i] = applyReportRecognition(row, result);
@@ -182,11 +197,11 @@ export class SchoolReports {
     this.check(g);
     return this.waitForList(g, Date.now() + 45000, update);
   }
-  async page(direction: number, update: (s: SchoolReportState) => void) {
+  async page(direction: number, update: (s: SchoolReportState) => void, expectedPage?: number) {
     const g = this.generation;
     const state = parseSchoolReports(await native.page({ direction }));
     this.check(g);
     if (state.phase === "error") throw Error(state.message);
-    return this.waitForList(g, Date.now() + 45000, update);
+    return this.waitForList(g, Date.now() + 45000, update, expectedPage);
   }
 }

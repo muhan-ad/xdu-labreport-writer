@@ -30,13 +30,13 @@ public class AcademicTimetableTest {
   AcademicTimetable.Snapshot result=parse(raw);assertFalse(result.complete());assertEquals(3,result.events.size());
   raw=raw();raw.getJSONArray("changes").put(course().put("TKLXDM","02").put("KCH","OTHER"));assertFalse(parse(raw).complete());assertEquals(3,parse(raw).events.size());
  }
- @Test public void partialUnscheduledStaleAndOutsideTermCannotClaimClear()throws Exception {
+ @Test public void unscheduledRowsDoNotPreventVerificationOfScheduledCourses()throws Exception {
   AcademicTimetable.Snapshot complete=parse(raw());AcademicTimetable.Interval free=interval("2026-09-17","19:00","21:25");
   assertEquals("clear",AcademicTimetable.conflict(complete,ACCOUNT,"实验",free,"晚上",List.of(),true).status);
   assertEquals("unknown",AcademicTimetable.conflict(complete,ACCOUNT,"实验",free,"晚上",List.of(),false).status);
   assertEquals("unknown",AcademicTimetable.conflict(complete,"99999999999","实验",free,"晚上",List.of(),true).status);
   assertEquals("unknown",AcademicTimetable.conflict(complete,ACCOUNT,"实验",interval("2026-10-01","19:00","21:25"),"晚上",List.of(),true).status);
-  JSONObject raw=raw();raw.getJSONArray("notArranged").put(new JSONObject().put("KCM","待排课程"));AcademicTimetable.Snapshot partial=parse(raw);assertTrue(partial.scheduledComplete);assertFalse(partial.complete());assertEquals("unknown",AcademicTimetable.conflict(partial,ACCOUNT,"实验",free,"晚上",List.of(),true).status);
+  JSONObject raw=raw();raw.getJSONArray("notArranged").put(new JSONObject().put("KCM","待排课程"));AcademicTimetable.Snapshot partial=parse(raw);assertTrue(partial.scheduledComplete);assertTrue(partial.complete());assertTrue(partial.unscheduled.isEmpty());assertEquals("clear",AcademicTimetable.conflict(partial,ACCOUNT,"实验",free,"晚上",List.of(),true).status);
   assertEquals("conflict",AcademicTimetable.conflict(partial,ACCOUNT,"实验",interval("2026-09-17","15:55","18:10"),"下午",List.of(),false).status);
  }
  @Test public void academicWindowsMatchDesktopAndTouchingEndpointsDoNotOverlap()throws Exception {

@@ -5,7 +5,7 @@ import type {DataEnvelope} from '../domain/data-update-store.ts';
 import type {DataPayload} from '../domain/data-package.ts';
 import {textHash} from '../domain/ai-library.ts';
 export interface EngineJob {
-  mode?: "plot"|"context"|"diagnostic";
+  mode?: "plot"|"context"|"diagnostic"|"warmup";
   experimentId: string;
   data: Measurements;
   profile: Profile;
@@ -33,21 +33,35 @@ export class ReportEngine {
   private generation=0;
   private queueTask=false;
   private reuseRuntime=false;
+  private warmTask:Promise<void>|null=null;
+  private idleTimer:ReturnType<typeof setTimeout>|null=null;
   private idleWorker:{worker:Worker;key:string}|null=null;
   private dataSource:(candidate?:DataEnvelope)=>Promise<DataPayload|null>;
-  constructor(dataSource?:(candidate?:DataEnvelope)=>Promise<DataPayload|null>,queueTask=false,reuseRuntime=false){this.queueTask=queueTask;this.reuseRuntime=queueTask&&reuseRuntime;this.dataSource=dataSource??(candidate=>import('../platform/data-state.ts').then(module=>module.resolveReportData(candidate)));}
+  constructor(dataSource?:(candidate?:DataEnvelope)=>Promise<DataPayload|null>,queueTask=false,reuseRuntime:boolean|'interactive'=false){this.queueTask=queueTask;this.reuseRuntime=reuseRuntime==='interactive'||(queueTask&&reuseRuntime);this.dataSource=dataSource??(candidate=>import('../platform/data-state.ts').then(module=>module.resolveReportData(candidate)));}
   private worker: Worker | null = null;
   private reject: ((e: Error) => void) | null = null;
   async diagnose(onProgress:(text:string)=>void,candidate?:DataEnvelope):Promise<RuntimeDiagnostic>{
     return this.execute<RuntimeDiagnostic>({mode:'diagnostic',experimentId:'',data:{},profile:{name:'',studentId:'',className:''},date:'',options:{}},onProgress,candidate);
   }
+  prewarm(){
+    if(!this.reuseRuntime||this.worker||this.idleWorker||this.warmTask)return;
+    const task=this.execute<void>({mode:'warmup',experimentId:'',data:{},profile:{name:'',studentId:'',className:''},date:'',options:{}},()=>{}).catch(()=>{});
+    this.warmTask=task;
+    void task.finally(()=>{if(this.warmTask===task)this.warmTask=null;});
+  }
   async generate(
     job: Omit<EngineJob,'mode'> & {mode?:'plot'},
     onProgress: (text: string) => void,
   ): Promise<EngineResult> {
+    const generation=this.generation;
+    if(this.warmTask)await this.warmTask;
+    if(generation!==this.generation)throw Error('已取消生成');
     return this.execute<EngineResult>(job,onProgress);
   }
   async calculate(job:Omit<EngineJob,'mode'>,onProgress:(text:string)=>void):Promise<CalculationContext>{
+    const generation=this.generation;
+    if(this.warmTask)await this.warmTask;
+    if(generation!==this.generation)throw Error('已取消生成');
     return this.execute<CalculationContext>({...job,mode:'context'},onProgress);
   }
   private async execute<T>(job:EngineJob,onProgress:(text:string)=>void,candidate?:DataEnvelope):Promise<T>{
@@ -59,8 +73,9 @@ export class ReportEngine {
     catch(error){this.releaseIdle();throw error;}
     assertReportRuntime(this.queueTask);
     if(generation!==this.generation)throw Error('已取消生成');
-    if(this.idleWorker&&this.idleWorker.key!==key)this.releaseIdle();
+    if(this.idleWorker&&(job.mode==='diagnostic'||this.idleWorker.key!==key))this.releaseIdle();
     const worker=this.idleWorker?.worker??new Worker(new URL("/report-worker.js", location.href));
+    this.stopIdleTimer();
     this.idleWorker=null;
     this.worker = worker;
     return new Promise((resolve, reject) => {
@@ -80,6 +95,7 @@ export class ReportEngine {
         }
         if(!error&&this.reuseRuntime&&job.mode!=='diagnostic'&&generation===this.generation){
           this.idleWorker={worker,key};
+          if(!this.queueTask)this.idleTimer=setTimeout(()=>this.releaseIdle(),60_000);
           worker.onerror=event=>{event.preventDefault();if(this.idleWorker?.worker===worker)this.releaseIdle();};
           worker.onmessage=event=>{if(event.data?.type==='error'&&this.idleWorker?.worker===worker)this.releaseIdle();};
         }else worker.terminate();
@@ -88,6 +104,7 @@ export class ReportEngine {
       worker.onmessage = ({ data }) => {
         if(settled||generation!==this.generation)return;
         if (data.type === "progress") onProgress(data.text);
+        else if(data.type==='warmup-ready'&&job.mode==='warmup')finish();
         else if(data.type==='diagnostic-result'&&job.mode==='diagnostic')finish(undefined,data.diagnostic as T);
         else if (data.type === "context-result"&&job.mode==='context')finish(undefined,data.context as T);
         else if (data.type === "result"&&job.mode!=='context')
@@ -107,11 +124,12 @@ export class ReportEngine {
     });
   }
   /** Queue lifecycle releases a successful runtime at pause, stop and completion. */
-  releaseIdle(){const idle=this.idleWorker;this.idleWorker=null;idle?.worker.terminate();}
+  private stopIdleTimer(){if(this.idleTimer!==null)clearTimeout(this.idleTimer);this.idleTimer=null;}
+  releaseIdle(){this.stopIdleTimer();const idle=this.idleWorker;this.idleWorker=null;idle?.worker.terminate();}
   private cancelActive() {
     this.generation++;
     if(this.reject)this.reject(Error('已取消生成'));
     else if(this.worker){this.worker.terminate();this.worker=null;}
   }
-  cancel(){this.cancelActive();this.releaseIdle();}
+  cancel(){this.warmTask=null;this.cancelActive();this.releaseIdle();}
 }

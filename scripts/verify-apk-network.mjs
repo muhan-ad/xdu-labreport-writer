@@ -1,0 +1,11 @@
+import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';import {execFileSync} from 'node:child_process';
+const apk=path.resolve(process.argv[2]??'android/app/build/outputs/apk/debug/app-debug.apk');
+const aapt=path.join(process.env.ANDROID_HOME??'E:/tools/app-maker/android-sdk','build-tools/36.0.0/aapt.exe');
+const run=(...args)=>execFileSync(aapt,args,{encoding:'utf8',windowsHide:true,maxBuffer:8*1024*1024});
+const manifest=run('dump','xmltree',apk,'AndroidManifest.xml'),id=manifest.match(/android:networkSecurityConfig\([^)]*\)=@(0x[0-9a-f]+)/i)?.[1];assert.ok(id,'APK manifest has no explicit network policy');
+const resources=run('dump','resources',apk),escaped=id.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),name=resources.match(new RegExp('spec resource '+escaped+' [^:]+:xml/([\\w]+):'))?.[1];assert.ok(name,'Cannot resolve active APK network policy');
+const xml=run('dump','xmltree',apk,'res/xml/'+name+'.xml');
+assert.match(xml,/E: base-config[^\n]*\n\s+A: cleartextTrafficPermitted=\(type 0x12\)0xffffffff/,'Active APK base policy blocks HTTP redirects');
+assert.ok(!/cleartextTrafficPermitted=\(type 0x12\)0x0\b/.test(xml),'A packaged domain override still blocks HTTP');
+assert.match(xml,/A: src="system"/,'System certificate trust must remain enabled');assert.ok(!/A: src="user"/.test(xml),'Do not add user certificate trust');
+const result={apk,activePolicy:name,httpPermitted:true,systemCertificateTrust:true};fs.mkdirSync('artifacts/verification',{recursive:true});fs.writeFileSync('artifacts/verification/apk-network-policy.json',JSON.stringify(result,null,2));console.log(JSON.stringify(result));

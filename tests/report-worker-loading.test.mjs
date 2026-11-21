@@ -1,13 +1,28 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import vm from 'node:vm';import {createHash,webcrypto} from 'node:crypto';
 const source=fs.readFileSync(new URL('../public/report-worker.js',import.meta.url),'utf8');
-async function run({corrupt,override}={}){
+async function run({corrupt,override,mode='diagnostic',missing}={}){
  const names=['pyodide.js','pyodide.asm.js','pyodide.asm.wasm','python_stdlib.zip','pyodide-lock.json','a.whl','b.whl','c.whl','d.whl','report-sources.json','LabMakerSansSC.ttf','catalog.json','chart_preview.py','insert_chart.py','ai_plot.py','variant_edits.py','runner.py'];
  const bytes=Object.fromEntries(names.map(n=>[n,new TextEncoder().encode(n)])),files=Object.fromEntries(names.map(n=>[n,{sha256:createHash('sha256').update(bytes[n]).digest('hex')}]));
- let active=0,max=0;const fetched=[],written=[],unpacked=[],messages=[];const py={globals:new Map(),FS:{mkdirTree(){},writeFile:(path,value)=>written.push({path,value})},runPython:()=>'/site',runPythonAsync:async text=>text==='diagnose_runtime()'?JSON.stringify({complete:true}):undefined,loadPackage:async()=>{}};
+ let active=0,max=0,digests=0;const fetched=[],written=[],unpacked=[],messages=[];const py={globals:new Map(),FS:{mkdirTree(){},writeFile:(path,value)=>written.push({path,value}),readFile:()=>new Uint8Array([1])},runPython:()=>'/site',runPythonAsync:async text=>text==='diagnose_runtime()'?JSON.stringify({complete:true}):text==='generate_report(mobile_job)'?JSON.stringify({path:'/lab/report.docx',charts:[]}):undefined,loadPackage:async()=>{}};
  const self={location:{href:'https://localhost/report-worker.js'},postMessage:m=>messages.push(m)};
- const context=vm.createContext({self,URL,TextDecoder,Uint8Array,crypto:webcrypto,atob,importScripts:()=>{assert.ok(names.slice(0,5).every(n=>fetched.includes(n)))},loadPyodide:async()=>py,fetch:async url=>{const name=String(url).split('/').at(-1);if(name==='manifest.json')return {json:async()=>({files,pureWheels:['a.whl','b.whl','c.whl','d.whl']})};active++;max=Math.max(max,active);return {ok:true,arrayBuffer:async()=>{await new Promise(r=>setTimeout(r,name==='a.whl'?12:2));active--;fetched.push(name);return (name===corrupt?new TextEncoder().encode('bad'):bytes[name]).buffer}}}});
- py.unpackArchive=value=>unpacked.push(new TextDecoder().decode(value));vm.runInContext(source,context);await self.onmessage({data:{job:{mode:'diagnostic'},dataPackage:override}});return {max,fetched,written,unpacked,messages};
+ const crypto={subtle:{digest:(...args)=>{digests++;return webcrypto.subtle.digest(...args);}}};
+ const context=vm.createContext({self,URL,TextDecoder,Uint8Array,crypto,atob,importScripts:()=>{if(mode==='diagnostic')assert.ok(names.slice(0,5).every(n=>fetched.includes(n)))},loadPyodide:async()=>py,fetch:async url=>{const name=String(url).split('/').at(-1);if(name===missing)return {ok:false};if(name==='manifest.json')return {ok:true,json:async()=>({files,pureWheels:['a.whl','b.whl','c.whl','d.whl']})};active++;max=Math.max(max,active);return {ok:true,arrayBuffer:async()=>{await new Promise(r=>setTimeout(r,name==='a.whl'?12:2));active--;fetched.push(name);return (name===corrupt?new TextEncoder().encode('bad'):bytes[name]).buffer}}}});
+ py.unpackArchive=value=>unpacked.push(new TextDecoder().decode(value));vm.runInContext(source,context);await self.onmessage({data:{job:{mode},dataPackage:override}});return {max,fetched,written,unpacked,messages,digests};
 }
+
+test('ordinary report generation skips integrity-only reads and hashing while loading its components',async()=>{
+ const r=await run({mode:'generate'});
+ assert.equal(r.digests,0);
+ assert.ok(!r.fetched.some(name=>name.startsWith('pyodide')||name==='python_stdlib.zip'));
+ assert.deepEqual(r.unpacked,['a.whl','b.whl','c.whl','d.whl']);
+ assert.equal(r.messages.at(-1).type,'result');
+});
+
+test('ordinary report generation reports missing required resources',async()=>{
+ const r=await run({mode:'generate',missing:'runner.py'});
+ assert.equal(r.messages.at(-1).type,'error');
+ assert.match(r.messages.at(-1).message,/资源缺失.*runner.py/);
+});
 test('real worker installs verified wheels in manifest order and finishes diagnostic only after runtime files are ready',async()=>{
  const r=await run();assert.deepEqual(r.unpacked,['a.whl','b.whl','c.whl','d.whl']);assert.deepEqual(r.written.map(x=>x.path),['report-sources.json','LabMakerSansSC.ttf','catalog.json','chart_preview.py','insert_chart.py','ai_plot.py','variant_edits.py'].map(n=>'/lab/'+n));assert.equal(r.messages.at(-1).type,'diagnostic-result');assert.equal(r.messages.at(-1).diagnostic.complete,true);
 });

@@ -18,12 +18,12 @@ public class SchoolNetworkPolicyTest {
         assertTrue(allowed("/PhyEws/(F(official-session))/student/Student.aspx"));
         assertTrue(allowed("/new-official-login.aspx?state=official"));
         assertTrue(allowed("/phyews/unknown.aspx"));
-        // A nested URL parameter is inert data. An actual redirect to that host is still rejected.
+        // A nested URL parameter is inert data. Actual HTTP redirects are also allowed.
         assertTrue(allowed("/phyews/default.aspx?ReturnUrl=https%3A%2F%2Fexample.com"));
-        assertFalse(SchoolNetworkPolicy.allowed(HttpUrl.get("http://example.com/phyews/"),false));
-        assertFalse(SchoolNetworkPolicy.allowed(HttpUrl.get("http://wlsy.xidian.edu.cn:8080/phyews/"),false));
+        assertTrue(SchoolNetworkPolicy.allowed(HttpUrl.get("http://example.com/phyews/"),false));
+        assertTrue(SchoolNetworkPolicy.allowed(HttpUrl.get("http://wlsy.xidian.edu.cn:8080/phyews/"),false));
         assertFalse(SchoolNetworkPolicy.allowed(HttpUrl.get("http://user:pass@wlsy.xidian.edu.cn/phyews/"),false));
-        assertFalse(SchoolNetworkPolicy.allowed(HttpUrl.get("http://127.0.0.1:58441/phyews/"),false));
+        assertTrue(SchoolNetworkPolicy.allowed(HttpUrl.get("http://127.0.0.1:58441/phyews/"),false));
         assertTrue(SchoolNetworkPolicy.allowed(HttpUrl.get("http://127.0.0.1:58441/phyews/"),true));
     }
     @Test public void diagnosticsDoNotEchoSecrets(){

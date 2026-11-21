@@ -1,0 +1,9 @@
+{
+  "source": "E:/apps/xdu-labreport-writer-master/src/shared/experiment-chart-presets.js",
+  "sha256": "2298c9e33b775a683ce2574a6c4b201ee944aece205fb3ab96d7ddd2bce6e3e5",
+  "note": "仅移植本机原版预设定义，未在本轮重新核对官网要求",
+  "rendererSha256": "d90b282c3d0ab09ef94821bcc3af1ea8d71a6a102ef3c7dbd2474b6ce3de7e7d",
+  "rendererMatchesOriginal": false,
+  "rendererMatchesOriginalNormalized": true,
+  "rendererDifference": "CRLF/LF line endings only"
+}

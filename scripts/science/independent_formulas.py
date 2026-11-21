@@ -38,7 +38,7 @@ def references(name,d):
         put('T0',T0,'s','mean(30T_disk)/30');put('T',T,'s','mean(30T_ring)/30');put('G',G,'Pa','16π*l*m*(D1²+D2²)/(d⁴*(T²-T0²))')
     elif name=='拉伸法测量钢丝杨氏弹性模量':
         n=[(a+b)/2 for a,b in zip(d['ni_zheng'],d['ni_jian'])];delta=mean(n[i+4]-n[i] for i in range(4));wire=(mean(d['d_shi'])-d['d_0'])/1000
-        young=8*4*d['instrument_g']*d['L']*d['H']/(PI*wire**2*(d['D']/1000)*(delta/100))
+        young=8*4*d['instrument_g']*(d['L_mm']/1000)*(d['H_mm']/1000)/(PI*wire**2*(d['D']/1000)*(delta/100))
         put('delta_n_a',delta,'cm','mean(n[i+4]-n[i]), each n=mean(load,unload)');put('Y',young/1e11,'10¹¹ Pa','8*Δm*g*L*H/(π*d²*D*Δn), Δm=4 kg')
     elif name=='重力加速度的测量':
         periods=d.get('T_avg') or [mean(row)/10 for row in d['trials']];pairs=sorted(zip(d['h'],periods));minimum=min(periods);idx=next(i for i,(_,t) in enumerate(pairs) if t==minimum)
@@ -78,7 +78,7 @@ def references(name,d):
         for i in range(1,len(x)-1):
             if y[i]<=y[i-1] and y[i]<=y[i+1] and y[i]<max(y)*.05:
                 xx=x[i-1:i+2];yy=y[i-1:i+2];a,b,c=solve3([[1,v,v*v] for v in xx],yy);vertex=-b/(2*c);points.append(vertex)
-        left=sorted((v for v in points if v<center),reverse=True);right=sorted(v for v in points if v>center);widths=[2*(k+1)*d['lambda_nm']*1e-6*d['L']/(b-a) for k,(a,b) in enumerate(zip(left[:3],right[:3]))];put('a_mean',mean(widths),'mm','mean(2*k*λ*L/(x_right-x_left)), quadratic dark-fringe interpolation')
+        left=sorted((v for v in points if v<center),reverse=True);right=sorted(v for v in points if v>center);widths=[2*(k+1)*d['lambda_nm']*1e-6*d['L_cm']*10/(b-a) for k,(a,b) in enumerate(zip(left[:3],right[:3]))];put('a_mean',mean(widths),'mm','mean(2*k*λ*L/(x_right-x_left)), quadratic dark-fringe interpolation')
     elif name=='RLC电路的稳态特性研究实验':
         f=1/(2*PI*math.sqrt(d['L']*1e-3*d['C']*1e-6))/1000;put('f0',f,'kHz','1/(2πsqrt(L*C)), mH→H, μF→F, Hz→kHz');put('eta',abs(d['f0p']-f)/f*100,'%','100*abs(measured f0 - unrounded theoretical f0)/theoretical f0')
         freq=[row[0] for row in d['t1']];current=[row[2]/d['R']*1000 for row in d['t1']];peak=max(current);threshold=peak/math.sqrt(2);cross=[]
@@ -103,7 +103,7 @@ def references(name,d):
         rk=mean(d['M_mH']*1e-3*(current/1000)/((a+b)/2*10) for current,a,b in zip(d['I0_ma'],d['dm1_cm'],d['dm2_cm']));B=rk*((d['d_left_cm'][0]+d['d_right_cm'][0])/2*10)/(d['n_coil']*d['S_m2']);theory=4*PI*1e-7*d['N']*(d['I_mA']/1000)/math.sqrt(d['l_m']**2+4*(d['r0_cm']/100)**2)
         put('RKb_mean',rk,'C Ω/mm','mean(M*I0/dm), mH→H, mA→A, cm→mm');put('B_exp_center',B,'T','RKb*center deflection/(n*S)');put('B0_theory',theory,'T','μ0*N*I/sqrt(l²+4r²), mA→A and cm→m');put('E_rel',abs(B-theory)/theory*100,'%','100*abs(Bmeasured-Btheory)/Btheory')
     elif name=='霍尔效应实验':
-        b=[(a-c)/2/(d['kh']*current) for a,c,current in zip(d['t2_u1'],d['t2_u2'],d['t2_i'])];put('b2_mean',mean(b),'T','mean((U_positive-U_negative)/(2*KH*I_work)), mV and mA cancel');fields=[(a-c)/2/(d['kh']*d['i_work']) for a,c in zip(d['t1_u1'],d['t1_u2'])];put('k',line([v/1000 for v in d['t1_im']],fields)[0],'T/A','OLS B against magnet current, mA→A')
+        b=[(a-c)/2/(d['kh']*current) for a,c,current in zip(d['t2_u1'],d['t2_u2'],d['t2_i'])];put('b2_mean',mean(b),'T','mean((U_positive-U_negative)/(2*KH*I_work)), mV and mA cancel');fields=[(a-c)/2/(d['kh']*d['i_work']) for a,c in zip(d['t1_u1'],d['t1_u2'])];put('k',line(d['t1_im_a'],fields)[0],'T/A','OLS B against magnet current in A')
     elif name=='静电场的模拟':
         x=[math.log(mean(row)) for row in d['coax_radii']];y=[(i+1)/d['u_a'] for i in range(len(x))];slope,intercept=line(x,y);put('slope',slope,'1','OLS U/Ua against ln(r)');put('intercept',intercept,'1','OLS normalized voltage intercept');put('theory_slope',-1/math.log(d['r_b']/d['r_a']),'1','-1/ln(rb/ra)')
     elif name in ('声速的测量（水中）','声速的测量（空气）'):

@@ -48,7 +48,7 @@ const badge = (name: string) => {
       : "";
 };
 export class PortalView {
-  private accountPicker=new SavedAccountPicker(schoolAccounts,'course',account=>this.action('login-saved',undefined,account),text=>{this.status=text;this.render();});
+  private accountPicker=new SavedAccountPicker(schoolAccounts,'course',account=>this.action('login-saved',undefined,account),text=>{this.status=text;this.render();},false);
   private service = new SchoolPortal();
   get currentAccount(){return this.service.overview?.identity.account??'';}
   private host: HTMLElement | null = null;
@@ -64,6 +64,7 @@ export class PortalView {
   private week: number | null = null;
   private slots: Slot[] | null = null;
   private tab = "selected";
+  private openSection = "";
   private status = "";
   private timer: ReturnType<typeof setTimeout> | undefined;
   private review = document.createElement("dialog");
@@ -254,12 +255,15 @@ export class PortalView {
     this.review.close();
     this.closeConfirmation();
   }
-  mount(host: HTMLElement) {
+  mount(host: HTMLElement, section = "") {
     this.leave();
     this.host = host;
+    this.openSection = section;
+    if (['available','selected','recommend','teachers'].includes(section)) this.tab = section;
     this.busy = !!this.warmTask;
     this.render();
     if(this.warmedOwner&&!this.warmTask&&this.warmedFilters!==this.warmedOwner){const token=this.token;this.busy=true;this.render();void this.loadWarmedFilters().finally(()=>{if(token===this.token&&!this.warmTask){this.busy=false;this.render();}});}if(this.warmedOwner&&!this.warmTask)this.hydrateWarmed();
+    if (section === 'available' && this.service.overview && !this.busy) void this.loadWeek(false);
     void this.refreshAcademic();
     host.addEventListener("click", (e) => {
       const button = (e.target as Element).closest<HTMLButtonElement>(
@@ -294,9 +298,54 @@ export class PortalView {
     if (!host) return;
     this.accountPicker.leave();
     const overview = this.service.overview;
-    host.innerHTML = `<section class="panel"><div class="portal-title"><h2>学校实验选课</h2><button class="button secondary compact" data-portal="${overview ? "clear" : "login"}" ${this.busy ? "disabled" : ""}>${overview ? "清除登录状态" : "登录"}</button></div>${overview ? `<p>${esc(overview.identity.name)} · ${esc(overview.identity.account)}</p><div class="portal-stats"><span>本学期要求 <b>${overview.rules.requiredHours}</b> 学时</span><span>每周最多 <b>${overview.rules.weeklyHourLimit}</b> 学时</span><span>已选 <b>${overview.rules.selectedHours}</b> 学时</span></div><div class="ai-inline"><button class="button secondary compact" data-portal="refresh" ${this.busy ? "disabled" : ""}>刷新课表</button><button class="button secondary compact" data-portal="metadata" ${this.busy ? "disabled" : ""}>重试教师与教室</button><button class="button secondary compact" data-portal="selected">我的实验课表</button><button class="button secondary compact" data-portal="available">开始选课</button></div>` : `<p>请先连接并认证校园网，再登录学校物理实验系统读取课表。</p><label class="ai-field">学校账号<input id="portal-account" inputmode="numeric" autocomplete="off" maxlength="30"></label><label class="ai-field">密码<input id="portal-password" type="password" autocomplete="off" maxlength="200"></label><p class="muted">手动输入的密码仅用于本次登录。</p>`}<p role="status" id="portal-status">${esc(this.busy ? "正在按官网顺序读取，请稍候…" : this.status)}</p>${this.busy ? '<button class="text-button" data-portal="clear">停止并清除会话</button>' : ""}</section><div class="ai-inline portal-guide-nav"><a class="button secondary compact" href="#/school-reports">实验报告提交</a><button class="button secondary compact" data-portal="recommend">实验推荐</button><button class="button secondary compact" data-portal="teachers">老师推荐</button><a class="button secondary compact" href="#/help/school">常见问题</a></div>${overview || ["recommend", "teachers"].includes(this.tab) ? this.content() : ""}`;
+    host.innerHTML = `<section class="panel"><div class="portal-title"><h2>学校实验选课</h2><button class="button secondary compact" data-portal="${overview ? "clear" : "login"}" ${this.busy ? "disabled" : ""}>${overview ? "清除登录状态" : "登录"}</button></div>${overview ? `<p>${esc(overview.identity.name)} · ${esc(overview.identity.account)}</p><div class="portal-stats"><span>本学期要求 <b>${overview.rules.requiredHours}</b> 学时</span><span>每周最多 <b>${overview.rules.weeklyHourLimit}</b> 学时</span><span>已选 <b>${overview.rules.selectedHours}</b> 学时</span></div><div class="ai-inline"><button class="button secondary compact" data-portal="refresh" ${this.busy ? "disabled" : ""}>刷新课表</button><button class="button secondary compact" data-portal="metadata" ${this.busy ? "disabled" : ""}>重试教师与教室</button><button class="button secondary compact" data-portal="selected">我的实验课表</button><button class="button secondary compact" data-portal="available">开始选课</button></div>` : `<p>请先连接并认证校园网，再登录学校物理实验系统读取课表。</p><label class="ai-field">学校账号<input id="portal-account" inputmode="numeric" autocomplete="off" maxlength="30"></label><label class="ai-field">密码<input id="portal-password" type="password" autocomplete="off" maxlength="200"></label>`}<p role="status" id="portal-status">${esc(this.busy ? "正在按官网顺序读取，请稍候…" : this.status)}</p>${this.busy ? '<button class="text-button" data-portal="clear">停止并清除会话</button>' : ""}</section><div class="ai-inline portal-guide-nav"><a class="button secondary compact" href="#/school-reports">实验报告提交</a><button class="button secondary compact" data-portal="recommend">实验推荐</button><button class="button secondary compact" data-portal="teachers">老师推荐</button><a class="button secondary compact" href="#/help/school">常见问题</a></div>${overview || ["recommend", "teachers"].includes(this.tab) ? this.content() : ""}`;
+    const loginPanel = host.querySelector<HTMLElement>(':scope > section.panel')!;
+    const oldNav = host.querySelector('.portal-guide-nav');
+    oldNav?.remove();
+    const contentNodes = [...host.children].filter(node => node !== loginPanel);
+    const menu = document.createElement('div');
+    menu.className = 'portal-folders';
+    const items = [['available','实验选课'],['selected','我的实验'],['reports','实验报告提交'],['faq','常见问题'],['config','配置']];
+    for (const [key, title] of items) {
+      const folder = document.createElement('details');
+      folder.className = 'portal-folder';
+      folder.open = this.openSection === key;
+      folder.innerHTML = `<summary><span>${title}</span><span aria-hidden="true">›</span></summary><div class="portal-folder-body"></div>`;
+      const body = folder.querySelector('.portal-folder-body')!;
+      if (key === 'config') {
+        body.innerHTML = '<div class="portal-config-list"><a class="portal-config-entry" href="#/academic"><span>教务课表</span><span aria-hidden="true">›</span></a><details class="portal-course-account"><summary class="portal-config-entry"><span>实验选课账号</span><span aria-hidden="true">›</span></summary><div data-course-account-content></div></details><a class="portal-config-entry" href="#/school-accounts/report"><span>实验报告提交账号</span><span aria-hidden="true">›</span></a></div>';
+        body.querySelector('[data-course-account-content]')!.append(loginPanel);
+      } else if (key === 'reports') body.innerHTML = '<a class="button" href="#/school-reports">进入实验报告提交</a>';
+      else if (key === 'faq') body.innerHTML = '<a class="button" href="#/help/school">查看常见问题</a>';
+      else if (this.openSection === key) {
+        if (overview || key === 'recommend' || key === 'teachers') contentNodes.forEach(node => body.append(node));
+        else body.innerHTML = '<p>请先在“配置”中登录学校选课账号。</p><button class="button" data-portal="folder-config">前往配置</button>';
+      }
+      folder.querySelector('summary')!.addEventListener('click', event => {
+        event.preventDefault();
+        if (this.openSection === key) {this.openSection = '';this.render();return;}
+        void this.action('folder-' + key).catch(error => {this.status=(error as Error).message;this.render();});
+      });
+      menu.append(folder);
+    }
+    if (!this.openSection) {
+      const destinations: Record<string,string> = {available:'#/portal/available',selected:'#/portal/selected',reports:'#/school-reports',recommend:'#/portal/recommend',teachers:'#/portal/teachers',faq:'#/portal/faq',config:'#/portal/config'};
+      host.innerHTML = items.map(([key,title]) => `<a class="settings-folder portal-page-link" href="${destinations[key]}"><span>${title}</span><span aria-hidden="true">›</span></a>`).join('');
+    } else if (this.openSection === 'config') {
+      host.innerHTML = '<section class="panel"><h2>配置</h2><a class="portal-config-entry" href="#/academic"><span>教务课表</span><span aria-hidden="true">›</span></a><a class="portal-config-entry" href="#/portal/account"><span>实验选课账号</span><span aria-hidden="true">›</span></a><a class="portal-config-entry" href="#/school-accounts/report"><span>实验报告提交账号</span><span aria-hidden="true">›</span></a></section>';
+    } else if (this.openSection === 'account') {
+      host.replaceChildren(loginPanel);
+    } else {
+      const active = [...menu.querySelectorAll('details.portal-folder')].find(folder => (folder as HTMLDetailsElement).open);
+      const body = active?.querySelector('.portal-folder-body');
+      const section = document.createElement('section');
+      section.className = 'portal-page-content';
+      section.innerHTML = `<h2 class="portal-page-title">${esc(items.find(([key])=>key===this.openSection)?.[1] ?? '')}</h2>`;
+      if (body) while(body.firstChild) section.append(body.firstChild);
+      host.replaceChildren(section);
+    }
     this.guides.bind(host);
-    if(!overview&&!this.busy){const picker=document.createElement('div');picker.className='saved-account-tools';host.querySelector('#portal-status')!.before(picker);this.accountPicker.mount(picker);}
+    if(!overview&&!this.busy&&host.querySelector('#portal-status')){const picker=document.createElement('div');picker.className='saved-account-tools';host.querySelector('#portal-status')!.before(picker);this.accountPicker.mount(picker);}
     this.refreshTimes();
     this.applyVisibility();
   }
@@ -823,6 +872,11 @@ export class PortalView {
     }
   }
   private async action(action: string, index?: string,saved?:SavedSchoolAccount) {
+    if (action.startsWith('folder-')) {
+      location.hash = '/portal/' + action.slice(7);
+      return;
+    }
+
     if (action === "filters" && !this.isSaving) {
       this.filterPanel.open();
       return;

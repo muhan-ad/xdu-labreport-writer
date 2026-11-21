@@ -6,7 +6,7 @@ export const DATA_HOST='labreport-1485394950.cos.ap-guangzhou.myqcloud.com';
 const KIND='lab-maker-mobile-data';
 export interface DataManifest {kind:typeof KIND;schema:1;dataVersion:string;minAppVersion:string;adapterVersion:1;runtimeHash:string;layoutHash:string;url:string;size:number;sha256:string;notes:string;signature:string;}
 export interface DataPayload {kind:typeof KIND;schema:1;dataVersion:string;adapterVersion:1;runtimeHash:string;layoutHash:string;catalog:{version:1;sourceVersion:string;experiments:Experiment[]};variants:Record<string,Record<string,unknown>>;sources:Record<string,string>;fontBase64:string;}
-export interface DataContext {appVersion:string;currentVersion:string;runtimeHash:string;experiments:readonly Experiment[];publicKey:string;}
+export interface DataContext {appVersion:string;currentVersion:string;runtimeHash:string;experiments:readonly Experiment[];publicKey:string;legacyLayouts?:Record<string,readonly Experiment[]>;}
 const object=(v:unknown):v is Record<string,unknown>=>!!v&&typeof v==='object'&&!Array.isArray(v);
 const encoder=new TextEncoder();
 export function stableJson(value:unknown,depth=0):string {
@@ -43,7 +43,9 @@ export async function verifyDataManifest(raw:unknown,context:DataContext):Promis
  if(url.href!==m.url||url.protocol!=='https:'||url.hostname!==DATA_HOST||url.port||url.username||url.password||url.search||url.hash||url.pathname!=='/mobile-data/data-'+m.dataVersion+'.json')throw Error('更新包来源不正确');
  if(compareDataVersion(m.dataVersion,context.currentVersion)<=0)throw Error('更新版本必须高于当前版本');
  if(compareDataVersion(context.appVersion,m.minAppVersion)<0)throw Error('请先更新应用，再更新实验数据');
- if(m.runtimeHash!==context.runtimeHash||m.layoutHash!==await dataLayoutHash(context.experiments))throw Error('运行环境或录入字段不兼容，请先更新应用');
+ if(m.runtimeHash!==context.runtimeHash)throw Error('此实验数据包的报告运行环境与当前应用不匹配，暂用本机资源');
+ const legacy=context.legacyLayouts?.[m.dataVersion];
+ if(m.layoutHash!==await dataLayoutHash(context.experiments)&&(!Array.isArray(legacy)||m.layoutHash!==await dataLayoutHash(legacy)))throw Error('此实验数据包的录入字段与当前应用不匹配，暂用本机资源');
  const signature=base64(m.signature,64);if(signature.length!==64)throw Error('更新签名格式无效');
  const pem=context.publicKey.replace(/-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\s/g,'');
  let verified:boolean;try{verified=await verifyPublisherSignature(base64(pem,256),signature,encoder.encode(manifestSigningText(m)));}catch{throw Error('当前环境无法验证发布签名，请更新系统 WebView 或应用');}
@@ -56,7 +58,9 @@ export async function verifyDataPayload(bytes:Uint8Array,manifest:DataManifest,c
  if(bytes.byteLength!==m.size||bytes.byteLength>MAX_DATA_BYTES||await dataHash(bytes as Uint8Array<ArrayBuffer>)!==m.sha256)throw Error('更新包大小或摘要不匹配');
  let parsed:unknown;try{parsed=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{throw Error('更新包不是有效 UTF-8 JSON');}
  if(!object(parsed)||parsed.dataVersion!==m.dataVersion||parsed.runtimeHash!==m.runtimeHash||parsed.layoutHash!==m.layoutHash)throw Error('更新包与签名清单不一致');
- return validateDataContents(parsed,context);
+ const legacy=context.legacyLayouts?.[m.dataVersion];
+ const experiments=Array.isArray(legacy)&&m.layoutHash===await dataLayoutHash(legacy)?legacy:context.experiments;
+ return validateDataContents(parsed,{...context,experiments});
 }
 export async function validateDataContents(parsed:unknown,context:Pick<DataContext,'runtimeHash'|'experiments'>):Promise<DataPayload>{
  if(!object(parsed))throw Error('更新包内容无效');

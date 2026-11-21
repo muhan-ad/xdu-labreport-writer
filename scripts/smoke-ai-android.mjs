@@ -328,7 +328,7 @@ try {
   );
   await click("#open-report");
   await wait("document.querySelector('#report-sheet').open");
-  await click('[data-report-tab="ai"]');
+  await click('[data-report-tab="quiz"]');
   mode = "quiz";
   await evaluate(
     "document.querySelector('#ai-questions').value='简述冲击法测量磁场的原理。'",

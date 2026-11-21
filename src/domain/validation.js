@@ -23,7 +23,27 @@
     for(const f of fields)if(f.type==='matrix')result[f.key]=Array.from({length:bounded(f.rows)},()=>Array(f.colsFrom?result[f.colsFrom]?.length||bounded(f.cols):bounded(f.cols)).fill(null));
     return result;
   }
+  function scaleUnitValue(value, scale) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return value;
+    const power = Math.log10(scale);
+    if (!Number.isInteger(power)) return value * scale;
+    const [mantissa, exponent = '0'] = String(value).split(/e/i);
+    return Number(`${mantissa}e${Number(exponent) + power}`);
+  }
+  function migrateUnits(schema, data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return data;
+    let result = data;
+    for (const group of schema.groups || []) for (const field of group.fields || []) {
+      if (!field.legacyKey || Object.hasOwn(data, field.key) || !Object.hasOwn(data, field.legacyKey)) continue;
+      const old = data[field.legacyKey], scale = field.legacyScale ?? 1;
+      const convert = value => scaleUnitValue(value, scale);
+      if (result === data) result = {...data};
+      result[field.key] = field.type === 'array' && Array.isArray(old) ? old.map(convert) : convert(old);
+    }
+    return result;
+  }
   function forEditing(schema, raw) {
+    raw = migrateUnits(schema, raw);
     const data=raw&&typeof raw==='object'&&!Array.isArray(raw)?{...raw}:{},fields=(schema.groups||[]).flatMap(g=>g.fields||[]);
     for(const f of fields)if(f.type==='array'){
       const input=Array.isArray(data[f.key])?data[f.key]:[],len=f.variableLength?dimensions(f,data).length:bounded(f.length,bounded(input.length));
@@ -38,6 +58,7 @@
   function validate(schema, data, required = true) {
     const errors = [];
     if (!data || typeof data !== 'object' || Array.isArray(data)) return ['数据应为对象'];
+    data = migrateUnits(schema, data);
     for (const group of schema.groups || []) for (const field of group.fields || []) {
       const value = data[field.key], label = field.label || field.key;
       if (value == null) { if (required && field.required) errors.push(label + '：未填写'); continue; }
@@ -83,4 +104,4 @@
     return [...new Set(errors)];
   }
   
-export const validation = {validate, dimensions, blank, forEditing};
+export const validation = {validate, dimensions, blank, forEditing, migrateUnits, scaleUnitValue};

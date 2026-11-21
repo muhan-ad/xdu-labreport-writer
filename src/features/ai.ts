@@ -6,6 +6,7 @@ import {OCRStudentEditor,type StudentPort} from './ocr-student.ts';
 import {studentFromOCR,type OCRStudentSnapshot} from '../domain/ocr-student.ts';
 import type {Profile} from '../domain/types.ts';
 import {aiProviders,providerForEndpoint,providerDraft} from '../domain/ai-providers.ts';
+import { deepseekPreset } from "../domain/api-tutorial.ts";
 import { APITutorial } from "./api-tutorial.ts";
 import { ai, type AISlot } from "../platform/ai.ts";
 import type { Draft, Experiment, Photo, RecordData } from "../domain/types.ts";
@@ -143,7 +144,7 @@ export class AIFeatures {
     if (!this.sheet.open) this.sheet.showModal();
   }
   private message(text: string) {
-    const node = this.sheet.querySelector("#ai-message");
+    const node = (this.tutorial?.isOpen && this.sheet.querySelector("#ai-tutorial-message")) || this.sheet.querySelector("#ai-message");
     if (node) node.textContent = text;
   }
   private value(id: string) {
@@ -251,7 +252,7 @@ export class AIFeatures {
       `<div id="ai-config-home"><div class="ai-config-tools"><button id="ai-tutorial-open" class="button secondary" data-ai="tutorial-open">DeepSeek 配置教程</button></div><fieldset id="ai-config-fields" class="ai-config-fields" disabled><label class="ai-field">配置用途<select id="ai-slot"><option value="chat" ${this.selectedSlot === "chat" ? "selected" : ""}>报告问答与润色</option><option value="vision" ${this.selectedSlot === "vision" ? "selected" : ""}>图片识别</option></select></label><label class="ai-check" ${this.selectedSlot==="vision"?"":"hidden"}><input id="ai-inherit" type="checkbox">继承报告问答配置</label><label id="ai-inherit-model-row" class="ai-field" hidden>识图模型（可选）<input id="ai-inherit-model" maxlength="256" placeholder="留空使用问答模型" autocomplete="off" spellcheck="false"></label><p id="ai-inherit-summary" class="muted" hidden></p><fieldset id="ai-provider-fields" class="ai-config-fields"><label class="ai-field">API 提供商<select id="ai-provider">${aiProviders.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("")}<option value="custom">OpenAI 兼容 / 自定义</option></select></label><label class="ai-field">API 地址<input id="ai-endpoint" type="url" placeholder="https://api.deepseek.com" autocomplete="off" spellcheck="false"></label><label class="ai-field">模型名称<input id="ai-model" maxlength="256" placeholder="填写服务商提供的模型名称" autocomplete="off" spellcheck="false"></label><select id="ai-popular-model" aria-label="常用模型" hidden></select><label class="ai-field">API Key<input id="ai-key" maxlength="4096" type="password" placeholder="输入密钥" autocomplete="off" autocapitalize="off" spellcheck="false"></label><div class="ai-inline"><button class="button secondary" data-ai="models">获取模型</button><button class="button secondary" data-ai="models-stop" hidden>停止获取</button></div><div id="ai-model-panel" hidden><label class="ai-field">搜索模型<input id="ai-model-search" type="search" placeholder="输入模型名称片段" autocomplete="off"></label><label class="ai-field">选择模型<select id="ai-model-choice"></select></label></div><p id="ai-key-state">正在读取本机配置…</p><p class="muted">密钥在本机加密保存；识图时照片发送给所选服务商。</p></fieldset></fieldset></div><section id="ai-tutorial" hidden></section>`,
       `<button class="button secondary" data-ai="clear">清除配置</button><button class="button secondary" data-ai="test">测试连接</button><button class="button" data-ai="save">加密保存</button>`,
     );
-    this.tutorial = new APITutorial(this.sheet, (s) => this.message(s),()=>{void this.applyProvider('deepseek').catch(e=>this.message(e.message));});
+    this.tutorial = new APITutorial(this.sheet, (s) => this.message(s));
     if (showTutorial) this.tutorial.open();
     this.sheet.querySelectorAll<HTMLButtonElement>(".report-footer button").forEach(b => b.disabled = true);
     try {
@@ -282,6 +283,41 @@ export class AIFeatures {
       if (serial === this.serial) {
         this.configLoading=false;this.providerControls();this.sheet.querySelector<HTMLFieldSetElement>("#ai-config-fields")!.disabled = false;
         this.sheet.querySelectorAll<HTMLButtonElement>(".report-footer button").forEach(b => b.disabled = false);this.modelControls();
+      }
+    }
+  }
+  private async configureFromTutorial(save: boolean) {
+    const input = this.sheet.querySelector<HTMLInputElement>("#ai-tutorial-key");
+    if (!input || !this.tutorial?.isOpen || this.controller) return;
+    const key = input.value.trim();
+    const serial = this.serial;
+    const controller = new AbortController();
+    this.controller = controller;
+    this.configWriting = save;
+    const buttons = this.sheet.querySelectorAll<HTMLButtonElement>("#ai-tutorial button");
+    buttons.forEach(button => button.disabled = true);
+    input.disabled = true;
+    try {
+      if (save) {
+        await this.configuration.configureDeepSeek(key);
+        if (serial !== this.serial || !this.sheet.open) return;
+        this.configWriting = false;
+        this.selectedSlot = "chat";
+        await this.config();
+        this.message("配置已加密保存，报告和识图共用 DeepSeek");
+      } else {
+        this.message("正在测试 DeepSeek 文字与图片连接…");
+        const draft = {slot:"chat" as const, ...deepseekPreset, key};
+        await this.configuration.test(draft, controller.signal);
+        await this.configuration.test({...draft, image:true}, controller.signal);
+        if (serial === this.serial && !controller.signal.aborted) this.message("文字与图片连接均成功，可以加密保存");
+      }
+    } finally {
+      if (this.controller === controller) this.controller = null;
+      if (serial === this.serial) {
+        this.configWriting = false;
+        input.disabled = false;
+        buttons.forEach(button => button.disabled = false);
       }
     }
   }
@@ -394,6 +430,7 @@ export class AIFeatures {
     if(this.applying){if(name==='close')this.close();return;}
     if(name==='models-stop'){this.cancel();this.modelControls();this.message('已停止获取模型');return;}
     if(name==='models')return this.fetchModels();
+    if (name === "tutorial-test" || name === "tutorial-save-key") return this.configureFromTutorial(name === "tutorial-save-key");
     if (name.startsWith("tutorial-")) {
       if (this.controller) return;
       return this.tutorial?.action(name);

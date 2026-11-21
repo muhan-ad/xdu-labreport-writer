@@ -9,7 +9,7 @@ public class AcademicSessionTest {
  }
  @Test public void partialAndFailedRefreshKeepGoodSnapshotWithoutFreshStatus()throws Exception{
   AcademicSession state=new AcademicSession();long token=state.begin(ACCOUNT);assertTrue(state.accept(token,raw(ACCOUNT),100));AcademicTimetable.Snapshot first=state.snapshot(ACCOUNT);
-  token=state.begin(ACCOUNT);JSONObject partial=raw(ACCOUNT);partial.getJSONArray("notArranged").put(new JSONObject().put("KCM","未排课"));assertFalse(state.accept(token,partial,200));assertSame(first,state.snapshot(ACCOUNT));assertFalse(state.fresh(ACCOUNT));assertEquals("incomplete",state.status());
+  token=state.begin(ACCOUNT);JSONObject partial=raw(ACCOUNT);partial.getJSONArray("courses").put(new JSONObject().put("KCM","有排课但时段格式异常"));assertFalse(state.accept(token,partial,200));assertSame(first,state.snapshot(ACCOUNT));assertFalse(state.fresh(ACCOUNT));assertEquals("incomplete",state.status());
   token=state.begin(ACCOUNT);assertTrue(state.fail(token));assertSame(first,state.snapshot(ACCOUNT));assertEquals("stale",state.status());assertFalse(state.fresh(ACCOUNT));
  }
  @Test public void accountSwitchAndIdentityFailuresCannotReusePreviousOwner()throws Exception{

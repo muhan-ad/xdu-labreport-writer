@@ -6,7 +6,7 @@ const walk=(dir,prefix='')=>fs.readdirSync(dir,{withFileTypes:true}).flatMap(ent
  return entry.isDirectory()?walk(file,relative):entry.isFile()&&relative!=='web-resource-integrity.json'?[{path:relative,bytes:fs.statSync(file).size,sha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}]:[];
 });
 const files=walk(root).sort((a,b)=>a.path.localeCompare(b.path,'en'));
-for(const required of ['index.html','report-worker.js','report-runtime/manifest.json','report-runtime/pyodide.asm.wasm'])if(!files.some(f=>f.path===required))throw Error('Required shared resource missing: '+required);
+for(const required of ['index.html','report-worker.js','report-runtime/manifest.json','report-runtime/pyodide.asm.wasm','preview/pdf-pages.bundle.js'])if(!files.some(f=>f.path===required))throw Error('Required shared resource missing: '+required);
 const {version}=JSON.parse(fs.readFileSync('package.json','utf8'));
 fs.writeFileSync(target,JSON.stringify({schema:1,version,scope:'shared-web-resources',files}));
 console.log(JSON.stringify({webResources:files.length,version}));

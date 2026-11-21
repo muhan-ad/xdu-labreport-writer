@@ -64,12 +64,14 @@ public class LabAIPlugin extends Plugin {
         cipher.updateAAD(slot.getBytes(StandardCharsets.UTF_8));
         return new JSONObject(new String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), StandardCharsets.UTF_8));
     }
-    private void write(String slot, JSONObject value) throws Exception {
+    private String encrypt(String slot, JSONObject value) throws Exception {
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE, key());
         cipher.updateAAD(slot.getBytes(StandardCharsets.UTF_8));
-        String encrypted = Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + ":" +
+        return Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + ":" +
             Base64.encodeToString(cipher.doFinal(value.toString().getBytes(StandardCharsets.UTF_8)), Base64.NO_WRAP);
-        if (!store().edit().putString(slot, encrypted).commit()) throw new IOException();
+    }
+    private void write(String slot, JSONObject value) throws Exception {
+        if (!store().edit().putString(slot, encrypt(slot, value)).commit()) throw new IOException();
     }
     private boolean mock(HttpUrl url) {
         return BuildConfig.DEBUG && url.scheme().equals("http") && url.host().equals("127.0.0.1") && url.port() == 58440;
@@ -117,16 +119,45 @@ public class LabAIPlugin extends Plugin {
             }
             String base = endpoint(call.getString("endpoint", "").trim()).toString().replaceAll("/+$", "");
             String model = call.getString("model", "").trim(), secret = call.getString("key", "").trim();
-            if (model.isEmpty() || model.length() > 256 || model.chars().anyMatch(c->c<32||c==127) || secret.length() > 4096 || secret.matches("(?s).*[\\r\\n].*")) throw new IllegalArgumentException("模型或密钥格式无效");
-            if (secret.isEmpty()) { JSONObject old = read(slot);
-                if (old == null || !base.equals(old.optString("endpoint"))) throw new IllegalArgumentException("首次保存或更换 API 地址时，请重新填写密钥");
-                secret = old.getString("key");
-            }
-            if(secret.chars().anyMatch(c->c<33||c>126))throw new IllegalArgumentException("密钥格式无效，请只填写服务商提供的 API Key");
-            JSONObject value = new JSONObject().put("endpoint", base).put("model", model).put("key", secret);
+            JSONObject value = credentialRecord(slot, base, model, secret);
             if(slot.equals("vision")){JSONObject old=read(slot);if(old!=null&&old.has("inheritModel"))value.put("inheritModel",old.optString("inheritModel",""));}write(slot, value); invalidate(slot); call.resolve(statusFor(slot,null));
         }} catch (IllegalArgumentException e) { call.reject(e.getMessage(), "CONFIG"); }
         catch (Exception e) { call.reject("密钥加密保存失败，请重试；未降级为明文存储", "SECRET_WRITE"); } });
+    }
+    private JSONObject credentialRecord(String slot, String base, String model, String secret) throws Exception {
+        if (model.isEmpty() || model.length() > 256 || model.chars().anyMatch(c->c<32||c==127) || secret.length() > 4096 || secret.matches("(?s).*[\\r\\n].*")) throw new IllegalArgumentException("模型或密钥格式无效");
+        if (secret.isEmpty()) { JSONObject old = read(slot);
+            if (old == null || !base.equals(old.optString("endpoint"))) throw new IllegalArgumentException("首次保存或更换 API 地址时，请重新填写密钥");
+            secret = old.getString("key");
+        }
+        if(secret.chars().anyMatch(c->c<33||c>126))throw new IllegalArgumentException("密钥格式无效，请只填写服务商提供的 API Key");
+        return new JSONObject().put("endpoint", base).put("model", model).put("key", secret);
+    }
+    @PluginMethod public void configureDeepSeek(PluginCall call) {
+        workers.execute(() -> {
+            try { synchronized (lock) {
+                JSONObject chat = credentialRecord("chat", "https://api.deepseek.com", "deepseek-flash", call.getString("key", "").trim());
+                JSONObject vision = AIConfiguration.inheritance(read("vision"), true, "");
+                if (!store().edit().putString("chat", encrypt("chat", chat))
+                    .putString("vision", encrypt("vision", vision)).commit()) throw new IOException();
+                invalidate("chat");
+                invalidate("vision");
+                call.resolve(publicStatus(chat));
+            }} catch (IllegalArgumentException e) { call.reject(e.getMessage(), "CONFIG"); }
+            catch (Exception e) { call.reject("密钥加密保存失败，请重试", "SECRET_WRITE"); }
+        });
+    }
+    private JSArray connectionTestMessages(boolean image) throws Exception {
+        Object content = "Reply with OK only.";
+        if (image) {
+            String png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAAAAACPAi4CAAAAMUlEQVR4nO3MMQ0AMAgAMJTgX+MuLBD2QSug8T6FQLAwyCaBQCAQCAQCwa1gQiBYEhQSO0GXT/odJgAAAABJRU5ErkJggg==";
+            content = new JSONArray()
+                .put(new JSONObject().put("type", "text").put("text", "Describe the shape in this test image in one word."))
+                .put(new JSONObject().put("type", "image_url").put("image_url", new JSONObject().put("url", png)));
+        }
+        JSArray messages = new JSArray();
+        messages.put(new JSONObject().put("role", "user").put("content", content));
+        return messages;
     }
     @PluginMethod public void clear(PluginCall call) {
         workers.execute(() -> { try { synchronized(lock) { String slot = slot(call);
@@ -172,7 +203,10 @@ public class LabAIPlugin extends Plugin {
             if (Collections.frequency(new ArrayList<>(slots.values()), slot) >= 2) throw new IllegalArgumentException("已有两个请求正在处理，请稍后再试");
             JSONObject config;JSObject draft=call.getObject("draft");boolean inheritedDraft=draft!=null&&draft.optBoolean("inheritChat",false);if(inheritedDraft){if(!slot.equals("vision")||!call.getBoolean("test",false))throw new IllegalArgumentException("继承草稿仅用于识图配置测试");config=AIConfiguration.resolve(slot,true,draft.optString("model","").trim(),this::read);}else if(draft!=null){if(!call.getBoolean("test",false))throw new IllegalArgumentException("草稿仅用于连接测试");String baseDraft=endpoint(draft.optString("endpoint").trim()).toString().replaceAll("/+$","");String keyDraft=draft.optString("key").trim();try{config=APIModels.draft(baseDraft,draft.optString("model"),keyDraft,keyDraft.isEmpty()?AIConfiguration.resolve(slot,false,this::read):null);}catch(APIModels.Failure e){throw new IllegalArgumentException(e.getMessage());}}else config=AIConfiguration.resolve(slot,null,this::read);if(config==null)throw new IllegalArgumentException("请先配置 API 密钥");
             HttpUrl base = endpoint(config.getString("endpoint")); secret = config.getString("key");if(secret.isEmpty()||secret.length()>4096||secret.chars().anyMatch(c->c<33||c>126))throw new IllegalArgumentException("密钥格式无效，请重新填写 API Key");
-            JSArray messages = call.getArray("messages");if(draft!=null){messages=new JSArray();messages.put(new JSONObject().put("role","user").put("content","Reply with OK only."));} if (messages == null || messages.length() == 0 || messages.length() > 12) throw new IllegalArgumentException("请求内容无效");
+            JSArray messages = draft == null ? call.getArray("messages")
+                : connectionTestMessages(call.getBoolean("testImage", false));
+            if (messages == null || messages.length() == 0 || messages.length() > 12)
+                throw new IllegalArgumentException("请求内容无效");
             streaming=slot.equals("chat")&&!call.getBoolean("test",false)&&call.getBoolean("stream",false);
             JSONObject body = new JSONObject().put("model", config.getString("model")).put("messages", messages).put("stream", streaming);
             if (call.getBoolean("test", false)) body.put("max_tokens", 128);

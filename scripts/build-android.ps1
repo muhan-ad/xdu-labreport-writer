@@ -5,12 +5,16 @@ Set-Location (Split-Path $PSScriptRoot -Parent)
 if($LASTEXITCODE -ne 0){throw 'Domain tests failed'}
 & npm.cmd run build
 if($LASTEXITCODE -ne 0){throw 'Web build failed'}
+& node.exe scripts/test-resource-runtime.mjs
+if($LASTEXITCODE -ne 0){throw 'Offline report runtime check failed'}
 & npx.cmd cap sync android
 if($LASTEXITCODE -ne 0){throw 'Capacitor sync failed'}
 Push-Location android
 try{& .\gradlew.bat --no-daemon testDebugUnitTest assembleDebug;if($LASTEXITCODE -ne 0){throw 'Android build failed'}}finally{Pop-Location}
 & node.exe scripts/verify-apk-resources.mjs
 if($LASTEXITCODE -ne 0){throw 'Final APK resource verification failed'}
+& node.exe scripts/verify-apk-network.mjs
+if($LASTEXITCODE -ne 0){throw 'Final APK network policy verification failed'}
 & node.exe scripts/verify-native-plugin-classes.mjs
 if($LASTEXITCODE -ne 0){throw 'Native plugin class verification failed'}
 $candidate='android\app\build\outputs\apk\debug\app-debug.apk'

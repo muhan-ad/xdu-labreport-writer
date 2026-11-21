@@ -57,7 +57,13 @@ final class SchoolAccountVault {
     synchronized JSONArray list()throws Exception{
         JSONArray rows=records(),result=new JSONArray();
         for(int i=0;i<rows.length();i++){JSONObject r=rows.getJSONObject(i),summary=new JSONObject().put("id",r.getString("id")).put("system",r.getString("system"));
-            try{Credentials value=decode(r);summary.put("account",value.account).put("label",value.label).put("locked",false);}
+            try {
+                Credentials value=decode(r);
+                summary.put("account",value.account).put("label",value.label).put("locked",false);
+                if ("report".equals(r.getString("system"))) {
+                    summary.put("passwordLength",value.password.codePointCount(0,value.password.length()));
+                }
+            }
             catch(Exception ignored){summary.put("account","").put("label","无法解密的账号").put("locked",true);}
             result.put(summary);
         }

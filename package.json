@@ -1,12 +1,13 @@
 {
   "name": "lab-maker-app",
-  "version": "0.138.0",
+  "version": "0.143.8",
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node scripts/build-pdf-preview.mjs",
     "dev": "vite --host 127.0.0.1",
     "test": "node --test tests/*.test.mjs",
-    "build": "node scripts/sync-report-assets.mjs && tsc --noEmit && vite build && node scripts/build-web-integrity.mjs",
+    "build": "node scripts/sync-report-assets.mjs && node scripts/build-pdf-preview.mjs && tsc --noEmit && vite build && node scripts/build-web-integrity.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "sync:android": "npm run build && cap sync android",
     "sync:ios": "npm run build && cap sync ios",
@@ -22,11 +23,17 @@
     "@capacitor/filesystem": "8.1.5",
     "@capacitor/ios": "8.5.3",
     "@capacitor/share": "8.0.3",
-    "@noble/ed25519": "3.2.0"
+    "@noble/ed25519": "3.2.0",
+    "html-to-image": "1.11.13",
+    "katex": "0.19.1",
+    "mathjax-full": "3.2.2",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "5.7.284"
   },
   "devDependencies": {
     "@capacitor/cli": "8.5.3",
     "linkedom": "^0.18.12",
+    "rolldown": "1.2.15",
     "typescript": "5.9.3",
     "vite": "8.3.5"
   }

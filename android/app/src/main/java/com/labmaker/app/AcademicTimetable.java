@@ -47,10 +47,10 @@ final class AcademicTimetable {
   String semester=text(raw,"semester");if(!semester.matches("\\d{4}-\\d{4}-[12]"))throw new Invalid("教务学期无法识别");
   if(Integer.parseInt(semester.substring(5,9))!=Integer.parseInt(semester.substring(0,4))+1)throw new Invalid("教务学期无法识别");
   JSONObject calendar=raw.optJSONObject("calendar");if(calendar==null)throw new Invalid("教务校历缺失");LocalDate start=date(text(calendar,"XQKSRQ"));if(start.getDayOfWeek()!=DayOfWeek.MONDAY)throw new Invalid("教务学期起始日不是周一，停止自动换算");
-  JSONArray courses=raw.optJSONArray("courses"),changes=raw.optJSONArray("changes"),unknown=raw.optJSONArray("notArranged");
-  if(courses==null||changes==null||unknown==null)throw new Invalid("教务课表格式变化");if((long)courses.length()+changes.length()+unknown.length()>20000)throw new Invalid("课表数据过大");
-  for(JSONArray rows:Arrays.asList(courses,changes,unknown))for(int i=0;i<rows.length();i++){JSONObject row=rows.optJSONObject(i);if(row==null)throw new Invalid("课程记录格式异常");String identity=text(row,"XH");if(!identity.isEmpty()&&!identity.equals(account))throw new Invalid("教务返回了其他账号的课表");}
-  List<Event> result=new ArrayList<>();Set<String> warnings=new TreeSet<>();List<String> unscheduled=new ArrayList<>();int[] longest={0};
+  JSONArray courses=raw.optJSONArray("courses"),changes=raw.optJSONArray("changes");
+  if(courses==null||changes==null)throw new Invalid("教务课表格式变化");if((long)courses.length()+changes.length()>20000)throw new Invalid("课表数据过大");
+  for(JSONArray rows:Arrays.asList(courses,changes))for(int i=0;i<rows.length();i++){JSONObject row=rows.optJSONObject(i);if(row==null)throw new Invalid("课程记录格式异常");String identity=text(row,"XH");if(!identity.isEmpty()&&!identity.equals(account))throw new Invalid("教务返回了其他账号的课表");}
+  List<Event> result=new ArrayList<>();Set<String> warnings=new TreeSet<>();int[] longest={0};
   for(int i=0;i<courses.length();i++){
    List<Event> expanded;try{expanded=events(courses.getJSONObject(i),false,account,start,longest);}catch(Invalid e){warnings.add(e.getMessage());continue;}
    if(result.size()+expanded.size()>50000)throw new Invalid("展开后的课表数据过大");result.addAll(expanded);
@@ -68,11 +68,10 @@ final class AcademicTimetable {
    result.addAll(replacement);
   }catch(Invalid e){warnings.add(e.getMessage());}}
   Map<String,Event> unique=new LinkedHashMap<>();result.forEach(e->unique.put(e.unique(),e));result=new ArrayList<>(unique.values());result.sort(Comparator.comparing((Event e)->e.date).thenComparing(e->e.start).thenComparing(e->e.name));
-  boolean scheduledComplete=warnings.isEmpty();for(int i=0;i<unknown.length();i++){String name=bounded(unknown.getJSONObject(i),"KCM",200);unscheduled.add(name.isEmpty()?"未命名课程":name);}if(!unscheduled.isEmpty())warnings.add("存在尚未安排时间的课程，无法检查这些课程的冲突");
   LocalDate end=text(calendar,"XQJSRQ").isEmpty()?(longest[0]==0?null:start.plusDays(longest[0]*7L-1)):date(text(calendar,"XQJSRQ"));
   if(end!=null&&(end.isBefore(start)||end.isAfter(start.plusDays(420))))throw new Invalid("教务学期结束日期无法核实");
   for(Event e:result)if(end!=null&&e.date.isAfter(end))warnings.add("课程日期超出教务校历范围");
-  Snapshot snapshot=new Snapshot(account,semester,start,end,result,new ArrayList<>(warnings),unscheduled,scheduledComplete&&warnings.stream().noneMatch(w->w.equals("课程日期超出教务校历范围")),now);encodedSize(snapshot);return snapshot;
+  Snapshot snapshot=new Snapshot(account,semester,start,end,result,new ArrayList<>(warnings),Collections.emptyList(),warnings.isEmpty(),now);encodedSize(snapshot);return snapshot;
  }
  static void encodedSize(Snapshot snapshot)throws Invalid {
   long size=512;for(Event event:snapshot.events){size+=event.json().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length+1;if(size>8*1024*1024)throw new Invalid("展开后的课表体积过大，停止导入");}

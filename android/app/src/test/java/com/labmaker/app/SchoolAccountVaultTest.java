@@ -22,7 +22,7 @@ public class SchoolAccountVaultTest {
         MemoryStore store=new MemoryStore();SchoolAccountVault v=vault(store,key());
         String course=v.save("course","",ACCOUNT,PASSWORD,"选课测试"),report=v.save("report","",ACCOUNT,"AnotherTestPassword","报告测试");
         assertNotEquals(course,report);assertFalse(store.raw.contains(ACCOUNT));assertFalse(store.raw.contains(PASSWORD));assertFalse(store.raw.contains("选课测试"));
-        JSONArray list=v.list();assertEquals(2,list.length());assertFalse(list.toString().contains("password"));assertFalse(list.toString().contains(PASSWORD));
+        JSONArray list=v.list();assertEquals(2,list.length());assertFalse(list.getJSONObject(0).has("password"));assertFalse(list.getJSONObject(1).has("password"));assertFalse(list.getJSONObject(0).has("passwordLength"));assertEquals("AnotherTestPassword".length(),list.getJSONObject(1).getInt("passwordLength"));assertFalse(list.toString().contains(PASSWORD));
         assertEquals(ACCOUNT,list.getJSONObject(0).getString("account"));assertEquals(PASSWORD,v.credentials("course",course).password);
         assertThrows(IOException.class,()->v.credentials("report",course));
         assertEquals("AnotherTestPassword",v.credentials("report",report).password);

@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "dataVersion": "1.2.3",
+  "sourceUrl": "https://labreport-1485394950.cos.ap-guangzhou.myqcloud.com/data-package-1.2.3.zip",
+  "sourceSha256": "3ff1e7bc61389c612f26c6d3bfbc50efbcd4f007001d42855fba5055945cc124",
+  "mobileOverrides": [
+    "RLC电路的稳态特性研究实验/generate.py",
+    "common/data_validation.py",
+    "低电阻的测量/generate.py",
+    "低电阻的测量/variants.json",
+    "刚体转动惯量的测量/generate.py",
+    "声速的测量（水中）/generate.py",
+    "声速的测量（水中）/schema.json",
+    "声速的测量（空气）/generate.py",
+    "扭摆法测量钢丝切变模量/generate.py",
+    "直螺线管磁场分布的测量/generate.py"
+  ],
+  "overrideSha256": "1c563b6942690dc29ac832fc137e4cb0c310dd1ebce73be917dd772b5212e53d"
+}

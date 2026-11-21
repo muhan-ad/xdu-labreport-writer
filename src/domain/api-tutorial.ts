@@ -9,4 +9,4 @@ export const tutorialLinks = {
   docs: "https://api-docs.deepseek.com/zh-cn/",
   errors: "https://api-docs.deepseek.com/zh-cn/quick_start/error_codes/",
 } as const;
-export const tutorialSteps = ["登录开放平台", "检查 API 余额", "创建 API Key", "配置实验搭子"];
+export const tutorialSteps = ["登录开放平台", "充值余额", "创建 API Key", "配置实验搭子"];

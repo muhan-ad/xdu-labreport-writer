@@ -26,12 +26,14 @@ interface NativeAI extends AICompletionBridge {
     key: string;
     inheritChat?:boolean;
   }): Promise<AIStatus>;
+  configureDeepSeek(o: {key:string}): Promise<AIStatus>;
   clear(o: { slot: AISlot }): Promise<AIStatus>;
   complete(o: {
     slot: AISlot;
     id: string;
     messages: AIMessage[];
     test?: boolean;
+    testImage?: boolean;
     stream?: boolean;
     draft?:{endpoint:string;model:string;key:string;inheritChat?:boolean};
   }): Promise<{ text: string; elapsedMs: number }>;
@@ -55,11 +57,15 @@ export const ai = {
     supported();
     return native.configure({ slot, endpoint, model, key,inheritChat });
   },
+  async configureDeepSeek(key:string) {
+    supported();
+    return native.configureDeepSeek({key});
+  },
   async clear(slot: AISlot) {
     supported();
     return native.clear({ slot });
   },
-  async test(input:{slot:AISlot;endpoint:string;model:string;key:string;inheritChat?:boolean},signal:AbortSignal){supported();if(signal.aborted)throw Error('请求已取消');const id=crypto.randomUUID(),cancel=()=>{void native.cancel({id}).catch(()=>{});};signal.addEventListener('abort',cancel,{once:true});try{const result=await native.complete({id,slot:input.slot,messages:[{role:'user',content:'Reply with OK only.'}],test:true,draft:{endpoint:input.endpoint,model:input.model,key:input.key,...(input.inheritChat?{inheritChat:true}:{})}});if(signal.aborted)throw Error('请求已取消');return result;}finally{signal.removeEventListener('abort',cancel);}},
+  async test(input:{slot:AISlot;endpoint:string;model:string;key:string;inheritChat?:boolean;image?:boolean},signal:AbortSignal){supported();if(signal.aborted)throw Error('请求已取消');const id=crypto.randomUUID(),cancel=()=>{void native.cancel({id}).catch(()=>{});};signal.addEventListener('abort',cancel,{once:true});try{const result=await native.complete({id,slot:input.slot,messages:[{role:'user',content:'Reply with OK only.'}],test:true,...(input.image?{testImage:true}:{}),draft:{endpoint:input.endpoint,model:input.model,key:input.key,...(input.inheritChat?{inheritChat:true}:{})}});if(signal.aborted)throw Error('请求已取消');return result;}finally{signal.removeEventListener('abort',cancel);}},
   async models(input:{slot:AISlot;endpoint:string;key:string},signal:AbortSignal){supported();if(signal.aborted)throw Error('已停止获取模型');const id=crypto.randomUUID(),cancel=()=>{void native.cancel({id}).catch(()=>{});};signal.addEventListener('abort',cancel,{once:true});try{const result=await native.models({...input,id});if(signal.aborted)throw Error('已停止获取模型');return result;}finally{signal.removeEventListener('abort',cancel);}},
   async complete(
     slot: AISlot,

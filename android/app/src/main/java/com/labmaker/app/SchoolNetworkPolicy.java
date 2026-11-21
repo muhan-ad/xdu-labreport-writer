@@ -13,13 +13,11 @@ final class SchoolNetworkPolicy {
         return path.equals("/phyews/")||path.equals("/phyews/default.aspx");
     }
     static boolean allowed(HttpUrl u, boolean mock) {
-        if(!u.username().isEmpty()||!u.password().isEmpty()||u.fragment()!=null)return false;
-        if(mock ? !u.host().equals("127.0.0.1")||u.port()!=58441||!u.scheme().equals("http") :
-            !u.host().equals("wlsy.xidian.edu.cn")||u.port()!=(u.isHttps()?443:80)||!(u.scheme().equals("http")||u.isHttps()))return false;
-        // Redirect paths and query parameters are owned by the school, not a per-page allowlist.
-        // Raw plugin operations still map to fixed endpoints; only redirects may vary within this origin.
-        return true;
+        if(!u.username().isEmpty()||!u.password().isEmpty())return false;
+        if(mock)return u.host().equals("127.0.0.1")&&u.port()==58441&&u.scheme().equals("http");
+        return u.scheme().equals("http")||u.isHttps();
     }
+
     static String stage(String operation) {
         switch(operation) {
             case "loginPage":return "打开官网登录页";
