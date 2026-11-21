@@ -261,8 +261,8 @@ def _write_va_table(doc, rows):
             continue
         cols = hi - lo
         doc.add_table(
-            headers=[rows[0][0]] + rows[0][1][lo:hi],
-            rows=[[lab] + vals[lo:hi] for lab, vals in rows[1:]],
+            headers=["序号"] + [str(i+1) for i in range(lo,hi)],
+            rows=[[rows[-1][0]] + rows[-1][1][lo:hi]],
             col_widths=[3.2] + [2.15] * cols,
         )
 

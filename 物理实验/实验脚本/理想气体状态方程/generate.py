@@ -58,6 +58,9 @@ def _load_cooling(data: dict, missing: list):
     """读取降温过程（选填）：整点留空跳过；只填一半记入 missing。"""
     t_raw = data.get("cool_t") or []
     dp_raw = data.get("cool_dp") or []
+    # 未测降温：整组留空或用全零占位时，不绘图、不参与报告。
+    if all(v in (None, "", 0) for v in t_raw + dp_raw):
+        return []
     pairs = []
     for i in range(max(len(t_raw), len(dp_raw))):
         t = t_raw[i] if i < len(t_raw) else None
@@ -283,7 +286,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
             ["压强值 p/kPa"] + [f"{v:.2f}" for v in ta_p],
         ],
         col_widths=[2.8] + [1.12] * N_POINTS,
-    )
+     raw_rows=[0, 1])
     doc.add_paragraph("以 1/p 为横轴、可视体积 V′ 为纵轴作图，取首末两点作直线（两点法），"
                       "得同一温度下测量气体压强与体积的关系图：")
     if not render_custom_plot(doc, 1, width_cm=14):
@@ -315,7 +318,7 @@ def _generate_docx(data: dict, output_path: str) -> bool:
             ["绝对温度 T/K"] + [f"{v:.2f}" for v in tb_T],
         ],
         col_widths=[2.8] + [1.12] * N_POINTS,
-    )
+     raw_rows=[0, 1])
     charles_intro = ("以绝对温度 T 为横轴、压强值 p 为纵轴作图，取首末两点作直线（两点法），"
                      "得同一体积下测量气体压强与温度的关系图：")
     if cooling_tp:

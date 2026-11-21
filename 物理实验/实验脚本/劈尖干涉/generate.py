@@ -154,7 +154,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_heading("一、原始数据记录", level=1)
     doc.add_data_photo("请在下方粘贴劈尖干涉条纹原始数据记录照片。")
 
-    doc.add_heading("1.1 实验数据记录表", level=2)
+    doc.add_heading("1.1 逐差计算结果", level=2)
 
     # 数据表
     table_headers = ["$k$", "$x_k$ / mm", "$l_k = |x_{k+40} - x_k|$ / mm"]
@@ -174,7 +174,7 @@ def _generate_docx(data: dict, output_path: str):
                 format_number(x_k[i]),
                 "—",
             ])
-    doc.add_table(table_headers, table_rows, col_widths=[1.5, 4, 5])
+    doc.add_table(table_headers, table_rows[:4], col_widths=[1.5, 4, 5], raw_columns=[1])
 
     doc.add_paragraph("")
     doc.add_run("劈尖长度测量：")

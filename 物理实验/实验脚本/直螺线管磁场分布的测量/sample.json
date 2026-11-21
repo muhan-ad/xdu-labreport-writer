@@ -2,10 +2,8 @@
   "M_mH": null,
   "N": null,
   "l_m": null,
-  "r0_m": null,
   "n_coil": null,
   "S_m2": null,
-  "I_A": null,
   "R_ohm": null,
   "I0_ma": [
     null,
@@ -77,5 +75,7 @@
     null
   ],
   "instrument_delta_ammeter_a": null,
-  "instrument_delta_scale_mm": null
+  "instrument_delta_scale_mm": null,
+  "r0_cm": null,
+  "I_mA": null
 }

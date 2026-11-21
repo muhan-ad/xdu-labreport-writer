@@ -62,7 +62,7 @@ class LayoutTests(unittest.TestCase):
     with patch.dict(os.environ,{'LAB_DATA_PHOTO':str(photo) if has_photo else str(photo)+'.missing'}):
      w=DocxReportWriter(str(out));w.add_data_photo()
      w.add_table(['读数'],[['1']],role='raw');w.add_table(['计算结果'],[['2']]);w.close()
-    self.assertEqual(len(Document(out).tables),1 if has_photo else 2)
+    self.assertEqual(len(Document(out).tables),1)
  def test_all_reports_have_one_equation_per_paragraph_and_no_raw_only_duplicates(self):
   with tempfile.TemporaryDirectory() as tmp:
    photo=Path(tmp)/'record.png';Image.new('RGB',(100,80),'white').save(photo)
@@ -75,7 +75,7 @@ class LayoutTests(unittest.TestCase):
       if exp=='灵敏电流计特性的测量':self.assertEqual(len(doc.tables),1)
       if exp=='长度与体积的测量':self.assertEqual(len(doc.tables),2)
       if exp=='光的偏振特性测量（第二学期）':self.assertEqual(len(doc.tables),1)
-      if exp=='重力加速度的测量':self.assertEqual(len(doc.tables[0].rows),4)
+      if exp=='重力加速度的测量':self.assertEqual(len(doc.tables[0].rows),3)
      finally:shutil.rmtree(out.parent)
 
 if __name__=='__main__':unittest.main()

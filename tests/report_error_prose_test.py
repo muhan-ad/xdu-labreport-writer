@@ -75,7 +75,7 @@ class ReportProseTests(unittest.TestCase):
             doc=Document(root/'hall.docx');text='\n'.join(p.text for p in doc.paragraphs)
             self.assertNotIn('误差应结合',text);self.assertNotIn('%%DATA:',text)
             expected=[module._hall_voltage(u1,u2)/(data['kh']*i) for u1,u2,i in zip(data['t2_u1'],data['t2_u2'],data['t2_i'])]
-            self.assertIn(f'{min(expected):.6g}～{max(expected):.6g} T',text)
+            self.assertIn(f'{min(expected):.5g}～{max(expected):.5g} T',text)
             self.assertEqual(len(doc.inline_shapes),2)
 
 if __name__=='__main__':unittest.main()

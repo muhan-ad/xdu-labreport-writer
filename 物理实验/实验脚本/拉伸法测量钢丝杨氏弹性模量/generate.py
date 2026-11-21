@@ -18,7 +18,7 @@ from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
 from common.data_io import load_data, bind_input_parameters
 
-DELTA_L_M = DELTA_H_M = DELTA_D_MM = None
+DELTA_L_MM = DELTA_H_MM = DELTA_D_MM = None
 G = None  # 由当前用户仪器参数绑定，无示例兜底
 
 
@@ -57,9 +57,9 @@ D_INST_ERR = None  # 由当前用户仪器参数绑定，无示例兜底
 def _compute(data: dict) -> dict:
     # 读参数
     bind_input_parameters(data, globals(), SCRIPT_DIR)
-    L = float(data["L"])
+    L = float(data["L_mm"]) / 1000.0
     D = float(data["D"])
-    H = float(data["H"])
+    H = float(data["H_mm"]) / 1000.0
     d_0 = float(data["d_0"])
     # 读直径（过滤未填）
     d_shi = [float(v) for v in data.get("d_shi", []) if v is not None]
@@ -109,8 +109,8 @@ def _compute(data: dict) -> dict:
 
     # 不确定度传递（直径的相对不确定度用修正后的直径作分母）
     Y_u = math.sqrt(
-        (type_b(DELTA_L_M) / L) ** 2
-        + (type_b(DELTA_H_M) / H) ** 2
+        (type_b(DELTA_L_MM) / (1000.0 * L)) ** 2
+        + (type_b(DELTA_H_MM) / (1000.0 * H)) ** 2
         + (2 * d_shi_u / d_shi_corrected) ** 2
         + (type_b(DELTA_D_MM) / D) ** 2
         + (delta_n_dev_a / delta_n_a) ** 2
@@ -124,7 +124,7 @@ def _compute(data: dict) -> dict:
     Y_pm = r"(%s \pm %s) \times 10^{11}" % (format_number(Y, Y_u), format_number(Y_u, Y_u))
 
     return {
-        "u_L": type_b(DELTA_L_M), "u_H": type_b(DELTA_H_M), "u_D_m": type_b(DELTA_D_MM) / 1000,
+        "u_L": type_b(DELTA_L_MM) / 1000.0, "u_H": type_b(DELTA_H_MM) / 1000.0, "u_D_m": type_b(DELTA_D_MM) / 1000,
         "L": L, "D": D, "H": H, "d_0": d_0,
         "ni_zheng": ni_zheng, "ni_jian": ni_jian, "ni": ni,
         "delta_n": delta_n, "delta_n_a": delta_n_a,
@@ -149,7 +149,7 @@ def _print_results(r: dict):
     print("=" * 60)
     print("拉伸法测杨氏弹性模量 — 计算结果")
     print("=" * 60)
-    print(f"L={r['L']}m, D={r['D']}mm, H={r['H']}m, d_0={r['d_0']}mm")
+    print(f"L={r['L'] * 1000:g} mm, D={r['D']:g} mm, H={r['H'] * 1000:g} mm, d_0={r['d_0']:g} mm")
     print(f"d_shi = {r['d_shi']}")
     print(f"d_shi_a = {r['d_shi_a']:.4f} mm (修正后 {r['d_shi_corrected']:.4f} mm)")
     print(f"d_shi_u = {r['d_shi_u']:.6f} mm")
@@ -194,13 +194,12 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_heading("1. 实验参数", level=2)
     doc.add_paragraph("")
-    # 单位写进 \text{}：公式内的普通空格会被省略，写成 "$L$ m" 会显示成 "0.973m"
     doc.add_run("钢丝长度 L = ")
-    doc.add_inline_math(r"%s \text{ m}" % r["L"])
+    doc.add_inline_math(r"%g \text{ mm}" % data["L_mm"])
     doc.add_run("，光杠杆常数 D = ")
     doc.add_inline_math(r"%s \text{ mm}" % r["D"])
     doc.add_run("，镜面到标尺距离 H = ")
-    doc.add_inline_math(r"%s \text{ m}" % r["H"])
+    doc.add_inline_math(r"%g \text{ mm}" % data["H_mm"])
     doc.add_run("，螺旋测微计零点修正 d_0 = ")
     doc.add_inline_math(r"%s \text{ mm}" % r["d_0"])
 
@@ -276,7 +275,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_table(
         ["砝码序号", "增重 $n_i$ / cm", "减重 $n_i$ / cm", "平均值 / cm"],
         rows, col_widths=[2.0, 2.5, 2.5, 2.5]
-    )
+    , role="raw")
 
     doc.add_paragraph("")
     doc.add_run("采用逐差法处理数据：将 8 个读数分为前后两组，对应增加 4 个砝码的读数差：")
@@ -309,7 +308,7 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_heading("5. 不确定度评定", level=2)
     doc.add_paragraph("")
-    doc.add_run(f"L、H、D 的仪器限差分别为{DELTA_L_M:g} m、{DELTA_H_M:g} m、{DELTA_D_MM:g} mm，按均匀分布除以√3得到标准不确定度，再进行相对传递：")
+    doc.add_run(f"L、H、D 的仪器限差分别为{DELTA_L_MM:g} mm、{DELTA_H_MM:g} mm、{DELTA_D_MM:g} mm，按均匀分布除以√3得到标准不确定度，再进行相对传递：")
     doc.add_math(
         r"\frac{u(Y)}{Y} = \sqrt{\left(\frac{u(L)}{L}\right)^2 + \left(\frac{u(H)}{H}\right)^2"
         r" + \left(2\frac{u(d)}{d}\right)^2 + \left(\frac{u(D)}{D}\right)^2"
@@ -407,10 +406,10 @@ def _generate_docx(data: dict, output_path: str):
         else:
 
             doc.add_paragraph(
-                "答：光杠杆的放大倍数为 2D/H（D 为镜面到标尺距离，H 为光杠杆常数即后足到前足连线距离）。"
-                "当钢丝伸长 ΔL 时，光杠杆后足下降 ΔL，镜面偏转角度 θ ≈ ΔL/H，标尺读数变化 Δn = 2Dθ = 2D·ΔL/H。"
-                "提高灵敏度的方法：增大镜面到标尺距离 D，减小光杠杆常数 H。但 D 过大时标尺像会变小变模糊，"
-                "H 过小时光杠杆稳定性变差，因此需要综合考虑。"
+                "答：光杠杆的放大倍数为 2H/D（H 为镜面到标尺距离，D 为光杠杆常数即后足到前足连线距离）。"
+                "当钢丝伸长 ΔL 时，光杠杆后足下降 ΔL，镜面偏转角度 θ ≈ ΔL/D，标尺读数变化 Δn = 2Hθ = 2H·ΔL/D。"
+                "提高灵敏度的方法：增大镜面到标尺距离 H，减小光杠杆常数 D。但 H 过大时标尺像会变小变模糊，"
+                "D 过小时光杠杆稳定性变差，因此需要综合考虑。"
             )
 
         doc.add_heading("3. 为什么要进行增重和减重两次测量？", level=2)

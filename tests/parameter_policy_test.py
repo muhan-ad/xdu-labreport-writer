@@ -46,7 +46,7 @@ class ParameterPolicyTests(unittest.TestCase):
   b=m._compute(angles,wave);self.assertEqual(b['n_kept'],2);self.assertAlmostEqual(b['t_used'],12.7062047362,places=8)
  def test_young_instrument_limits_propagate(self):
   name='拉伸法测量钢丝杨氏弹性模量';m=load(name);d=fixture(name);a=m._compute(d)
-  for key,component in [('instrument_delta_L','u_L'),('instrument_delta_H','u_H'),('instrument_delta_D','u_D_m')]:
+  for key,component in [('instrument_delta_L_mm','u_L'),('instrument_delta_H_mm','u_H'),('instrument_delta_D','u_D_m')]:
    changed=copy.deepcopy(d);changed[key]*=2;b=m._compute(changed)
    self.assertEqual(a['Y'],b['Y']);self.assertAlmostEqual(b[component],a[component]*2);self.assertGreater(b['Y_u'],a['Y_u'])
  def test_wedge_report_uses_selected_light_and_keeps_source(self):
@@ -64,7 +64,7 @@ class ParameterPolicyTests(unittest.TestCase):
    finally:m.SCRIPT_DIR=original
 
  def test_new_parameters_blank_in_factories_and_validated(self):
-  cases={'劈尖干涉':['wavelength_nm'],'激光波长的测量':['lambda0_nm'],'重力加速度的测量':['g0'],'拉伸法测量钢丝杨氏弹性模量':['instrument_delta_L','instrument_delta_H','instrument_delta_D']}
+  cases={'劈尖干涉':['wavelength_nm'],'激光波长的测量':['lambda0_nm'],'重力加速度的测量':['g0'],'拉伸法测量钢丝杨氏弹性模量':['instrument_delta_L_mm','instrument_delta_H_mm','instrument_delta_D']}
   for name,keys in cases.items():
    schema=json.loads((BASE/name/'schema.json').read_text('utf-8'));d=fixture(name)
    self.assertTrue(validate(schema,d)['ok'])

@@ -40,7 +40,7 @@ def _hall_voltage(u1: float, u2: float) -> float:
     return mag if ref >= 0 else -mag
 
 
-def _plot_curves(im_ma, b1, i_ma, b2, slope, intercept, fig1_path, fig2_path):
+def _plot_curves(im_a, b1, i_ma, b2, slope, intercept, fig1_path, fig2_path):
     """matplotlib 绘制 B–Im（散点+拟合直线）与 B–I（散点连线）曲线图"""
     import matplotlib
     matplotlib.use("Agg")
@@ -58,11 +58,11 @@ def _plot_curves(im_ma, b1, i_ma, b2, slope, intercept, fig1_path, fig2_path):
 
     # 图1：B–Im 散点 + 拟合直线（两系列，配图例）
     fig, ax = plt.subplots(figsize=(5.5, 3.8), dpi=200)
-    ax.plot(im_ma, b1, "o", color=POINT_COLOR, markersize=6, label="测量点")
-    x_fit = [min(im_ma), max(im_ma)]
-    y_fit = [slope * x / 1000.0 + intercept for x in x_fit]  # 斜率按 Im/A 拟合
+    ax.plot(im_a, b1, "o", color=POINT_COLOR, markersize=6, label="测量点")
+    x_fit = [min(im_a), max(im_a)]
+    y_fit = [slope * x + intercept for x in x_fit]
     ax.plot(x_fit, y_fit, "-", color=FIT_COLOR, linewidth=1.5, label="拟合直线")
-    ax.set_xlabel("励磁电流 $I_m$/mA")
+    ax.set_xlabel("励磁电流 $I_m$/A")
     ax.set_ylabel("B/T")
     _style(ax)
     ax.legend(frameon=False)
@@ -89,7 +89,7 @@ def _generate_docx(data: dict, output_path: str):
         "kh": "霍尔片灵敏度 K_H",
         "i_work": "表1 工作电流 I",
         "im_fixed": "表2 励磁电流 Im",
-        "t1_im": "表1 励磁电流 Im",
+        "t1_im_a": "表1 励磁电流 Im/A",
         "t1_u1": "表1 (+B,+I) U1",
         "t1_u2": "表1 (+B,−I) U2",
         "t2_i": "表2 工作电流 I",
@@ -110,7 +110,7 @@ def _generate_docx(data: dict, output_path: str):
     kh = float(data["kh"])
     i_work = float(data["i_work"])
     im_fixed = float(data["im_fixed"])
-    t1_im = [float(v) for v in data["t1_im"]]
+    im_a = [float(v) for v in data["t1_im_a"]]
     t1_u1 = [float(v) for v in data["t1_u1"]]
     t1_u2 = [float(v) for v in data["t1_u2"]]
     t2_i = [float(v) for v in data["t2_i"]]
@@ -124,14 +124,13 @@ def _generate_docx(data: dict, output_path: str):
     t2_uh = [_hall_voltage(u1, u2) for u1, u2 in zip(t2_u1, t2_u2)]
     t2_b = [uh / (kh * i) for uh, i in zip(t2_uh, t2_i)]
 
-    # ---- 3. B–Im 线性回归（Im 换算为 A，斜率单位 T/A）----
-    im_a = [v / 1000.0 for v in t1_im]
+    # ---- 3. B–Im 线性回归（Im 以 A 录入，斜率单位 T/A）----
     reg = linear_regression(im_a, t1_b)
     b2_mean = mean(t2_b)
 
     # ---- 4. 控制台摘要（便于誊抄到纸质数据表）----
     print("表1 磁感应强度的测量（I = %.1f mA, K_H = %g V/(A·T)）" % (i_work, kh))
-    print("  Im/mA: " + "  ".join(f"{v:g}" for v in t1_im))
+    print("  Im/A:  " + "  ".join(f"{v:g}" for v in im_a))
     print("  U_H/mV:" + "  ".join(f"{v:.3f}" for v in t1_uh))
     print("  B/T:   " + "  ".join(f"{v:.3f}" for v in t1_b))
     print("表2 磁感应强度与工作电流的关系（Im = %g mA）" % im_fixed)
@@ -145,7 +144,7 @@ def _generate_docx(data: dict, output_path: str):
     fig1_path = os.path.join(SCRIPT_DIR, "_fig_B_Im.png")
     fig2_path = os.path.join(SCRIPT_DIR, "_fig_B_I.png")
     try:
-        _plot_curves(t1_im, t1_b, t2_i, t2_b, reg.slope, reg.intercept,
+        _plot_curves(im_a, t1_b, t2_i, t2_b, reg.slope, reg.intercept,
                      fig1_path, fig2_path)
     except ImportError:
         print("未安装 matplotlib，无法绘制曲线图。请先执行: pip install matplotlib")

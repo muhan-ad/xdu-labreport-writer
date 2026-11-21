@@ -1,15 +1,38 @@
 """Shared schema validation for CLI and report generation."""
 import math
+from decimal import Decimal
 
 def _is_num(v):
     return (isinstance(v, (int, float)) and not isinstance(v, bool)
             and math.isfinite(v))   # 拒 NaN/Inf
 
 
+def migrate_units(schema, data):
+    """Interpret old measurement keys only when the new key is absent."""
+    if not isinstance(data, dict):
+        return data
+    result = data.copy()
+    for group in schema.get("groups", []):
+        for field in group.get("fields", []):
+            old = field.get("legacyKey")
+            key = field["key"]
+            if key in data or not old or old not in data:
+                continue
+            scale = Decimal(str(field.get("legacyScale", 1)))
+
+            def convert(value):
+                return float(Decimal(str(value)) * scale) if _is_num(value) else value
+
+            value = data[old]
+            result[key] = [convert(v) for v in value] if field.get("type") == "array" and isinstance(value, list) else convert(value)
+    return result
+
+
 def validate(schema, data):
     missing, invalid = [], []
     if not isinstance(data, dict):
         return {"ok": False, "missing": [], "invalid": [{"key": "", "label": "数据", "reason": "应为对象"}]}
+    data = migrate_units(schema, data)
     for group in schema.get("groups", []):
         for fld in group.get("fields", []):
             key = fld.get("key")

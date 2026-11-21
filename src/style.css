@@ -2404,6 +2404,30 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   border-bottom: 1px dashed #cfe8d8;
 }
 .form-field { margin-bottom: 7px; }
+.form-group-title-with-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.instrument-limit-link {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 2px 0;
+  color: #145cb5;
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.instrument-limit-link:hover,
+.instrument-limit-link:focus-visible {
+  color: #08438e;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .field-head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px; }
 .field-label { font-size: 12.5px; color: #333; }
 .field-input {
@@ -2421,12 +2445,13 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 .form-field-number { display: flex; align-items: center; gap: 8px; }
 .form-field-number .field-label { min-width: 128px; flex-shrink: 0; }
 .form-field-number .field-input { width: 96px; }
-/* 数组字段：横向自适应网格，每格带序号，省纵向高度 */
+/* 测量数据输入格共享下限，同组数组按相同轨道宽度排列。 */
+.form-field-array,
+.form-field-matrix { --measurement-cell-min: 112px; }
 .array-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--measurement-cell-min)), 1fr));
   gap: 4px 6px;
-  max-width: 600px;
 }
 .array-cell { display: flex; flex-direction: column; gap: 1px; }
 .cell-idx { font-size: 10px; color: #999; line-height: 1; }
@@ -2434,18 +2459,26 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 /* 矩阵字段：紧凑表格 + 行列序号，横向滚动 */
 .form-field-matrix { margin-bottom: 10px; }
 .matrix-scroll { overflow-x: auto; }
-.matrix-input { border-collapse: collapse; }
+.matrix-input {
+  --measurement-row-heading: 72px;
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  min-width: calc(var(--measurement-row-heading) + var(--measurement-columns, 1) * (var(--measurement-cell-min) + 2px));
+}
 .matrix-input td, .matrix-input th { padding: 1px; }
-.matrix-corner { min-width: 20px; }
+.matrix-corner { width: var(--measurement-row-heading); }
 .matrix-col-label {
   font-size: 10.5px; color: #333; font-weight: 600;
-  text-align: center; min-width: 44px; padding: 0 3px 3px !important; white-space: nowrap;
+  text-align: center; padding: 0 3px 3px !important; overflow-wrap: anywhere;
 }
 .matrix-row-label {
   font-size: 11px; color: #333; font-weight: 500; text-align: right;
-  padding: 2px 6px 2px 2px !important; white-space: nowrap;
+  padding: 2px 6px 2px 2px !important; overflow-wrap: anywhere;
 }
-.matrix-cell { width: 44px; min-width: 44px; text-align: center; padding: 2px !important; }
+.matrix-cell { width: 100%; min-width: 0; text-align: center; }
+.array-input,
+.matrix-cell { padding-inline: 8px; font-variant-numeric: tabular-nums; }
 /* 校验提示条文本 */
 .data-issue-bar .issue-text { font-size: 12.5px; color: #8a6d00; }
 
@@ -2884,29 +2917,6 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 }
 .sections-config-list input[type="checkbox"] { accent-color: var(--accent); }
 
-/* ── 长数据实验：数组格子加宽（数据位数多/元素多，66px 起步容纳 0.00558 类 7 位小数）── */
-#dataTableWrap[data-exp="劈尖干涉"] .array-grid,
-#dataTableWrap[data-exp="平凸透镜曲率半径的测量"] .array-grid,
-#dataTableWrap[data-exp="低电阻的测量"] .array-grid,
-#dataTableWrap[data-exp="电容与高电阻的测量"] .array-grid,
-#dataTableWrap[data-exp="声速的测量（水中）"] .array-grid {
-  max-width: 900px;
-  grid-template-columns: repeat(auto-fill, minmax(66px, 1fr));
-}
-
-/* ── 长数据实验：特宽档（用户反馈 66px 档仍不够）── */
-#dataTableWrap[data-exp="低电阻的测量"] .array-grid,
-#dataTableWrap[data-exp="长度与体积的测量"] .array-grid {
-  max-width: 1100px;
-  grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
-}
-
-/* ── 中长数据实验：稍微增大档 ── */
-#dataTableWrap[data-exp="扭摆法测量钢丝切变模量"] .array-grid {
-  max-width: 760px;
-  grid-template-columns: repeat(auto-fill, minmax(60px, 1fr));
-}
-
 /* ── AI 润色流式预览区：生成过程实时显示 ── */
 .ai-stream-preview {
   margin-top: 10px;
@@ -3095,3 +3105,21 @@ input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 
 /* Keep the outer data card; remove only measurement-group outlines. */
 #dataTableWrap .schema-form>.form-group{border-color:transparent;box-shadow:none;background:transparent}
+
+.measurement-sequence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+  margin: 6px 0 10px;
+}
+.measurement-sequence label {
+  display: grid;
+  gap: 3px;
+  width: 6.5em;
+  font-size: 0.875em;
+}
+.measurement-sequence input {
+  width: 100%;
+  min-width: 0;
+}

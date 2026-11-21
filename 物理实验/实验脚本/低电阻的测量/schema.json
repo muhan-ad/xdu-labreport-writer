@@ -26,6 +26,14 @@
       "name": "金属丝直径（螺旋测微计，6 次）",
       "fields": [
         {
+          "key": "d0",
+          "label": "千分尺零点读数 d₀（直径已校正可留空）",
+          "type": "number",
+          "unit": "mm",
+          "default": null,
+          "required": false
+        },
+        {
           "key": "d",
           "label": "金属丝直径 d",
           "type": "array",

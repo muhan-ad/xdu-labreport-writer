@@ -7,10 +7,35 @@ const { createKeyStore } = require('../src/main/key-store');
 const validation = require('../src/shared/data-validation');
 function fixture(t) { const p = fs.mkdtempSync(path.join(os.tmpdir(), 'lab-sec-')); t.after(() => fs.rmSync(p, { recursive: true, force: true })); return p; }
 
-test('public network rejects all private address families, credentials and HTTP', () => {
-  for (const host of ['127.0.0.1','10.0.0.1','192.168.1.1','::1','fc00::1','fe80::1','::ffff:127.0.0.1']) assert.equal(network.blocked(host), true, host);
-  for (const url of ['http://example.com','https://user:pass@example.com','https://[fc00::1]/']) assert.throws(() => network.publicUrl(url));
-  assert.equal(network.publicUrl('https://example.com/data').protocol, 'https:');
+test('network accepts local models, LAN services and Fake-IP endpoints', () => {
+  for (const url of ['http://localhost:11434/v1','http://127.0.0.1:8000','https://192.168.1.1','https://[::1]/','https://198.18.0.1','https://198.19.0.1','https://example.com/data']) assert.equal(network.publicUrl(url).href, new URL(url).href);
+  for (const url of ['file:///C:/test','ftp://example.com','https://user:pass@example.com']) assert.throws(() => network.publicUrl(url));
+});
+test('local HTTP model receives requests through the production network client', async t => {
+  const http = require('node:http');
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ path: req.url, body: JSON.parse(body) }));
+    });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const result = await network.json('http://127.0.0.1:' + server.address().port + '/v1/chat/completions', {
+    method: 'POST', body: JSON.stringify({ model: 'local', messages: [] }),
+  });
+  assert.deepEqual(result, { path: '/v1/chat/completions', body: { model: 'local', messages: [] } });
+});
+test('DNS returns Fake-IP and private addresses supplied by the system resolver', async t => {
+  const dns = require('node:dns'), original = dns.lookup;
+  t.after(() => { dns.lookup = original; });
+  for (const address of ['198.18.0.1', '198.19.0.1', '127.0.0.1', '192.168.1.1']) {
+    dns.lookup = (host, options, cb) => cb(null, [{ address, family: 4 }]);
+    const result = await new Promise((resolve, reject) => network.lookup('service.test', { all: true }, (error, addresses) => error ? reject(error) : resolve(addresses)));
+    assert.deepEqual(result, [{ address, family: 4 }]);
+  }
 });
 test('file boundary rejects parent escapes and directory junctions', t => {
   const dir = fixture(t), outside = fixture(t);

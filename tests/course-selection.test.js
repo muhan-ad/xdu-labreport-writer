@@ -17,8 +17,21 @@ function fixture(fail=false,getSavedLogin,schoolPortal,reportClient){
   return child;
  };
  const controller=createCourseSelection({electron:{ipcMain:{handle:(name,fn)=>{handlers[name]=fn;}},app:{isPackaged:false},BrowserWindow:Window,session:{fromPartition:()=>ses},shell:{openExternal:async url=>{external.push(url);}}},root:path.join(__dirname,'..'),getParent:()=>null,resolvePython:()=>process.execPath,userData,getSavedLogin,schoolPortal,reportClient,spawnProcess,stopTree:(...args)=>stops.push(args)});
- return {controller,windows,children,stops,external,handlers,scripts,userData};
+ return {controller,windows,children,stops,external,handlers,scripts,userData,ses};
 }
+
+test('current-report shortcut selects report view and delegates the trusted report to the existing client',async()=>{
+ const calls=[],sent=[];
+ const f=fixture(false,undefined,undefined,{close(){},async uploadReport(payload,parent){calls.push({payload,parent});return {ok:true,submitted:true};}});
+ try{
+  await f.controller.open();const w=f.windows[0];w.webContents.send=(...args)=>sent.push(args);
+  const payload={experiment:'直螺线管磁场分布的测量',file:'C:/trusted/report.docx'};
+  assert.equal((await f.controller.uploadReport(payload)).submitted,true);
+  assert.deepEqual(calls,[{payload,parent:w}]);
+  assert.deepEqual(sent[0],['course-report-select',{experiment:payload.experiment}]);
+  assert.deepEqual(sent[1],['course-report-result',{ok:true,submitted:true}]);
+ }finally{f.controller.shutdown();}
+});
 
 test('homepage preload is silent, shared with open, and warms reports only after course entry ready',async()=>{
  let reports=0;const f=fixture(false,async()=>({enabled:true,credentials:{username:'a',password:'b'}}),{getAutoFillEnabled:()=>true},{warm:async()=>{reports++},close(){}});
@@ -137,4 +150,9 @@ test('filter preferences persist separately by account and reject foreign frames
  assert.equal((await f.handlers['course-school-accounts']({sender:c,senderFrame:{}},{action:'filter-load',account:'USER1'})).ok,false);
  f.windows[0].destroy();await f.controller.open();const current=f.windows[1].webContents;assert.equal((await f.handlers['course-school-accounts']({sender:current,senderFrame:current.mainFrame},{action:'filter-load',account:'USER1'})).filters.specifyTeachers,true);
  }finally{f.controller.shutdown();}
+});
+
+test('course preview protocol permits only sandbox renderer assets and blocks other app files',async()=>{
+ const f=fixture();let handler;f.ses.protocol={isProtocolHandled:async()=>false,handle:(scheme,fn)=>{assert.equal(scheme,'labapp');handler=fn;}};
+ try{await f.controller.open();assert.equal(typeof handler,'function');for(const url of ['labapp://app/main.js','labapp://app/../main.js','labapp://evil/preview.html','labapp://app/index.html'])assert.equal(handler({url,method:'GET'}).status,403);assert.equal(handler({url:'labapp://app/preview.html',method:'POST'}).status,403);}finally{f.controller.shutdown();}
 });

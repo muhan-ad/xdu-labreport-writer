@@ -85,7 +85,7 @@
           "type": "array",
           "length": 10,
           "unit": "℃",
-          "required": true,
+          "required": false,
           "default": null
         },
         {
@@ -94,7 +94,7 @@
           "type": "array",
           "length": 10,
           "unit": "kPa",
-          "required": true,
+          "required": false,
           "default": null
         }
       ]

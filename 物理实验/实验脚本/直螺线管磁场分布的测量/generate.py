@@ -38,7 +38,7 @@ DELTA_SCALE_MM = None  # 由当前用户仪器参数绑定，无示例兜底
 # ═══════════════════════════════════════════════════════════
 # _plot_dm_x — 绘制 dm-x 分布曲线
 # ═══════════════════════════════════════════════════════════
-def _plot_dm_x(x_mm: list, dm_cm: list, output_path: str):
+def _plot_dm_x(x_mm: list, left_cm: list, right_cm: list, output_path: str):
     """用 matplotlib 绘制 dm-x 分布曲线。"""
     import matplotlib
     matplotlib.use("Agg")
@@ -48,13 +48,15 @@ def _plot_dm_x(x_mm: list, dm_cm: list, output_path: str):
     plt.rcParams["axes.unicode_minus"] = False
 
     fig, ax = plt.subplots(figsize=(7, 4.5), dpi=200)
-    ax.plot(x_mm, dm_cm, "o-", color="#2c5f9e", markersize=6, linewidth=1.5,
-            markerfacecolor="white", markeredgewidth=1.5)
+    left = sorted(zip((-abs(x) for x in x_mm), left_cm))
+    right = sorted(zip((abs(x) for x in x_mm), right_cm))
+    ax.plot(*zip(*left), "o-", color="#2c5f9e", markersize=4, label=r"左侧 $d_{m1}$")
+    ax.plot(*zip(*right), "s-", color="#bd6724", markersize=4, label=r"右侧 $d_{m2}$")
     ax.set_xlabel("x / mm", fontsize=11)
-    ax.set_ylabel("dm / cm", fontsize=11)
-    ax.set_title("螺线管轴线上 dm-x 分布曲线", fontsize=12)
+    ax.set_ylabel(r"$d_{m1}, d_{m2}$ / cm", fontsize=11)
+    ax.set_title("螺线管轴线两侧纵坐标分布", fontsize=12)
     ax.grid(True, linestyle="--", linewidth=0.5, color="#cccccc")
-    ax.set_xlim(-5, 205)
+    ax.set_xlim(-200, 200)
     fig.tight_layout()
     fig.savefig(output_path, dpi=200)
     plt.close(fig)
@@ -64,11 +66,17 @@ def _plot_dm_x(x_mm: list, dm_cm: list, output_path: str):
 # _generate_docx — 读取 → 计算 → 输出 docx
 # ═══════════════════════════════════════════════════════════
 def _generate_docx(data: dict, output_path: str):
+    # Old records use SI keys. Convert by declared units, without guessing magnitude.
+    data = dict(data)
+    if data.get("r0_cm") is None and data.get("r0_m") is not None:
+        data["r0_cm"] = data["r0_m"] * 100
+    if data.get("I_mA") is None and data.get("I_A") is not None:
+        data["I_mA"] = data["I_A"] * 1000
     # ── 1. 读取数据（data.json）──
     # 校验必填数据（required 字段为 null 或 array 含 null → 缺失）
     bind_input_parameters(data, globals(), SCRIPT_DIR)
     missing = []
-    for k in ("M_mH", "N", "l_m", "r0_m", "n_coil", "S_m2", "I_A", "R_ohm",
+    for k in ("M_mH", "N", "l_m", "r0_cm", "n_coil", "S_m2", "I_mA", "R_ohm",
               "I0_ma", "dm1_cm", "dm2_cm", "x_mm", "d_left_cm", "d_right_cm"):
         v = data.get(k)
         if v is None:
@@ -85,10 +93,12 @@ def _generate_docx(data: dict, output_path: str):
     M_mH = float(data["M_mH"])
     N = float(data["N"])
     l_m = float(data["l_m"])
-    r0_m = float(data["r0_m"])
+    r0_cm = float(data["r0_cm"])
+    r0_m = r0_cm / 100.0
     n_coil = float(data["n_coil"])
     S_m2 = float(data["S_m2"])
-    I_A = float(data["I_A"])
+    I_mA = float(data["I_mA"])
+    I_A = I_mA / 1000.0
     R_ohm = float(data["R_ohm"])
 
     # 表1: RKb 标定数据（3 组）
@@ -238,7 +248,7 @@ def _generate_docx(data: dict, output_path: str):
     # 5. 绘制 dm-x 曲线
     # ═══════════════════════════════════
     plot_path = os.path.join(SCRIPT_DIR, "dm-x分布曲线.png")
-    _plot_dm_x(x_mm, dm_cm_all, plot_path)
+    _plot_dm_x(x_mm, dleft_cm, dright_cm, plot_path)
     print(f"\n  dm-x 曲线已保存: {plot_path}")
 
     # ═══════════════════════════════════
@@ -280,19 +290,19 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_heading("二、数据处理", level=1)
 
     # 2.1 已知参数
-    doc.add_heading("1. 已知参数", level=2)
+    doc.add_paragraph("已知参数见原始记录照片，单位换算后代入下列计算。")
     param_rows = [
         ["互感系数 M",            f"{M_mH} mH"],
         ["螺线管总匝数 N",        f"{N:.0f}"],
         ["螺线管长度 l",            f"{l_m} m"],
-        ["螺线管半径 r₀",     f"{r0_m} m"],
+        ["螺线管半径 r₀",     f"{r0_cm} cm"],
         ["探测线圈匝数 n",        f"{n_coil:.0f}"],
         ["探测线圈截面积 S",      f"${format_scientific(S_m2, 3)}$ m²"],
-        ["工作电流 I",             f"{I_A} A"],
+        ["工作电流 I",             f"{I_mA} mA"],
         ["回路总电阻 R",           f"{R_ohm} Ω"],
     ]
     doc.add_table(["参数", "数值"], [[str(a), str(b)] for a, b in param_rows],
-                  col_widths=[6.5, 5.5])
+                  col_widths=[6.5, 5.5], role="raw")
 
     # 2.2 RKb 标定
     doc.add_heading("2. RKb 标定（冲击常数测量）", level=2)
@@ -316,7 +326,7 @@ def _generate_docx(data: dict, output_path: str):
             f"${format_scientific(rkb_list[i], 3)}$",
         ])
     rkb_rows.append(["均值", "", "", "", "", f"${format_scientific(RKb_mean, 3)}$"])
-    doc.add_table(rkb_headers, rkb_rows, col_widths=[1.2, 2.0, 2.2, 2.2, 2.2, 4.0])
+    doc.add_table(rkb_headers, rkb_rows, col_widths=[1.2, 2.0, 2.2, 2.2, 2.2, 4.0], raw_columns=[1,2,3])
 
     # 示例计算（第1组）
     doc.add_paragraph("以第 1 组数据为例：")
@@ -398,8 +408,8 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_paragraph("保持工作电流 I 不变，探测线圈沿螺线管轴线从中心 (x=0) "
                        "向一端移动，每 10~20 mm 测一个点，共 16 个位置。"
-                       "每个位置记录 S₁ 闭合和断开时的光标偏转 dm₁ 和 dm₂。")
-    doc.add_paragraph("dₘ = (d左 + d右) / 2，结果如下：")
+                       "按当前记录约定，dₘ₁ 对应负半轴，dₘ₂ 对应正半轴，横坐标分别取 −|x| 和 +|x|。")
+    doc.add_paragraph("两侧原始读数见记录照片，分别用于作图；中心值取两次中心读数的均值。")
 
     # dm 数据表 — 拆分为两个子表（各 8 列，适应 A4 宽度）
     half = 8
@@ -409,9 +419,11 @@ def _generate_docx(data: dict, output_path: str):
         label = "（前半段）" if sub_idx == 0 else "（后半段）"
         headers = ["$x$ / mm"] + [f"{v:.0f}" for v in sub_x]
         rows = [
-            ["dₘ/cm"] + [f"{v:.2f}" for v in sub_dm],
+            ["dₘ₁/cm（左）"] + [f"{v:.2f}" for v in dleft_cm[start:end]],
+            ["dₘ₂/cm（右）"] + [f"{v:.2f}" for v in dright_cm[start:end]],
+            ["配对均值/cm"] + [f"{v:.2f}" for v in sub_dm],
         ]
-        doc.add_table(headers, rows, col_widths=[2.5] + [1.5] * half)
+        doc.add_table(headers, rows, col_widths=[2.5] + [1.5] * half, role="raw")
 
     # B 数据表 — 同样拆分为两个
     doc.add_paragraph("由 dm 计算各点磁感应强度 B = RKb·dm / (nS)：")
@@ -425,11 +437,11 @@ def _generate_docx(data: dict, output_path: str):
         doc.add_table(headers, rows, col_widths=[2.5] + [1.5] * half)
 
     # 2.4 dm-x 分布曲线
-    doc.add_heading("4. dₘ-x 分布曲线", level=2)
+    doc.add_heading("4. 两侧纵坐标分布曲线", level=2)
     doc.add_paragraph("螺线管轴线上 dₘ 随位置 x 的变化曲线如下。理想长直螺线管内部磁场近似均匀、"
                        "端口磁场约为中心的一半；该近似还受到螺线管长度、半径及绕组结构的限制。")
     if not render_custom_plot(doc, 1, width_cm=14):
-        doc.add_image(plot_path, width_cm=14, caption='图1 螺线管轴线上 dₘ-x 分布曲线')
+        doc.add_image(plot_path, width_cm=14, caption='图1 左侧 dₘ₁ 与右侧 dₘ₂ 随位置的分布')
 
     # 2.5 中心点磁感应强度
     doc.add_heading("5. 中心点磁感应强度", level=2)
@@ -437,7 +449,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("螺线管中心点 (x=0) 的理论磁感应强度：")
     doc.add_math(
         rf"B_0 = \frac{{\mu_0 N I}}{{\sqrt{{l^2 + 4r_0^2}}}}"
-        rf" = \frac{{4\pi \times 10^{{-7}} \times {N:.0f} \times {I_A:.2f}}}"
+        rf" = \frac{{4\pi \times 10^{{-7}} \times {N:.0f} \times {I_A:.6g}}}"
         rf"{{\sqrt{{{l_m}^2 + 4 \times {r0_m}^2}}}}"
         rf" \approx {format_scientific(B0_theory, 3)} \,\mathrm{{T}}"
     )
@@ -453,9 +465,9 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_paragraph("相对误差：")
     doc.add_math(
         rf"E = \left|\frac{{B_0 - B}}{{B_0}}\right| \times 100\%"
-        rf" = \left|\frac{{{format_scientific(B0_theory, 3)} - {format_scientific(B_exp_center, 3)}}}"
-        rf"{{{format_scientific(B0_theory, 3)}}}\right| \times 100\%"
-        rf" \approx {format_percent(E_rel)}\%"
+        rf" = \left|\frac{{{format_scientific(B0_theory, 5)} - {format_scientific(B_exp_center, 5)}}}"
+        rf"{{{format_scientific(B0_theory, 5)}}}\right| \times 100\%"
+        rf" \approx {E_rel:.2f}\%"
     )
 
     # 2.6 不确定度分析

@@ -122,6 +122,11 @@ def generate_chart(exp_path, x_field, y_field, chart_type='scatter',
         return output_path, '第二学期偏振光三组光功率极坐标图'
 
     _, labels = _detect_arrays(data, exp_path)
+    if 't1_im_a' in labels:
+        labels['t1_im_a'] += ' / A'
+        if 't1_im' in (x_field, y_field):
+            data['t1_im'] = [value * 1000 if value is not None else None for value in data['t1_im_a']]
+            labels['t1_im'] = '励磁电流 / mA'
     x_data = _field_values(data, x_field, labels)
     y_data = _field_values(data, y_field, labels)
     if len(x_data) != len(y_data):
@@ -143,9 +148,6 @@ def generate_chart(exp_path, x_field, y_field, chart_type='scatter',
         os.close(fd)
 
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
-
-    # 从 schema 获取字段 label 作为默认轴标签
-    _, labels = _detect_arrays(data, exp_path)
 
     # 将 `_x` 转换为 matplotlib 下标 `$_{x}$`（防止 `R_n` 显示为 `R_n`）
     import re

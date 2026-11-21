@@ -2,10 +2,8 @@
   "M_mH": 7.48,
   "N": 4565,
   "l_m": 0.302,
-  "r0_m": 0.014,
   "n_coil": 2775,
   "S_m2": 9.5e-05,
-  "I_A": 0.1,
   "R_ohm": 1000,
   "I0_ma": [
     100.0,
@@ -77,5 +75,7 @@
     0.15
   ],
   "instrument_delta_ammeter_a": 0.001,
-  "instrument_delta_scale_mm": 0.5
+  "instrument_delta_scale_mm": 0.5,
+  "r0_cm": 1.4000000000000001,
+  "I_mA": 100.0
 }

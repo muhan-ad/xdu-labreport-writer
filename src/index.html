@@ -208,9 +208,9 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                 保存路径
               </button>
-              <button class="btn btn-outline" id="btnContribute">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17l6-6 4 4 8-8"/><polyline points="14 7 21 7 21 14"/><path d="M21 3H3v18"/></svg>
-                贡献数据
+              <button class="btn btn-outline" id="btnUploadReport" disabled>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 5 17 10"/><line x1="12" y1="5" x2="12" y2="17"/></svg>
+                上传报告
               </button>
             </div>
           </div>
@@ -780,6 +780,10 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 9l-3 3 3 3"/><path d="M16 9l3 3-3 3"/><line x1="12" y1="5" x2="12" y2="19"/></svg>
             开发者调试
           </button>
+          <button class="settings-nav-item" id="btnNavContribute">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17l6-6 4 4 8-8"/><polyline points="14 7 21 7 21 14"/><path d="M21 3H3v18"/></svg>
+            贡献数据
+          </button>
           <button class="settings-nav-item settings-nav-thanks" id="btnNavThanks">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
             感谢声明
@@ -1016,6 +1020,15 @@
               </div>
             </div>
           </div>
+          <div class="settings-pane" id="paneContribute">
+            <div class="settings-section">
+              <h4>贡献数据</h4>
+              <p id="contributeSettingsExperiment"></p>
+              <div class="skill-actions">
+                <button class="btn btn-primary" id="btnContribute" type="button">贡献数据</button>
+              </div>
+            </div>
+          </div>
           <!-- 开发者调试页 -->
           <div class="settings-pane" id="paneDevelop">
             <div class="settings-section">
@@ -1237,6 +1250,7 @@
   <div class="toast-container" id="toastContainer"></div>
 
   <script src="shared/data-validation.js"></script>
+  <script src="shared/measurement-sequence.js"></script>
   <script src="shared/report-integrity.js"></script>
   <script src="shared/ocr-number.js"></script>
   <script src="sidebar.js"></script>

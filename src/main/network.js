@@ -1,28 +1,18 @@
 'use strict';
 const https = require('https');
+const http = require('http');
 const dns = require('dns');
-const ipaddr = require('ipaddr.js');
 const fs = require('fs');
 const { pipeline } = require('stream/promises');
 const { Transform } = require('stream');
 
-function blocked(host) {
-  const h = String(host).replace(/^\[|\]$/g, '').toLowerCase();
-  if (!h || h === 'localhost' || /\.(localhost|local|lan)$/.test(h)) return true;
-  if (!ipaddr.isValid(h)) return false;
-  return ipaddr.process(h).range() !== 'unicast';
-}
 function publicUrl(raw) {
   const u = new URL(raw);
-  if (u.protocol !== 'https:' || u.username || u.password || blocked(u.hostname)) throw Error('地址必须为公网 HTTPS，且不能包含用户名或密码');
+  if (!['http:', 'https:'].includes(u.protocol) || u.username || u.password) throw Error('地址须使用 HTTP 或 HTTPS，且不能包含用户名或密码');
   return u;
 }
 function lookup(host, options, callback) {
-  dns.lookup(host, { all: true }, (err, addresses) => {
-    if (err || !addresses?.length || addresses.some(a => blocked(a.address))) return callback(err || Error('连接地址不是公网地址'));
-    if (options?.all) callback(null, addresses);
-    else callback(null, addresses[0].address, addresses[0].family);
-  });
+  return dns.lookup(host, options, callback);
 }
 // 自建连接池：Node 默认的全局 Agent 自带 5 秒 socket 空闲超时
 // （http.globalAgent.options.timeout === 5000，且 createSocket 里
@@ -32,6 +22,7 @@ function lookup(host, options, callback) {
 // 这里显式把 Agent 的 socket 超时关成 0，让超时只由调用方显式传入的
 // options.timeout（默认 15 秒空闲）决定；传 0 的连接才真正永不被时间打断。
 const agent = new https.Agent({ keepAlive: true, scheduling: 'lifo', timeout: 0, noDelay: true });
+const httpAgent = new http.Agent({ keepAlive: true, scheduling: 'lifo', timeout: 0, noDelay: true });
 
 async function response(raw, options = {}, redirects = 0) {
   const url = publicUrl(raw);
@@ -42,7 +33,8 @@ async function response(raw, options = {}, redirects = 0) {
   // 空闲计时必然先于总超时触发，中止交给用户「取消」）。
   const idleRaw = options.idleTimeoutMs === undefined ? 15000 : Number(options.idleTimeoutMs);
   const idleMs = idleRaw > 0 ? idleRaw : 0;
-  const reqOptions = { ...options, agent, lookup, headers: { 'User-Agent': 'labreport-writer', ...options.headers } };
+  const transport = url.protocol === 'http:' ? http : https;
+  const reqOptions = { ...options, agent: url.protocol === 'http:' ? httpAgent : agent, lookup, headers: { 'User-Agent': 'labreport-writer', ...options.headers } };
   const emit=(phase,detail={})=>{try{options.onTelemetry?.({phase,...detail});}catch{}};
   delete reqOptions.onTelemetry;
   if(options.onTelemetry)reqOptions.lookup=(host,opts,callback)=>{
@@ -52,7 +44,7 @@ async function response(raw, options = {}, redirects = 0) {
   };
   if (idleMs > 0) reqOptions.timeout = idleMs;
   const res = await new Promise((resolve, reject) => {
-    const req = https.request(url, reqOptions, resolve);
+    const req = transport.request(url, reqOptions, resolve);
     if(options.onTelemetry){
       req.once('socket',socket=>{
         emit('socket_assigned',{reused:!!req.reusedSocket});
@@ -122,4 +114,4 @@ async function download(url, dest, { signal, maxBytes, expectedSize, allowedHost
     if (size !== expectedSize) throw Error('更新包大小与清单不一致');
   } catch (e) { if (fs.existsSync(dest)) fs.unlinkSync(dest); throw e; }
 }
-module.exports = { blocked, publicUrl, lookup, response, json, download, agent };
+module.exports = { publicUrl, lookup, response, json, download, agent };

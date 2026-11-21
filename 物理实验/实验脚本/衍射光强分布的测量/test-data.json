@@ -1,5 +1,4 @@
 {
-  "L": 800.0,
   "lambda_nm": 650.0,
   "given_a": 0.1,
   "x": [
@@ -91,5 +90,6 @@
     2.1
   ],
   "instrument_ruler_division_mm": 1.0,
-  "instrument_drum_division_mm": 0.01
+  "instrument_drum_division_mm": 0.01,
+  "L_cm": 85.0
 }

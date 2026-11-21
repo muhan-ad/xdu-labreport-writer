@@ -189,7 +189,7 @@ def _write_method_section(doc, r: dict, table_label: str):
             rows.append([str(i + 1), f"{L[i]:.2f}", f"{lam[i]:.3f}"])
         else:
             rows.append([str(i + 1), f"{L[i]:.2f}", "/"])
-    doc.add_table(headers, rows, col_widths=[1.5, 5.0, 6.0])
+    doc.add_table(headers, rows[:N_LAMBDA], col_widths=[1.5, 5.0, 6.0], raw_columns=[1])
 
     # ── 理论声速 ──
     doc.add_paragraph("空气参考声速按温度模型计算：以0 ℃时331.45 m/s为参考起点，适用于课程采用的空气条件；湿度和气体组成变化可能造成偏差。")

@@ -380,7 +380,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_table(
         ["次数", "X₀ / mm", "X₁ / mm", "Lx / mm", "Y₀ / mm", "Y₁ / mm", "Ly / mm"],
         rows, col_widths=[1.2, 1.7, 1.7, 1.7, 1.7, 1.7, 1.7]
-    )
+    , raw_columns=[1, 2, 4, 5])
     doc.add_paragraph("")
     doc.add_run("缝长：")
     doc.add_inline_math(r"L_x = " + format_measure(r["Lx_a"], r["uLx"]) + r" \text{ mm}")

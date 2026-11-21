@@ -523,9 +523,7 @@
     "instrument_delta_ruler": 0.5
   },
   "拉伸法测量钢丝杨氏弹性模量": {
-    "L": 0.973,
     "D": 45.0,
-    "H": 0.939,
     "d_0": -0.015,
     "d_shi": [
       0.626,
@@ -557,9 +555,11 @@
     ],
     "instrument_g": 9.8,
     "instrument_d_inst_err": 0.005,
-    "instrument_delta_L": 0.005196152422706632,
-    "instrument_delta_H": 0.005196152422706632,
-    "instrument_delta_D": 5.196152422706632
+    "instrument_delta_D": 5.196152422706632,
+    "L_mm": 973.0,
+    "H_mm": 939.0,
+    "instrument_delta_L_mm": 5.196152422706632,
+    "instrument_delta_H_mm": 5.196152422706632
   },
   "激光波长的测量": {
     "measurements": [
@@ -1059,10 +1059,8 @@
     "M_mH": 7.48,
     "N": 4565,
     "l_m": 0.302,
-    "r0_m": 0.014,
     "n_coil": 2775,
     "S_m2": 9.5e-05,
-    "I_A": 0.1,
     "R_ohm": 1000,
     "I0_ma": [
       100.0,
@@ -1134,7 +1132,9 @@
       0.15
     ],
     "instrument_delta_ammeter_a": 0.001,
-    "instrument_delta_scale_mm": 0.5
+    "instrument_delta_scale_mm": 0.5,
+    "r0_cm": 1.4000000000000001,
+    "I_mA": 100.0
   },
   "薄透镜焦距的测量（凸透镜）": {
     "f_auto": [
@@ -1230,7 +1230,6 @@
     "instrument_delta_instrument": 0.05
   },
   "衍射光强分布的测量": {
-    "L": 800.0,
     "lambda_nm": 650.0,
     "given_a": 0.1,
     "x": [
@@ -1322,7 +1321,8 @@
       2.1
     ],
     "instrument_ruler_division_mm": 1.0,
-    "instrument_drum_division_mm": 0.01
+    "instrument_drum_division_mm": 0.01,
+    "L_cm": 85.0
   },
   "重力加速度的测量": {
     "g0": 9.797,
@@ -1511,17 +1511,6 @@
     "kh": 34.8,
     "i_work": 10.0,
     "im_fixed": 500.0,
-    "t1_im": [
-      200.0,
-      300.0,
-      400.0,
-      500.0,
-      600.0,
-      700.0,
-      800.0,
-      900.0,
-      1000.0
-    ],
     "t1_u1": [
       20.98,
       31.29,
@@ -1576,6 +1565,17 @@
       -41.68,
       -47.05,
       -52.14
+    ],
+    "t1_im_a": [
+      0.2,
+      0.3,
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      0.9,
+      1.0
     ]
   },
   "静电场的模拟": {

@@ -328,7 +328,7 @@ def _write_phase_table(doc, f_vals, a_vals, b_signed, phi_vals):
                 ["$\\phi$ / rad"] + [f"{v:.4f}" for v in phi_vals[lo:hi]],
             ],
             col_widths=[2.2] + [1.6] * cols,
-        )
+         raw_rows=[0, 1])
 
 
 def _generate_docx(data: dict, output_path: str) -> bool:

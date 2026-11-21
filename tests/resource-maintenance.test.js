@@ -1,6 +1,50 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),os=require('node:os'),vm=require('node:vm');
 const store=require('../src/main/resource-store');
+
+test('measurement save works while Windows refuses to rename the resource root', t => {
+ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'labreport-save-locked-'));
+ t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+ const user = path.join(root, 'user'), builtin = path.join(root, 'builtin');
+ const existing = path.join(user, 'existing'), first = path.join(builtin, 'first');
+ const atomic = require('../src/main/atomic-store');
+ const security = require('../src/main/security');
+ atomic.writeFile(path.join(existing, 'data.json'), '{"x":1}');
+ atomic.writeFile(path.join(first, 'schema.json'), '{}');
+ const source = fs.readFileSync(path.join(__dirname, '../main.js'), 'utf8');
+ const copy = source.slice(source.indexOf('function ensureUserCopy('), source.indexOf('const PHOTO_BASENAME'));
+ const save = source.slice(source.indexOf("handle('write-data'"), source.indexOf('// ── IPC: 读写图表配置'));
+ const handlers = new Map();
+ const blockingSync = () => store.replaceTree(user, () => {}, {
+  ...fs,
+  renameSync(from, to) {
+   if (from === user) throw Object.assign(Error('directory rename denied'), { code: 'EPERM' });
+   fs.renameSync(from, to);
+  },
+ });
+ const context = vm.createContext({
+  fs, path, Buffer, atomic, security, resourceUpdating: false, EXPERIMENTS_DIR: builtin,
+  syncInstalledResources: blockingSync, getDataRoots: () => ({ udRoot: user }),
+  experimentPath: p => p, ensureInside: security.inside, resourceStore: store,
+  copyDirTo: (from, to) => fs.cpSync(from, to, { recursive: true }),
+  editableSchema: () => ({ schema: {} }), dataValidation: { validate: () => [] },
+  handle: (name, callback) => handlers.set(name, callback),
+ });
+ assert.throws(blockingSync, { code: 'EPERM' });
+ vm.runInContext(copy + save, context);
+ const saveData = handlers.get('write-data');
+ for (const [experiment, destination] of [[existing, existing], [first, path.join(user, 'first')]]) {
+  const result = saveData(null, experiment, { x: 2 });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.path, destination);
+  assert.deepEqual(atomic.readJson(result.dataFile), { x: 2 });
+ }
+ assert.deepEqual(atomic.readJson(path.join(existing, 'data.json.bak')), { x: 1 });
+ context.resourceUpdating = true;
+ assert.equal(saveData(null, existing, { x: 3 }).ok, false);
+ assert.deepEqual(atomic.readJson(path.join(existing, 'data.json')), { x: 2 });
+});
+
 test('repeated force repair with unchanged builtin version repairs again and keeps each prior tree',t=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'repeat-repair-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));const builtin=path.join(root,'builtin'),user=path.join(root,'user');
  function put(name,text){fs.mkdirSync(path.dirname(name),{recursive:true});fs.writeFileSync(name,text);}

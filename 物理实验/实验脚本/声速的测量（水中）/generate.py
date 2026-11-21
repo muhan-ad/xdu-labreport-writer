@@ -32,15 +32,21 @@ N_LAMBDA = 6        # λ_i 个数
 # 计算核心
 # ═══════════════════════════════════════════════════
 
-def _compute_method(L_values: list[float], f: float, t_celsius: float, v_reference: float) -> dict:
+# MOBILE_SOUND_PHASE_V1
+def _compute_method(L_values: list[float], f: float, t_celsius: float, v_reference: float, phase_step: float = 0.5) -> dict:
     """对一个方法的 12 个位置测量值进行完整计算。
 
     返回包含所有中间和最终结果的字典。
     """
+    # MOBILE_SOUND_WATER_LENGTH_V1
+    if not 4 <= len(L_values) <= 24:
+        raise ValueError("水中声速每种方法需填写 4 至 24 个测量点")
+    N_LAMBDA = len(L_values) // 2
+    pair_offset = len(L_values) - N_LAMBDA
     # 相邻极大值（同/反相点）间距为半波长，逐差法计算 λ_i
     lambda_vals = []
     for i in range(N_LAMBDA):
-        lam = abs(L_values[i + N_HALF] - L_values[i]) / 3.0
+        lam = abs(L_values[i + pair_offset] - L_values[i]) / (pair_offset * phase_step)
         lambda_vals.append(lam)
 
     # 6 个逐差波长是同一被测量（波长）的等精度重复测量，先作 3σ 坏值检验
@@ -85,6 +91,7 @@ def _compute_method(L_values: list[float], f: float, t_celsius: float, v_referen
     relative_error = abs(v_meas - v_theory) / v_theory * 100
 
     return {
+        "phase_step": phase_step,
         "L": L_values,
         "lambda_vals": lambda_vals,
         "lambda_bar": lambda_bar,
@@ -118,7 +125,10 @@ def _compute(data: dict) -> dict:
     if r1 is None:
         print("[错误] 共振干涉法（L1）数据异常，已终止，未生成报告。")
         return None
-    r2 = _compute_method(L2, f_khz, t_celsius, data["v_reference"])
+    phase_step = data.get("phase_step", 0.5)
+    if isinstance(phase_step, bool) or phase_step not in (0.5, 1.0):
+        raise ValueError("请选择位相法相邻记录点间隔")
+    r2 = _compute_method(L2, f_khz, t_celsius, data["v_reference"], phase_step=phase_step)
     if r2 is None:
         print("[错误] 位相比较法（L2）数据异常，已终止，未生成报告。")
         return None
@@ -135,6 +145,7 @@ def _compute(data: dict) -> dict:
         "v1": r1["v_meas"],
         "u_v1": r1["u_v"],
         "E1": r1["E"],
+        "phase_step": phase_step,
         "lambda2": r2["lambda_bar"],
         "u_lambda2": r2["u_lambda"],
         "v2": r2["v_meas"],
@@ -142,8 +153,9 @@ def _compute(data: dict) -> dict:
         "E2": r2["E"],
         "lambda_avg": mean([r1["lambda_bar"], r2["lambda_bar"]]),
         "v_avg": v_avg,
-        "u_v_avg": mean([r1["u_v"], r2["u_v"]]),
-        "E_avg": mean([r1["E"], r2["E"]]),
+        "u_v_avg": None,  # 两法相关性未知，不能推定平均值的不确定度
+        # MOBILE_SOUND_AVG_ERROR_V1
+        "E_avg": abs(mean([r1["v_meas"], r2["v_meas"]]) - r1["v_theory"]) / r1["v_theory"] * 100,
     }
     return r
 
@@ -172,20 +184,22 @@ def _write_method_section(doc, r: dict, table_label: str):
     # 前 6 行填计算值，后 6 行填 "/"
     # 注：表格单元格不支持 OMath 公式渲染，故公式说明以正文形式放在表前，
     # 表头仅用纯文本列名
-    doc.add_paragraph(
-        "用逐差法计算波长，将 12 个数据分为前后两组（1~6 和 7~12），"
-        "对应项相减后除以 3："
-    )
-    doc.add_math(r"\lambda_i = \frac{1}{3}|L_{i+6} - L_i|")
+    N_LAMBDA = len(L) // 2
+    pair_offset = len(L) - N_LAMBDA
+    divisor = format(pair_offset * r["phase_step"], "g")
+    doc.add_paragraph(f"用逐差法计算波长，将 {len(L)} 个数据分为前后两组（1~{N_LAMBDA} 和 {pair_offset+1}~{len(L)}），对应项相减后除以 {divisor}：")
+    if len(L) % 2:
+        doc.add_paragraph("测点为奇数时，中间一点保留在原始记录中，逐差时仅配对两侧等长读数。")
+    doc.add_math(rf"\lambda_i = \frac{{1}}{{{divisor}}}|L_{{i+{pair_offset}}} - L_i|")
 
     headers = ["$i$", "$L_i$ / mm", "$\\lambda_i$ / mm"]
     rows = []
-    for i in range(12):
+    for i in range(len(L)):
         if i < N_LAMBDA:
             rows.append([str(i + 1), f"{L[i]:.2f}", f"{lam[i]:.3f}"])
         else:
             rows.append([str(i + 1), f"{L[i]:.2f}", "/"])
-    doc.add_table(headers, rows, col_widths=[1.5, 5.0, 6.0])
+    doc.add_table(headers, rows[:N_LAMBDA], col_widths=[1.5, 5.0, 6.0], raw_columns=[1])
 
     # ── 理论声速 ──
     doc.add_paragraph("本实验条件下的参考声速：")
@@ -204,7 +218,7 @@ def _write_method_section(doc, r: dict, table_label: str):
     )
 
     # ── 3σ 坏值检验（λ_i 为同一被测量的等精度重复测量） ──
-    doc.add_paragraph("对 6 个逐差波长作 3σ 坏值检验：")
+    doc.add_paragraph(f"对 {N_LAMBDA} 个逐差波长作 3σ 坏值检验：")
     doc.add_math(
         rf"s_{{\lambda}} = \sqrt{{\frac{{\sum_{{i=1}}^{{{N_LAMBDA}}}"
         rf"(\lambda_i - \bar{{\lambda}})^{{2}}}}{{{N_LAMBDA - 1}}}}} = "
@@ -354,6 +368,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # （二）位相比较法
     doc.add_heading("（二）位相比较法", level=2)
+    doc.add_paragraph("相邻位相记录点：" + ("同相与反相交替（半波长）" if r2["phase_step"] == 0.5 else "相同相位（一个波长）"))
     _write_method_section(doc, r2, "水中声速的测量（位相比较法）")
     # 自定义画图：本实验无内置图，AI 生成的图按顺序追加在「数据处理」末尾
     render_custom_plot(doc, 1, width_cm=14)

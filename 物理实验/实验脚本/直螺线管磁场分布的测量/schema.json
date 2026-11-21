@@ -28,12 +28,14 @@
           "required": true
         },
         {
-          "key": "r0_m",
+          "key": "r0_cm",
           "label": "螺线管半径 r₀",
           "type": "number",
-          "unit": "m",
+          "unit": "cm",
           "default": null,
-          "required": true
+          "required": true,
+          "legacyKey": "r0_m",
+          "legacyScale": 100
         },
         {
           "key": "n_coil",
@@ -51,12 +53,14 @@
           "required": true
         },
         {
-          "key": "I_A",
+          "key": "I_mA",
           "label": "工作电流 I",
           "type": "number",
-          "unit": "A",
+          "unit": "mA",
           "default": null,
-          "required": true
+          "required": true,
+          "legacyKey": "I_A",
+          "legacyScale": 1000
         },
         {
           "key": "R_ohm",
@@ -114,7 +118,7 @@
         },
         {
           "key": "d_left_cm",
-          "label": "左侧偏转 d左",
+          "label": "左侧纵坐标 dₘ₁（x≤0）",
           "type": "array",
           "length": 16,
           "unit": "cm",
@@ -123,7 +127,7 @@
         },
         {
           "key": "d_right_cm",
-          "label": "右侧偏转 d右",
+          "label": "右侧纵坐标 dₘ₂（x≥0）",
           "type": "array",
           "length": 16,
           "unit": "cm",

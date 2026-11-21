@@ -209,7 +209,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # R-U 数据表
     doc.add_paragraph("")
-    doc.add_run("用原始记录中的 R-U 数据进行拟合（偏转距离 d 保持 ")
+    doc.add_run("使用原始记录照片中的 R-U 数据拟合（偏转距离 d 保持 ")
     doc.add_inline_math(rf"{d_mm:.1f}\ \mathrm{{mm}}")
     doc.add_run(" 不变）：")
     doc.add_table(

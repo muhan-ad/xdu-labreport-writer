@@ -71,7 +71,7 @@ class PolarizationTests(unittest.TestCase):
             root=Path(temporary);photo=root/'record.png'
             Image.new('RGB',(100,100),'white').save(photo)
             for kind,source,expected_tables,expected_images in [
-                ('valid',photo,1,2),('missing',root/'absent.png',3,1),('broken',root/'broken.png',3,1)]:
+                ('valid',photo,1,2),('missing',root/'absent.png',1,1),('broken',root/'broken.png',1,1)]:
                 if kind=='broken':source.write_bytes(b'invalid image')
                 env={k:v for k,v in os.environ.items() if not k.startswith('LAB_')}
                 env['LAB_DATA_PHOTO']=str(source)
@@ -98,7 +98,8 @@ class PolarizationTests(unittest.TestCase):
             text='\n'.join(p.text for p in doc.paragraphs)
             self.assertIn(NAME,text);self.assertNotIn('马吕斯定律已被验证',text)
             self.assertNotIn('%%DATA:',text)
-            self.assertEqual(len(doc.tables[0].rows)+len(doc.tables[1].rows)-2,25)
+            self.assertEqual(len(doc.tables),1)
+            self.assertIn('A / mW',[c.text for c in doc.tables[0].rows[0].cells])
             self.assertEqual(len(doc.inline_shapes),1)
             with ZipFile(docx) as z:self.assertIn(b'm:oMath',z.read('word/document.xml'))
             source=(ROOT/'src/main/chart-preview.py').read_text(encoding='utf-8')

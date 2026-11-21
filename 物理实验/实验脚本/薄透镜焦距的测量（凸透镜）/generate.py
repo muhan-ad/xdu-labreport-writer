@@ -265,11 +265,11 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_data_photo("（请在此处粘贴原始数据记录照片）")
 
     # 1. 自准法
-    doc.add_heading("1. 自准法测量凸透镜焦距", level=2)
+    doc.add_paragraph("自准法原始焦距读数见记录照片。")
     auto_headers = ["次数$n$"] + [str(i) for i in range(1, 9)]
     auto_row = ["$f$ / cm"] + [f"{v:.2f}" for v in f_auto]
     doc.add_table(auto_headers, [auto_row],
-                  col_widths=[2.0] + [1.2] * 8)
+                  col_widths=[2.0] + [1.2] * 8, role="raw")
 
     # 2. 物距像距法
     doc.add_heading("2. 物距像距法测量凸透镜焦距", level=2)
@@ -281,7 +281,7 @@ def _generate_docx(data: dict, output_path: str):
     uv_v_row = ["像距 $v$ / cm"] + [f"{v:.2f}" for v in v_vals]
     uv_f_row = ["$f$ / cm"] + [f"{fv:.2f}" for fv in f_uv_vals]
     doc.add_table(uv_headers, [uv_v_row, uv_f_row],
-                  col_widths=[2.0] + [1.2] * 8)
+                  col_widths=[2.0] + [1.2] * 8, raw_rows=[0])
 
     # 3. 共轭法
     doc.add_heading("3. 共轭法测量凸透镜焦距", level=2)
@@ -302,7 +302,7 @@ def _generate_docx(data: dict, output_path: str):
             f"{f_conj_vals[i]:.2f}",
         ])
     doc.add_table(conj_headers, conj_rows,
-                  col_widths=[1.2, 1.8, 1.8, 1.8, 1.8, 1.8, 2.2])
+                  col_widths=[1.2, 1.8, 1.8, 1.8, 1.8, 1.8, 2.2], raw_columns=[1, 2, 3])
 
     # ═══════════════════════════════════════════
     # 二、数据处理和误差分析
@@ -310,7 +310,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_heading("二、数据处理和误差分析", level=1)
 
     # ── 2.1 自准法 ──
-    doc.add_heading("1. 自准法测量凸透镜焦距", level=2)
+    doc.add_paragraph("自准法原始焦距读数见记录照片。")
 
     doc.add_paragraph("(1) 判断是否有坏值")
     doc.add_paragraph("计算焦距平均值：")

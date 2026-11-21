@@ -5,12 +5,14 @@
       "name": "实验参数",
       "fields": [
         {
-          "key": "L",
+          "key": "L_mm",
           "label": "钢丝长度 L",
           "type": "number",
-          "unit": "m",
+          "unit": "mm",
           "default": null,
-          "required": true
+          "required": true,
+          "legacyKey": "L",
+          "legacyScale": 1000
         },
         {
           "key": "D",
@@ -21,12 +23,14 @@
           "required": true
         },
         {
-          "key": "H",
+          "key": "H_mm",
           "label": "镜面到标尺距离 H",
           "type": "number",
-          "unit": "m",
+          "unit": "mm",
           "default": null,
-          "required": true
+          "required": true,
+          "legacyKey": "H",
+          "legacyScale": 1000
         },
         {
           "key": "d_0",
@@ -99,28 +103,32 @@
           "bindConstant": "D_INST_ERR"
         },
         {
-          "key": "instrument_delta_L",
+          "key": "instrument_delta_L_mm",
           "label": "钢丝长度 L 测量限差",
           "type": "number",
-          "unit": "m",
+          "unit": "mm",
           "required": true,
           "default": null,
           "exclusiveMinimum": 0,
-          "bindConstant": "DELTA_L_M"
+          "bindConstant": "DELTA_L_MM",
+          "legacyKey": "instrument_delta_L",
+          "legacyScale": 1000
         },
         {
-          "key": "instrument_delta_H",
-          "label": "光杠杆长度 H 测量限差",
+          "key": "instrument_delta_H_mm",
+          "label": "镜面到标尺距离 H 测量限差",
           "type": "number",
-          "unit": "m",
+          "unit": "mm",
           "required": true,
           "default": null,
           "exclusiveMinimum": 0,
-          "bindConstant": "DELTA_H_M"
+          "bindConstant": "DELTA_H_MM",
+          "legacyKey": "instrument_delta_H",
+          "legacyScale": 1000
         },
         {
           "key": "instrument_delta_D",
-          "label": "标尺距离 D 测量限差",
+          "label": "光杠杆常数 D 测量限差",
           "type": "number",
           "unit": "mm",
           "required": true,

@@ -1,5 +1,4 @@
 {
-  "L": null,
   "lambda_nm": null,
   "given_a": null,
   "x": [
@@ -91,5 +90,6 @@
     null
   ],
   "instrument_ruler_division_mm": null,
-  "instrument_drum_division_mm": null
+  "instrument_drum_division_mm": null,
+  "L_cm": null
 }

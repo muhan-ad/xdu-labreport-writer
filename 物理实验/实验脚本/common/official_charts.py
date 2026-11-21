@@ -164,13 +164,13 @@ def chart_specs(name, data, scripts_root, preset_id='all'):
                 raise ValueError('热力学温度及绝对压强必须大于0')
             items=[series([v+273.15 for v in t],[p0+d for d in dp],'升温',True)]
             cooling=data.get('cool_t') or []; cp=data.get('cool_dp') or []
-            if any(v not in (None,'') for v in cooling+cp):
+            if any(v not in (None,'',0) for v in cooling+cp):
                 ct,cdp=paired({'t':cooling,'p':cp},['t','p'])
                 if any(v <= -273.15 for v in ct) or any(p0+d <= 0 for d in cdp): raise ValueError('降温过程温度或压强无效')
                 items.append(series([v+273.15 for v in ct],[p0+d for d in cdp],'降温'))
             specs.append(spec('charles','恒容过程P—T关系','T / K','P / kPa',items,'T=t+273.15，P=P₀+ΔP；升温和降温独立显示。'))
     elif name == '霍尔效应实验':
-        for key,prefix,xkey,xlabel,title in [('hall_im','t1','t1_im','Im / mA','霍尔电压与励磁电流'),('hall_i','t2','t2_i','I / mA','霍尔电压与工作电流'),('field_im','t1','t1_im','Im / mA','磁感应强度与励磁电流'),('field_i','t2','t2_i','I / mA','磁感应强度与工作电流')]:
+        for key,prefix,xkey,xlabel,title in [('hall_im','t1','t1_im_a','Im / A','霍尔电压与励磁电流'),('hall_i','t2','t2_i','I / mA','霍尔电压与工作电流'),('field_im','t1','t1_im_a','Im / A','磁感应强度与励磁电流'),('field_i','t2','t2_i','I / mA','磁感应强度与工作电流')]:
             # B图为辅助图，不包含在默认全部主图中。
             if preset_id=='all' and key.startswith('field_'):continue
             if not wants(key):continue
@@ -212,13 +212,13 @@ def chart_specs(name, data, scripts_root, preset_id='all'):
         kept=outlier_test([mutual*a/1000/b for a,b in zip(i,dm)])['kept']
         rkb=sum(kept)/len(kept)
         x,left,right=paired(data,['x_mm','d_left_cm','d_right_cm'])
-        n=positive(data,'n_coil');area=positive(data,'S_m2')
-        # 官网打开/闭合电流取平均磁通变化，不是反转电流的2B。
-        b=[rkb*((a+c)/2*10)/(n*area) for a,c in zip(left,right)]
-        if any(v<0 for v in x):raise ValueError('本预设接收中心至正侧的实测位置；负侧按对称性延拓，请勿混入两侧实测')
-        specs.append(spec('solenoid','直螺线管轴向磁场分布','x / mm','B / T',
-                          [series(x,b,'正侧实测'), series([-v for v in x],[v for v in b],'负侧对称延拓')],
-                          '负侧由对称性延拓，不是独立实测；中心x=0。RKb采用与报告相同的坏值检验后均值。', xlim=[-200,200]))
+        if any(v<0 for v in x):raise ValueError('位置 x 请填写距中心的非负距离')
+        left_points=sorted(zip([-v for v in x],left))
+        right_points=sorted(zip(x,right))
+        specs.append(spec('solenoid','螺线管轴线两侧纵坐标分布','x / mm',r'$d_{m1}, d_{m2}$ / cm',
+                          [series([p[0] for p in left_points],[p[1] for p in left_points],r'左侧 $d_{m1}$'),
+                           series([p[0] for p in right_points],[p[1] for p in right_points],r'右侧 $d_{m2}$')],
+                          '按当前记录约定：dₘ₁绘于负半轴，dₘ₂绘于正半轴；两侧分别使用原始数据，不平均或镜像替代。', xlim=[-200,200], legend=False))
     elif name == '静电场的模拟':
         module=experiment_module(scripts_root,name); result=module._compute(data)
         if wants('coax'):
@@ -303,7 +303,7 @@ def render_specs(specs, output_path, scripts_root):
             ax.legend(fontsize=8,loc='upper left',bbox_to_anchor=(1.13,1.08))
         else:ax.set_xlabel(label(s['xlabel']));ax.set_ylabel(label(s['ylabel']))
         ax.grid(alpha=.22)
-        if not s.get('polar'):ax.legend(fontsize=8)
+        if not s.get('polar') and s.get('legend', True):ax.legend(fontsize=8)
         fig.tight_layout()
         fig.savefig(path,dpi=160,bbox_inches='tight');plt.close(fig)
         images.append(dict(path=str(path),title=s['title'],caption=s['title'],note=s['note'],id=s['id']))

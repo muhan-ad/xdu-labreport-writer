@@ -2,7 +2,9 @@
 
 import math
 import os
+import random
 import sys
+from tempfile import TemporaryDirectory
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
@@ -11,6 +13,8 @@ from common.docx_report import DocxReportWriter
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
 from common.data_io import load_data, bind_input_parameters
+from common.regression import linear_regression
+from common.plot_utils import plot_fit
 
 # ── 物理常数 ──
 LAMBDA = None  # 由当前用户填写的波长换算为 mm
@@ -33,24 +37,29 @@ def _compute(data: dict) -> dict:
     if (not isinstance(rings, list) or len(rings) != 10 or any(
             isinstance(v, bool) or not isinstance(v, (int, float))
             or not math.isfinite(v) or v <= 0 or v != int(v) for v in rings)):
-        raise ValueError("暗环序号应为10个连续递减的正整数，例如20、19、…、11")
+        raise ValueError("暗环序号应为10个连续的正整数，可递增或递减")
     rings = [int(v) for v in rings]
-    if any(rings[i] - rings[i + 1] != 1 for i in range(9)):
-        raise ValueError("本实验采用隔5项逐差法，暗环序号必须连续递减，不能跳号或重复")
+    step = rings[1] - rings[0]
+    if abs(step) != 1 or any(second - first != step for first, second in zip(rings, rings[1:])):
+        raise ValueError("本实验采用隔5项逐差法，暗环序号应连续递增或递减，不能跳号、重复或混排")
     d_left = [float(v) for v in data["d_left"]]       # 左侧读数
     d_right = [float(v) for v in data["d_right"]]     # 右侧读数
+    if step == 1:
+        # 统一按高环号减低环号配对，环号和左右读数同步倒序。
+        rings.reverse()
+        d_left.reverse()
+        d_right.reverse()
 
     # 直径和直径平方
     D_m = [abs(d_right[i] - d_left[i]) for i in range(10)]
     D_m2 = [d ** 2 for d in D_m]
+    radius_squared = [value / 4 for value in D_m2]
+    fit = linear_regression(rings, radius_squared)
+    if fit.slope <= 0:
+        raise ValueError("最小二乘斜率应为正，请核对环号与左右读数的对应关系")
+    fitted_radius = fit.slope / LAMBDA
 
-    # 逐差法（skip-5）：环 20~16 (idx 0~4) 对应 环 15~11 (idx 5~9)
-    # 配对依赖"大环在前"的录入顺序，这里用 rings 显式校验，避免顺序颠倒时
-    # 算出负的曲率半径并静默写进报告
-    if any(rings[i] <= rings[i + 1] for i in range(len(rings) - 1)):
-        print(f"[错误] 暗环序号必须从大到小排列（当前为 {rings}），"
-              "请按 20→11 的顺序录入 d_left / d_right。")
-        return None
+    # 逐差法（skip-5）：高环号组 (idx 0~4) 对应低环号组 (idx 5~9)。
     diffs = [D_m2[i] - D_m2[i + SKIP_N] for i in range(5)]
     bad_diff = [round(x, 4) for x in diffs if x <= 0]
     if bad_diff:
@@ -97,6 +106,9 @@ def _compute(data: dict) -> dict:
     return {
         "rings": rings, "d_left": d_left, "d_right": d_right,
         "D_m": D_m, "D_m2": D_m2,
+        "radius_squared": radius_squared, "fit_slope": fit.slope,
+        "fit_intercept": fit.intercept, "fit_r_squared": fit.r_squared,
+        "fitted_radius": fitted_radius,
         "diffs": diffs, "avg_diff": avg_diff, "std_diff": std_diff,
         "R_individual": R_individual, "R_kept": R_kept, "R_bar": R_bar,
         "ot": ot, "n_pairs": n_pairs, "s_R": s_R, "sum_sq_R": sum_sq_R,
@@ -175,6 +187,30 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 二、数据处理 ──
     doc.add_heading("二、数据处理", level=1)
+    doc.add_table(
+        ["环号", "左读数 / mm", "右读数 / mm", "直径 / mm", "半径 / mm", "半径平方 / mm²"],
+        [[str(n), format_number(left), format_number(right), format_number(diameter),
+          format_number(diameter / 2), format_number(radius2)]
+         for n, left, right, diameter, radius2 in zip(
+             r["rings"], r["d_left"], r["d_right"], r["D_m"], r["radius_squared"])],
+    )
+    doc.add_heading("1. 作图与最小二乘拟合", level=2)
+    doc.add_paragraph("按记录表将直径换算为半径，以环号 n 为横轴、半径平方为纵轴。用最小二乘法验证斜率，拟合允许截距以吸收中心位置偏移等影响。")
+    doc.add_math(r"r_n^2 = (n-1)R\lambda,\quad r_n^2 = kn+b,\quad R_{\mathrm{fit}} = \frac{k}{\lambda}")
+    doc.add_paragraph(
+        f"拟合斜率 k = {format_number(r['fit_slope'])} mm²，截距 b = "
+        f"{format_number(r['fit_intercept'])} mm²，决定系数为 {format_number(r['fit_r_squared'])}。"
+    )
+    doc.add_math(r"R_{\mathrm{fit}} \approx " + format_number(r["fitted_radius"]) + r"\,\mathrm{mm}")
+    with TemporaryDirectory(prefix="newton-rings-") as directory:
+        image = plot_fit(
+            r["rings"], r["radius_squared"], r["fit_slope"], r["fit_intercept"],
+            xlabel=r"Ring number $n$", ylabel=r"$r_n^2$ (mm$^2$)",
+            save_path=os.path.join(directory, "newton-rings-fit.png"),
+            data_label="Measured", fit_label="Least-squares fit",
+        )
+        doc.add_image(image, width_cm=14, caption="半径平方随环号变化及最小二乘拟合")
+    doc.add_heading("2. 逐差法", level=2)
 
     doc.add_paragraph("")  # 段落容器
     doc.add_run("采用逐差法处理数据，取环距 ")
@@ -182,12 +218,17 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_run(f"，将环序 {r['rings'][0]}~{r['rings'][4]} 与 {r['rings'][5]}~{r['rings'][9]} 逐项配对，计算 ")
     doc.add_inline_math("D_m^2 - D_{m-5}^2")
     doc.add_run(f" 的 {len(r['diffs'])} 组差值。")
-    doc.add_paragraph("曲率半径平均值：")
+    doc.add_table(
+        ["高环号", "低环号", "直径平方差 / mm²", "曲率半径 / mm"],
+        [[str(high), str(low), format_number(diff), format_number(radius)]
+         for high, low, diff, radius in zip(r["rings"], r["rings"][SKIP_N:], r["diffs"], r["R_individual"])],
+    )
+    doc.add_paragraph("五组逐差结果的初算平均值：")
     doc.add_math(
         r"\bar{R} = \frac{\overline{D_{m}^{2} - D_{m-5}^{2}}}{4 \cdot 5 \cdot \lambda} = "
         r"\frac{" + format_number(avg_diff, sig_figs=7) + r"}"
         r"{4 \times 5 \times " + format_number(LAMBDA * 1e6, sig_figs=8) + r" \times 10^{-6}}"
-        r" \approx " + format_number(R_bar, sig_figs=6) + r"\,\mathrm{mm}"
+        r" \approx " + format_number(mean(r["R_individual"]), sig_figs=6) + r"\,\mathrm{mm}"
     )
 
     # 3σ 坏值检验：5 个逐差结果 R_i 是同一被测量 R 的等精度重复测定
@@ -195,11 +236,13 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_run(f"{r['ot']['n_all']} 个逐差结果 ")
     doc.add_inline_math("R_i")
     doc.add_run(" 是同一被测量 R 的等精度重复测定，作 3σ 坏值检验：")
+    doc.add_paragraph(outlier_note(r["ot"], unit=" mm", digits=3))
+    doc.add_paragraph(f"以下用保留的 {n_pairs} 组读数计算平均值和不确定度。")
     doc.add_math(
-        r"s_{R} = \sqrt{\frac{\sum_{i=1}^{" + str(r["ot"]["n_all"])
-        + r"} (R_i - \bar{R})^{2}}{" + str(r["ot"]["n_all"] - 1) + r"}} = "
+        r"s_{R} = \sqrt{\frac{\sum_{i=1}^{" + str(n_pairs)
+        + r"} (R_i - \bar{R})^{2}}{" + str(n_pairs - 1) + r"}} = "
         r"\sqrt{\frac{" + format_number(sum_sq_R, sig_figs=6) + r"}{"
-        + str(r["ot"]["n_all"] - 1) + r"}}"
+        + str(n_pairs - 1) + r"}}"
         r" \approx " + format_number(s_R, sig_figs=3) + r"\,\mathrm{mm}"
     )
     doc.add_math(
@@ -211,7 +254,6 @@ def _generate_docx(data: dict, output_path: str):
         r"3\sigma = 3 \times " + format_number(sigma_R, sig_figs=3)
         + r" \approx " + format_number(sigma3_R, sig_figs=3) + r"\,\mathrm{mm}"
     )
-    doc.add_paragraph(outlier_note(r["ot"], unit=" mm", digits=3))
 
     doc.add_paragraph("A类不确定度：")
     doc.add_math(
@@ -253,7 +295,7 @@ def _generate_docx(data: dict, output_path: str):
         + R_display + r" \pm " + u_display + r")\,\mathrm{mm}"
     )
     doc.add_paragraph("其中不确定度按只进不舍保留 1 位有效数字，测得值末位与其对齐。")
-    # 自定义画图：本实验无内置图，AI 生成的图按顺序追加在「数据处理」末尾
+    # 自定义图追加在「数据处理」末尾。
     render_custom_plot(doc, 1, width_cm=14)
     render_custom_plot(doc, 2, width_cm=14)
     render_custom_plot(doc, 3, width_cm=14)
@@ -261,6 +303,11 @@ def _generate_docx(data: dict, output_path: str):
 
     # ── 三、实验结果分析 ──
     doc.add_heading("三、实验结果分析", level=1)
+    doc.add_table(
+        ["计算方法", "曲率半径 / mm"],
+        [["作图与最小二乘拟合", format_number(r["fitted_radius"])],
+         ["逐差法", format_number(R_bar)]],
+    )
 
     # 结果分析 AI 导入消费点：AI 润色导入的「结果分析」覆盖硬编码段落
     if "结果分析" in variants:
@@ -297,73 +344,25 @@ def _generate_docx(data: dict, output_path: str):
     # ── 四、思考题 ──
     doc.add_heading("四、思考题", level=1)
 
-    # ── 思考题变体：题目写死；回答按问随机（dict）/ 整段润色覆盖（str）/ 硬编码兜底 ──
-    import random
     if not render_custom_quiz(doc, r):
-        _quiz = variants.get("思考题")
-        if isinstance(_quiz, str) and _quiz.strip():
-            doc.add_paragraph_rich(_quiz)
-            _quiz = None
-        elif not isinstance(_quiz, dict):
-            _quiz = None
-
-        doc.add_heading("1. 牛顿环中心为何不是理想暗点？对 R 测量有无影响？", level=2)
-        _o = _quiz.get("1") if _quiz else None
-        if _o:
-            doc.add_paragraph_rich(random.choice(_o))
+        quiz = variants.get("思考题")
+        answers = quiz if isinstance(quiz, dict) else {}
+        doc.add_heading("1. 比较反射光与透射光形成的牛顿环", level=2)
+        if answers.get("1"):
+            doc.add_paragraph_rich(random.choice(answers["1"]))
         else:
+            doc.add_paragraph("空气膜的薄膜几何条件相同。反射光的两束光在两界面反射时只有一次发生半波相变，而透射干涉的两束光相对经历两次反射，没有额外的半波相差。因此理想情况下，反射暗环对应透射亮环，反射亮环对应透射暗环。")
+            doc.add_math(r"2t=k\lambda\quad(\text{透射亮、反射暗}),\qquad 2t=(k+\tfrac12)\lambda\quad(\text{透射暗、反射亮})")
+            doc.add_paragraph("反射光的两束干涉光强较接近，条纹通常更清晰。透射光的直透分量较强，参与干涉的多次反射分量较弱，因此透射条纹的对比度通常较低。")
 
-            doc.add_paragraph(
-                "答：实际实验中，平凸透镜和平面玻璃接触处存在弹性形变，"
-                "导致接触处为一个小圆面而非理想点接触；此外镜面上可能有微量灰尘，"
-                "引起附加光程差，使中心呈现或暗或明的圆斑。"
-            )
-            doc.add_paragraph("")
-            doc.add_run("对 R 测量无影响。因为采用 ")
-            doc.add_inline_math("D_m^2 - D_n^2")
-            doc.add_run(" 的差值法处理数据时，附加厚度 a 在相减过程中被消除，不改变干涉条纹的级次差。")
-
-        doc.add_heading("2. 说明牛顿环分布特点及干涉级次分布。", level=2)
-        _o = _quiz.get("2") if _quiz else None
-        if _o:
-            doc.add_paragraph_rich(random.choice(_o))
+        doc.add_heading("2. 充入折射率大于 1 的透明液体后，环形、间距与级次如何变化？", level=2)
+        if answers.get("2"):
+            doc.add_paragraph_rich(random.choice(answers["2"]))
         else:
+            doc.add_paragraph("设液体折射率为 n，真空波长为 λ，近轴空气膜几何关系改用液膜厚度 t。均匀液膜的等厚线仍是同心圆。对透射亮环取中心为第 1 环，按本实验讲义的级次约定：")
+            doc.add_math(r"t\simeq\frac{r^2}{2R},\qquad 2nt=(k-1)\lambda,\qquad r_k=\sqrt{\frac{(k-1)R\lambda}{n}}")
+            doc.add_paragraph("同一级亮环的半径及相邻环距均缩为原来的 1/√n。同一非中心半径所对应的干涉级次增大。")
 
-            doc.add_paragraph("")
-            doc.add_run("答：牛顿环中心为暗斑，周围交替分布明暗相间的同心圆环。")
-            doc.add_run("环的分布特点是中央稀疏、边缘密集，呈内疏外密的不均匀排列。")
-            doc.add_run("干涉级次分布：中央级次低（")
-            doc.add_inline_math("m")
-            doc.add_run(" 小），由内向外级次逐渐增大（")
-            doc.add_inline_math("m")
-            doc.add_run(" 增大），明环与暗环交替出现。")
-
-        doc.add_heading("3. 牛顿环各环间距是否相等？根据以下原理进行解释。", level=2)
-        _o = _quiz.get("3") if _quiz else None
-        if _o:
-            doc.add_paragraph_rich(random.choice(_o))
-        else:
-
-            doc.add_paragraph("")
-            doc.add_run("测量原理：")
-            doc.add_inline_math(r"R = \frac{D_m^2 - D_n^2}{4(m-n)\lambda}")
-            doc.add_paragraph("")
-            doc.add_run("答：不相等。空气膜厚度沿径向不均匀变化是根本原因。")
-            doc.add_run("由几何关系 ")
-            doc.add_inline_math("R^2 = (R-d)^2 + r^2")
-            doc.add_run("，略去 d² 得 ")
-            doc.add_inline_math(r"d = \frac{r^{2}}{2R}")
-            doc.add_run("。")
-            doc.add_paragraph("")
-            doc.add_run("可见膜厚 ")
-            doc.add_inline_math("d")
-            doc.add_run(" 与 ")
-            doc.add_inline_math("r^2")
-            doc.add_run(" 成正比，即越远离中心，厚度增加越快，")
-            doc.add_run("光程差变化越剧烈，导致相邻干涉环之间的间距越来越小，")
-            doc.add_run("形成内疏外密的分布。")
-
-            # ── 保存 ──
     doc.save()
     doc.close()
 

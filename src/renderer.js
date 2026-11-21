@@ -528,6 +528,7 @@ async function selectExperiment(exp) {
   $('btnOpenData').disabled = !exp.hasData;
   $('btnOpenData2').disabled = !exp.hasData;
   $('btnOpenReport').disabled = !exp.hasReport;
+  $('btnUploadReport').disabled = !exp.hasReport || reportUploading;
   $('btnOpenReport2').disabled = !exp.hasReport;
   renderReportDirSetting();   // 同步头部「选择保存路径」按钮 title 上的当前路径
 
@@ -894,15 +895,35 @@ async function fillDefaultData() {
   finally{isSavingData=false;$('btnFillDefaultData').disabled=false;}
 }
 
+const polarizationTheory = {
+  '光的偏振特性测量': {
+    polarizer_1_change: 1, polarizer_1_extinction: 0, polarizer_1_state: 4,
+    polarizer_2_change: 1, polarizer_2_extinction: 2, polarizer_2_state: 1,
+    plate_0_change: 1, plate_0_extinction: 2, plate_0_state: 1,
+    plate_15_change: 1, plate_15_extinction: 0, plate_15_state: 3,
+    plate_30_change: 1, plate_30_extinction: 0, plate_30_state: 3,
+    plate_45_change: 0, plate_45_extinction: 0, plate_45_state: 2,
+    plate_60_change: 1, plate_60_extinction: 0, plate_60_state: 3,
+    plate_75_change: 1, plate_75_extinction: 0, plate_75_state: 3,
+    plate_90_change: 1, plate_90_extinction: 2, plate_90_state: 1,
+  },
+  '光的偏振特性测量（第二学期）': {
+    output_state_0: 1, output_state_30: 3, output_state_45: 2,
+  },
+};
+
 function renderForm() {
   const wrap = $('dataTableWrap');
   if (!currentSchema) { wrap.innerHTML = ''; return; }
   // 实验级样式挂载点（个别实验数据较长，需要更宽的数组格子）
   wrap.dataset.exp = (currentExp && currentExp.id) || '';
   let html = '<div class="schema-form">';
+  const preset = Object.hasOwn(polarizationTheory, currentExp?.id) ? polarizationTheory[currentExp.id] : null;
   for (const group of (currentSchema.groups || [])) {
     html += '<div class="form-group">';
-    if (group.name) html += `<div class="form-group-title">${escapeHtml(group.name)}</div>`;
+    const hasPreset = preset && (group.fields || []).some(field => field.choicesOnly &&
+      Object.hasOwn(preset, field.key) && field.presets?.some(option => option.value === preset[field.key]));
+    if (group.name || hasPreset) html += `<div class="form-group-title${hasPreset ? ' form-group-title-with-action' : ''}"><span>${escapeHtml(group.name || '')}</span>${hasPreset ? '<button type="button" class="btn btn-outline btn-sm" data-polarization-theory>填入理论预设</button>' : ''}</div>`;
     for (const fld of (group.fields || [])) {
       html += renderField(fld);
       if (fld.hint) html += `<div class="field-hint" style="color:var(--text-secondary);font-size:13px;margin:4px 0 12px">${escapeHtml(fld.hint)}</div>`;
@@ -911,20 +932,55 @@ function renderForm() {
   }
   html += '</div>';
   wrap.innerHTML = html;
+  wrap.querySelectorAll('[data-polarization-theory]').forEach(button => {
+    button.onclick = async () => {
+      if (isSavingData || isSwitchingExperiment || !button.isConnected) return;
+      const selects = Array.from(button.closest('.form-group').querySelectorAll('select[data-observation]'))
+        .filter(select => Object.hasOwn(preset, select.dataset.key) &&
+          Array.from(select.options).some(option => option.value === String(preset[select.dataset.key])));
+      if (!selects.length) return;
+      if (selects.some(select => select.value !== '' && select.value !== String(preset[select.dataset.key])) &&
+          !(await appConfirm('将用理论预设替换本表中不同的选项。', {title:'替换本表已填写的选项？', okText:'填入理论预设'}))) return;
+      if (!button.isConnected || isSavingData || isSwitchingExperiment) return;
+      for (const select of selects) select.value = String(preset[select.dataset.key]);
+      onFormInput();
+      showToast('success', '已填入本表理论预设');
+    };
+  });
+  wrap.querySelectorAll('[data-sequence-mode]').forEach(button => {
+    button.onclick = () => fillMeasurementSequence(button).catch(error => showToast('warning', error.message));
+  });
   wrap.querySelectorAll('[data-resize-points]').forEach(button => {
     button.onclick = async () => {
       const field = currentSchema.groups.flatMap(g => g.fields || []).find(f => f.key === button.dataset.resizePoints && f.variableLength);
       if (!field) return;
       const expId = currentExp?.id, live = readFormData(), count = live[field.key].length, delta = Number(button.dataset.delta);
-      if (count + delta < (field.minLength || 3) || count + delta > (field.maxLength || 100)) return;
-      if (delta < 0 && !(await appConfirm('删除最后一个测量点及三组对应测量值？保存修改后才写入数据文件。'))) return;
+      const paired = !!field.pairedMatrix;
+      const nextCount = count + delta * (paired ? 2 : 1);
+      if (nextCount < (field.minLength || 3) || nextCount > (field.maxLength || 100)) return;
+      const prompt = paired ? '同时删除最左端和最右端测量点及三组对应测量值？' : '删除最后一个测量点及其读数？';
+      if (delta < 0 && (paired || live[field.key].at(-1) != null) &&
+          !(await appConfirm(prompt + '保存修改后才写入数据文件。'))) return;
       if (currentExp?.id !== expId) return;
-      const resize = values => Array.from({length:count + delta}, (_, i) => values?.[i] ?? null);
-      live[field.key] = resize(live[field.key]);
-      live[field.pairedMatrix] = live[field.pairedMatrix].map(resize);
+      if (delta < 0 && paired) {
+        if (!dataValidation.removeEndpointPair(field, live)) return;
+      } else if (paired) {
+        live[field.key] = [null, ...live[field.key], null];
+        live[field.pairedMatrix] = live[field.pairedMatrix].map(row => [null, ...row, null]);
+      } else {
+        live[field.key] = Array.from({length:nextCount}, (_, i) => live[field.key][i] ?? null);
+      }
       currentData = live; renderForm(); onFormInput();
     };
   });
+  wrap.querySelectorAll('[data-instrument-limit-help]').forEach(button => {
+    button.onclick = () => appConfirm(
+      '对于连续测量需要估读的仪器（如刻度尺、千分尺），限差为最小分度值的一半。\n\n' +
+      '对于不连续测量不需要估读或者电子示数的仪器（如游标卡尺和数字秒表），仪器限差为最小分度值。',
+      {title:'什么是仪器限差', okText:'知道了', info:true}
+    );
+  });
+  wrap.querySelectorAll('select[data-observation]').forEach(select => select.addEventListener('change', onFormInput));
   wrap.querySelectorAll('select.parameter-presets').forEach(select => {
     select.addEventListener('change', () => {
       if (!select.value) return;
@@ -933,10 +989,43 @@ function renderForm() {
     });
   });
   wrap.querySelectorAll('input[data-key]').forEach(inp => {
-    inp.addEventListener('input', onFormInput);
+    inp.addEventListener('input', () => {
+      if (inp.dataset.idx !== undefined)
+        updateMeasurementPositionHeader(inp.dataset.key, Number(inp.dataset.idx), inp.value);
+      onFormInput();
+    });
     // 禁止鼠标滚轮改变 number 输入框的值（聚焦时滚轮应滚动页面而非改数）
     if (inp.type === 'number') inp.addEventListener('wheel', (e) => { e.currentTarget.blur(); }, { passive: true });
   });
+}
+
+function updateMeasurementPositionHeader(key, index, value) {
+  const selector = '[data-position-source="' + CSS.escape(key) + '"][data-position-index="' + index + '"]';
+  $('dataTableWrap').querySelectorAll(selector).forEach(header => {
+    header.textContent = value ? 'D=' + value + 'mm' : '第' + (index + 1) + '点';
+  });
+}
+
+async function fillMeasurementSequence(button) {
+  if (!button.isConnected || isSavingData || isSwitchingExperiment || !currentExp || !currentSchema) return;
+  const row = button.closest('.form-field-array');
+  const inputs = [...row.querySelectorAll('input[data-idx]')];
+  const field = currentSchema.groups.flatMap(group => group.fields).find(f => f.key === inputs[0]?.dataset.key);
+  const config = field && measurementSequence.sequenceSetting(currentExp.id, field.key);
+  if (!config) return;
+  const before = inputs.map(input => input.value);
+  const values = measurementSequence.sequenceValues(config, field, inputs.length, button.dataset.sequenceMode,
+    row.querySelector('[data-sequence-start]')?.value ?? '', row.querySelector('[data-sequence-step]')?.value ?? '');
+  if (before.some((value, i) => value !== '' && Number(value) !== values[i]) &&
+      !(await appConfirm('将替换本行已填写的测点。对应测量读数仍按原列保留。', {title:'替换测点？', okText:'替换'}))) return;
+  if (!button.isConnected || isSavingData || isSwitchingExperiment ||
+      inputs.some((input, i) => input.value !== before[i])) return;
+  inputs.forEach((input, i) => {
+    input.value = String(values[i]);
+    updateMeasurementPositionHeader(field.key, i, input.value);
+  });
+  onFormInput();
+  showToast('success', '已填入 ' + values.length + ' 项');
 }
 
 // ── 表单输入导航：Enter/空格 跳转到下一个输入格（提高录入效率）──
@@ -962,6 +1051,9 @@ function renderField(fld, dataOverride) {
   const key = fld.key;
   const formatLabel = value => escapeHtml(String(value)).replace(/([A-Za-z\u0370-\u03ff])((?:[_^](?:\{[^{}]+\}|[A-Za-z0-9]+))+)/g, (_, base, suffix) => base + suffix.replace(/([_^])(?:\{([^{}]+)\}|([A-Za-z0-9]+))/g, (_, op, braced, plain) => { const tag = op === '_' ? 'sub' : 'sup'; return `<${tag}>${braced || plain}</${tag}>`; }));
   const labelText = escapeHtml(fld.label || key);
+  const limitHelp = dataOverride === undefined && (fld.label || '').includes('限差')
+    ? ' <button type="button" class="instrument-limit-link" data-instrument-limit-help aria-haspopup="dialog">什么是仪器限差</button>'
+    : '';
   const label = fld.label ? formatLabel(fld.label) : labelText;
   const unit = fld.unit ? `<span class="field-unit">${escapeHtml(fld.unit)}</span>` : '';
   const src = dataOverride !== undefined ? dataOverride : currentData;
@@ -970,11 +1062,15 @@ function renderField(fld, dataOverride) {
 
   if (fld.type === 'number') {
     const v = hasVal(val) ? val : '';   // 无默认回退：清除后保持空白（默认值已在 loadFormData 阶段填入）
+    if (fld.choicesOnly && Array.isArray(fld.presets) && dataOverride === undefined) {
+      const options = fld.presets.map(p => `<option value="${escapeHtml(p.value)}" ${String(v) === String(p.value) ? 'selected' : ''}>${escapeHtml(p.label)}</option>`).join('');
+      return `<div class="form-field form-field-number"><label class="field-label">${label}</label><select class="field-input" data-observation data-key="${escapeHtml(key)}" aria-label="${labelText}"><option value="">请选择</option>${options}</select>${limitHelp}</div>`;
+    }
     const presets = Array.isArray(fld.presets) ? `<select class="field-input parameter-presets" data-target-key="${escapeHtml(key)}" aria-label="${labelText}常用值"><option value="">选择常用值（可手动输入）</option>${fld.presets.map(p => `<option value="${escapeHtml(p.value)}">${escapeHtml(p.label)}</option>`).join('')}</select>` : '';
     return `<div class="form-field form-field-number">`
       + `<label class="field-label">${label}</label>`
       + `<input type="number" step="any" class="field-input" data-key="${escapeHtml(key)}" value="${escapeHtml(v)}">`
-      + unit + presets + `</div>`;
+      + unit + presets + limitHelp + `</div>`;
   }
   if (fld.type === 'science') {
     // 科学计数法双框：尾数 × 10^指数（指数可自由输入，附预设建议；清除后指数框保持空白）
@@ -995,7 +1091,7 @@ function renderField(fld, dataOverride) {
       + `<input type="number" step="any" class="field-input science-mantissa" data-key="${escapeHtml(key)}" value="${escapeHtml(mantissa)}" placeholder="有效数字">`
       + `<span class="sci-times">× 10^</span>`
       + `<span class="science-exp-wrap"><input type="number" step="1" class="field-input science-exp" aria-label="指数" data-key="${escapeHtml(key)}" value="${exp}" data-exp-suggestions="${escapeHtml(JSON.stringify(suggs))}"><button type="button" class="science-exp-trigger" aria-label="选择指数" aria-haspopup="listbox" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button></span>`
-      + unit + `</div>`;
+      + unit + limitHelp + `</div>`;
   }
   if (fld.type === 'array') {
     const len = fld.variableLength ? dataValidation.dimensions(fld, src || {}).length : fld.length || (Array.isArray(val) ? val.length : 0);
@@ -1005,10 +1101,12 @@ function renderField(fld, dataOverride) {
       cells += `<label class="array-cell"><span class="cell-idx">${i + 1}</span>`
         + `<input type="number" step="any" class="field-input array-input" data-key="${escapeHtml(key)}" data-idx="${i}" value="${escapeHtml(av)}"></label>`;
     }
+    const config = dataOverride === undefined && measurementSequence.sequenceSetting(currentExp?.id, key);
+    const controls = config ? measurementSequence.sequenceControls(config, len, 'btn btn-outline btn-sm') : '';
     return `<div class="form-field form-field-array">`
-      + `<div class="field-head"><span class="field-label">${label}</span>${unit}</div>`
-      + `<div class="array-grid">${cells}</div>`
-      + (fld.variableLength && dataOverride === undefined ? `<div class="field-hint">当前 ${len} 个测量点 <button type="button" class="btn btn-outline btn-sm" data-resize-points="${escapeHtml(key)}" data-delta="1">增加测量点</button> <button type="button" class="btn btn-outline btn-sm" data-resize-points="${escapeHtml(key)}" data-delta="-1">删除末点</button></div>` : '') + `</div>`;
+      + `<div class="field-head"><span class="field-label">${label}</span>${unit}${limitHelp}</div>`
+      + controls + `<div class="array-grid">${cells}</div>`
+      + (fld.variableLength && dataOverride === undefined ? `<div class="field-hint">当前 ${len} 个测量点 <button type="button" class="btn btn-outline btn-sm" data-resize-points="${escapeHtml(key)}" data-delta="1" ${len + (fld.pairedMatrix ? 2 : 1) > (fld.maxLength || 100) ? 'disabled' : ''}>${fld.pairedMatrix ? '增加两端测量点' : '增加测量点'}</button> <button type="button" class="btn btn-outline btn-sm" data-resize-points="${escapeHtml(key)}" data-delta="-1" ${len - (fld.pairedMatrix ? 2 : 1) < (fld.minLength || 3) ? 'disabled' : ''}>${fld.pairedMatrix ? '删除两端测量点' : '删除末尾测量点'}</button></div>` : '') + `</div>`;
   }
   if (fld.type === 'matrix') {
     const rows = fld.rows || 0, cols = fld.colsFrom ? dataValidation.dimensions(fld, src || {}).cols : fld.cols || 0;
@@ -1017,13 +1115,15 @@ function renderField(fld, dataOverride) {
     const transposed = fld.displayTranspose === true;
     const displayRows = transposed ? cols : rows;
     const displayCols = transposed ? rows : cols;
-    let table = '<div class="matrix-scroll"><table class="matrix-input">';
+    let table = `<div class="matrix-scroll"><table class="matrix-input" style="--measurement-columns: ${displayCols}">`;
     table += '<thead><tr><th class="matrix-corner"></th>';
     for (let c = 0; c < displayCols; c++) {
       const labels = transposed ? rowLabels : colLabels;
       const position = fld.colsFrom && !transposed ? src?.[fld.colsFrom]?.[c] : null;
       const cl = fld.colsFrom && !transposed ? (position != null ? `D=${position}mm` : `第${c+1}点`) : (labels[c] != null) ? labels[c] : (c + 1);
-      table += `<th class="matrix-col-label">${formatLabel(cl)}</th>`;
+      const positionAttrs = fld.colsFrom && !transposed
+        ? ' data-position-source="' + escapeHtml(fld.colsFrom) + '" data-position-index="' + c + '"' : '';
+      table += `<th class="matrix-col-label"${positionAttrs}>${formatLabel(cl)}</th>`;
     }
     table += '</tr></thead><tbody>';
     for (let r = 0; r < displayRows; r++) {
@@ -1040,14 +1140,14 @@ function renderField(fld, dataOverride) {
     }
     table += '</tbody></table></div>';
     return `<div class="form-field form-field-matrix">`
-      + `<div class="field-head"><span class="field-label">${label}</span>${unit}</div>` + table + `</div>`;
+      + `<div class="field-head"><span class="field-label">${label}</span>${unit}${limitHelp}</div>` + table + `</div>`;
   }
   // text 兜底
   const v = hasVal(val) ? val : '';
   return `<div class="form-field">`
     + `<label class="field-label">${label}</label>`
     + `<input type="text" class="field-input" data-key="${escapeHtml(key)}" value="${escapeHtml(v)}">`
-    + unit + `</div>`;
+    + unit + limitHelp + `</div>`;
 }
 
 function onFormInput() {
@@ -1072,7 +1172,7 @@ function readFormData() {
     for (const fld of (group.fields || [])) {
       const key = fld.key;
       if (fld.type === 'number') {
-        const inp = root.querySelector(`input[data-key="${key}"]:not([data-idx]):not([data-row])`);
+        const inp = root.querySelector(`input[data-key="${key}"]:not([data-idx]):not([data-row]), select[data-observation][data-key="${key}"]`);
         data[key] = (inp && inp.value !== '') ? parseFloat(inp.value) : null;
       } else if (fld.type === 'science') {
         const m = root.querySelector(`input.science-mantissa[data-key="${key}"]`);
@@ -2897,7 +2997,13 @@ function fillChartFieldOptions() {
   const groupArrays = [];
   for (const group of (currentSchema.groups || [])) {
     const arrs = (group.fields || []).flatMap(f => {
-      if (f.type === 'array') return [f];
+      if (f.type === 'array') {
+        if (f.key === 't1_im_a' && f.legacyKey === 't1_im' &&
+            [previousX, previousY, chartConfig?.xField, chartConfig?.yField].includes(f.legacyKey)) {
+          return [{...f, label: f.label + ' / A'}, {key: f.legacyKey, label: '励磁电流 / mA'}];
+        }
+        return f.key === 't1_im_a' ? [{...f, label: f.label + ' / A'}] : [f];
+      }
       if (f.type !== 'matrix') return [];
       return Array.from({ length: f.cols || 0 }, (_, col) => ({
         key: `${f.key}[${col}]`,
@@ -3250,6 +3356,12 @@ function bindEvents() {
   $('btnConfirmClose').onclick = () => settleConfirm(false);
   // 贡献数据弹窗
   $('btnContribute').onclick = openContributeModal;
+  $('btnUploadReport').onclick = uploadCurrentReport;
+  $('btnNavContribute').onclick = () => {
+    switchSettingsPane('contribute');
+    $('contributeSettingsExperiment').textContent = currentExp ? '当前实验：' + getDisplayName(currentExp) : '请先从左侧选择要贡献数据的实验。';
+    $('btnContribute').disabled = !currentExp;
+  };
   $('btnCloseContribute').onclick = () => closeModal('contributeModal');
   $('btnCancelContribute').onclick = () => closeModal('contributeModal');
   $('btnCVTabVariant').onclick = () => switchCVTab('variant');
@@ -3489,7 +3601,10 @@ function appConfirm(msg, opts = {}) {
     okBtn.classList.toggle('btn-danger', !!opts.danger);
     okBtn.classList.toggle('btn-primary', !opts.danger);
     const cancelBtn = $('btnConfirmCancel');
-    if (cancelBtn) cancelBtn.textContent = opts.cancelText || '取消';
+    if (cancelBtn) {
+      cancelBtn.hidden = !!opts.info;
+      cancelBtn.textContent = opts.cancelText || '取消';
+    }
     pendingConfirmResolve = resolve;
     openModal('confirmModal');
   });
@@ -3635,7 +3750,7 @@ async function switchSettingsModule(group, name) {
 
 function switchSettingsPane(name) {
   const pages = { notice: 'Notice', ai: 'Ai', reports: 'Reports', help: 'Help',
-    update: 'Update', feedback: 'Feedback', develop: 'Develop', thanks: 'Thanks', danger: 'Danger' };
+    update: 'Update', feedback: 'Feedback', develop: 'Develop', contribute: 'Contribute', thanks: 'Thanks', danger: 'Danger' };
   if (!pages[name]) return;
   for (const [page, suffix] of Object.entries(pages)) {
     $('btnNav' + suffix).classList.toggle('active', page === name);
@@ -3955,6 +4070,20 @@ async function submitFeedback() {
   } finally {
     btn.disabled = false;
   }
+}
+
+let reportUploading = false;
+async function uploadCurrentReport() {
+  if (reportUploading || !currentExp) return;
+  const target = currentExp;
+  if (!target.reportFile) { showToast('warning', '请先生成报告', '生成并保存当前实验的报告后再上传'); return; }
+  reportUploading = true;
+  $('btnUploadReport').disabled = true;
+  try {
+    const result = await window.labAPI.uploadExperimentReport(target.path);
+    showToast(result.ok ? 'success' : 'warning', result.ok ? (result.confirmationRequired ? '请确认上传' : '已发起上传') : '上传未完成', result.message || result.error || '请查看一站通中的官网提示', 6000);
+  } catch (error) { showToast('error', '上传未完成', error.message || String(error), 6000); }
+  finally { reportUploading = false; $('btnUploadReport').disabled = !currentExp?.hasReport || isGenerating; }
 }
 
 // ── 贡献数据（变体 / 实验报告，COS 直传）──
@@ -4709,7 +4838,7 @@ async function saveAppSettings() {
   settings.aiPolish = $('chkAiPolish').checked;
   settings.kbOnly = $('chkKbOnly').checked;
   settings.skillStates = getSkillStates();
-  if (settings.apiUrl && !/^https:\/\//i.test(settings.apiUrl)) { showToast('error', '地址无效', 'AI 服务必须使用 HTTPS'); return; }
+  if (settings.apiUrl && !/^https?:\/\//i.test(settings.apiUrl)) { showToast('error', '地址无效', 'AI 服务地址须使用 HTTP 或 HTTPS'); return; }
   if (window.saveOcrSettings && !(await window.saveOcrSettings(settings))) return;
   if (newKey) {
     const stored = await window.labAPI.saveCredential({ ...settings, key: newKey });
@@ -4746,6 +4875,7 @@ async function runGenerate() {
   // 生成期间：结果区显示"报告生成中"，禁用"打开报告"，显示"取消生成"按钮
   setResultState('generating');
   $('btnOpenReport').disabled = true;
+  $('btnUploadReport').disabled = true;
   $('btnOpenReport2').disabled = true;
   $('btnCancelGenerate').style.display = 'inline-flex';
   $('logContent').textContent = '开始生成报告...\n';
@@ -4764,6 +4894,7 @@ async function runGenerate() {
     // 失败/取消则按当前实验已有报告状态恢复（有旧报告 → 可继续打开旧报告；无 → 显示尚未生成）
     if (!genOk && currentExp) {
       $('btnOpenReport').disabled = !currentExp.hasReport;
+      $('btnUploadReport').disabled = !currentExp.hasReport || reportUploading;
       $('btnOpenReport2').disabled = !currentExp.hasReport;
       setResultState(currentExp.hasReport && currentExp.reportFile ? 'success' : 'empty', currentExp.reportFile);
       if (currentExp.hasReport) $('metaReport').textContent = '本次未成功，显示上次报告';
@@ -4808,6 +4939,7 @@ function refreshExperimentAfterGenerate(updated) {
   $('metaReport').textContent = '报告已生成';
   $('metaReport').className = 'meta-dot ok';
   $('btnOpenReport').disabled = false;
+  $('btnUploadReport').disabled = reportUploading;
   $('btnOpenReport2').disabled = false;
   setResultState('success', updated.reportFile);
 }

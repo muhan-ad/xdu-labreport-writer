@@ -2,6 +2,171 @@
   "实验": "光的偏振特性测量（第一学期）",
   "groups": [
     {
+      "name": "表1 偏振光光强变化记录",
+      "fields": [
+        {
+          "key": "polarizer_1_change",
+          "label": "放一个偏振片 · 光强是否变化",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 1,
+          "presets": [
+            {
+              "label": "不变化",
+              "value": 0
+            },
+            {
+              "label": "变化",
+              "value": 1
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "polarizer_1_extinction",
+          "label": "放一个偏振片 · 消光次数",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 2,
+          "presets": [
+            {
+              "label": "0 次",
+              "value": 0
+            },
+            {
+              "label": "1 次",
+              "value": 1
+            },
+            {
+              "label": "2 次",
+              "value": 2
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "polarizer_1_state",
+          "label": "放一个偏振片 · 入射光偏振态",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 5,
+          "presets": [
+            {
+              "label": "自然光",
+              "value": 0
+            },
+            {
+              "label": "线偏振光",
+              "value": 1
+            },
+            {
+              "label": "圆偏振光",
+              "value": 2
+            },
+            {
+              "label": "椭圆偏振光",
+              "value": 3
+            },
+            {
+              "label": "部分偏振光",
+              "value": 4
+            },
+            {
+              "label": "无法判断",
+              "value": 5
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "polarizer_2_change",
+          "label": "放两个偏振片 · 光强是否变化",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 1,
+          "presets": [
+            {
+              "label": "不变化",
+              "value": 0
+            },
+            {
+              "label": "变化",
+              "value": 1
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "polarizer_2_extinction",
+          "label": "放两个偏振片 · 消光次数",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 2,
+          "presets": [
+            {
+              "label": "0 次",
+              "value": 0
+            },
+            {
+              "label": "1 次",
+              "value": 1
+            },
+            {
+              "label": "2 次",
+              "value": 2
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "polarizer_2_state",
+          "label": "放两个偏振片 · 入射光偏振态",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 5,
+          "presets": [
+            {
+              "label": "自然光",
+              "value": 0
+            },
+            {
+              "label": "线偏振光",
+              "value": 1
+            },
+            {
+              "label": "圆偏振光",
+              "value": 2
+            },
+            {
+              "label": "椭圆偏振光",
+              "value": 3
+            },
+            {
+              "label": "部分偏振光",
+              "value": 4
+            },
+            {
+              "label": "无法判断",
+              "value": 5
+            }
+          ],
+          "choicesOnly": true
+        }
+      ]
+    },
+    {
       "name": "验证马吕斯定律数据表（表2，θ=0°~90° 共 7 点）",
       "fields": [
         {
@@ -20,6 +185,571 @@
           "unit": "mW",
           "required": true,
           "default": null
+        }
+      ]
+    },
+    {
+      "name": "表3 用 1/4 波片观察光强变化",
+      "fields": [
+        {
+          "key": "plate_0_change",
+          "label": "0° · 光强是否变化",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 1,
+          "presets": [
+            {
+              "label": "不变化",
+              "value": 0
+            },
+            {
+              "label": "变化",
+              "value": 1
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_0_extinction",
+          "label": "0° · 消光次数",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 2,
+          "presets": [
+            {
+              "label": "0 次",
+              "value": 0
+            },
+            {
+              "label": "1 次",
+              "value": 1
+            },
+            {
+              "label": "2 次",
+              "value": 2
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_0_state",
+          "label": "0° · 入射光偏振态",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 5,
+          "presets": [
+            {
+              "label": "自然光",
+              "value": 0
+            },
+            {
+              "label": "线偏振光",
+              "value": 1
+            },
+            {
+              "label": "圆偏振光",
+              "value": 2
+            },
+            {
+              "label": "椭圆偏振光",
+              "value": 3
+            },
+            {
+              "label": "部分偏振光",
+              "value": 4
+            },
+            {
+              "label": "无法判断",
+              "value": 5
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_15_change",
+          "label": "15° · 光强是否变化",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 1,
+          "presets": [
+            {
+              "label": "不变化",
+              "value": 0
+            },
+            {
+              "label": "变化",
+              "value": 1
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_15_extinction",
+          "label": "15° · 消光次数",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 2,
+          "presets": [
+            {
+              "label": "0 次",
+              "value": 0
+            },
+            {
+              "label": "1 次",
+              "value": 1
+            },
+            {
+              "label": "2 次",
+              "value": 2
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_15_state",
+          "label": "15° · 入射光偏振态",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 5,
+          "presets": [
+            {
+              "label": "自然光",
+              "value": 0
+            },
+            {
+              "label": "线偏振光",
+              "value": 1
+            },
+            {
+              "label": "圆偏振光",
+              "value": 2
+            },
+            {
+              "label": "椭圆偏振光",
+              "value": 3
+            },
+            {
+              "label": "部分偏振光",
+              "value": 4
+            },
+            {
+              "label": "无法判断",
+              "value": 5
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_30_change",
+          "label": "30° · 光强是否变化",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 1,
+          "presets": [
+            {
+              "label": "不变化",
+              "value": 0
+            },
+            {
+              "label": "变化",
+              "value": 1
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_30_extinction",
+          "label": "30° · 消光次数",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 2,
+          "presets": [
+            {
+              "label": "0 次",
+              "value": 0
+            },
+            {
+              "label": "1 次",
+              "value": 1
+            },
+            {
+              "label": "2 次",
+              "value": 2
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_30_state",
+          "label": "30° · 入射光偏振态",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 5,
+          "presets": [
+            {
+              "label": "自然光",
+              "value": 0
+            },
+            {
+              "label": "线偏振光",
+              "value": 1
+            },
+            {
+              "label": "圆偏振光",
+              "value": 2
+            },
+            {
+              "label": "椭圆偏振光",
+              "value": 3
+            },
+            {
+              "label": "部分偏振光",
+              "value": 4
+            },
+            {
+              "label": "无法判断",
+              "value": 5
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_45_change",
+          "label": "45° · 光强是否变化",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 1,
+          "presets": [
+            {
+              "label": "不变化",
+              "value": 0
+            },
+            {
+              "label": "变化",
+              "value": 1
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_45_extinction",
+          "label": "45° · 消光次数",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 2,
+          "presets": [
+            {
+              "label": "0 次",
+              "value": 0
+            },
+            {
+              "label": "1 次",
+              "value": 1
+            },
+            {
+              "label": "2 次",
+              "value": 2
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_45_state",
+          "label": "45° · 入射光偏振态",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 5,
+          "presets": [
+            {
+              "label": "自然光",
+              "value": 0
+            },
+            {
+              "label": "线偏振光",
+              "value": 1
+            },
+            {
+              "label": "圆偏振光",
+              "value": 2
+            },
+            {
+              "label": "椭圆偏振光",
+              "value": 3
+            },
+            {
+              "label": "部分偏振光",
+              "value": 4
+            },
+            {
+              "label": "无法判断",
+              "value": 5
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_60_change",
+          "label": "60° · 光强是否变化",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 1,
+          "presets": [
+            {
+              "label": "不变化",
+              "value": 0
+            },
+            {
+              "label": "变化",
+              "value": 1
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_60_extinction",
+          "label": "60° · 消光次数",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 2,
+          "presets": [
+            {
+              "label": "0 次",
+              "value": 0
+            },
+            {
+              "label": "1 次",
+              "value": 1
+            },
+            {
+              "label": "2 次",
+              "value": 2
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_60_state",
+          "label": "60° · 入射光偏振态",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 5,
+          "presets": [
+            {
+              "label": "自然光",
+              "value": 0
+            },
+            {
+              "label": "线偏振光",
+              "value": 1
+            },
+            {
+              "label": "圆偏振光",
+              "value": 2
+            },
+            {
+              "label": "椭圆偏振光",
+              "value": 3
+            },
+            {
+              "label": "部分偏振光",
+              "value": 4
+            },
+            {
+              "label": "无法判断",
+              "value": 5
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_75_change",
+          "label": "75° · 光强是否变化",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 1,
+          "presets": [
+            {
+              "label": "不变化",
+              "value": 0
+            },
+            {
+              "label": "变化",
+              "value": 1
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_75_extinction",
+          "label": "75° · 消光次数",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 2,
+          "presets": [
+            {
+              "label": "0 次",
+              "value": 0
+            },
+            {
+              "label": "1 次",
+              "value": 1
+            },
+            {
+              "label": "2 次",
+              "value": 2
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_75_state",
+          "label": "75° · 入射光偏振态",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 5,
+          "presets": [
+            {
+              "label": "自然光",
+              "value": 0
+            },
+            {
+              "label": "线偏振光",
+              "value": 1
+            },
+            {
+              "label": "圆偏振光",
+              "value": 2
+            },
+            {
+              "label": "椭圆偏振光",
+              "value": 3
+            },
+            {
+              "label": "部分偏振光",
+              "value": 4
+            },
+            {
+              "label": "无法判断",
+              "value": 5
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_90_change",
+          "label": "90° · 光强是否变化",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 1,
+          "presets": [
+            {
+              "label": "不变化",
+              "value": 0
+            },
+            {
+              "label": "变化",
+              "value": 1
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_90_extinction",
+          "label": "90° · 消光次数",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 2,
+          "presets": [
+            {
+              "label": "0 次",
+              "value": 0
+            },
+            {
+              "label": "1 次",
+              "value": 1
+            },
+            {
+              "label": "2 次",
+              "value": 2
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "plate_90_state",
+          "label": "90° · 入射光偏振态",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 5,
+          "presets": [
+            {
+              "label": "自然光",
+              "value": 0
+            },
+            {
+              "label": "线偏振光",
+              "value": 1
+            },
+            {
+              "label": "圆偏振光",
+              "value": 2
+            },
+            {
+              "label": "椭圆偏振光",
+              "value": 3
+            },
+            {
+              "label": "部分偏振光",
+              "value": 4
+            },
+            {
+              "label": "无法判断",
+              "value": 5
+            }
+          ],
+          "choicesOnly": true
         }
       ]
     }

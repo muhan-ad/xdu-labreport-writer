@@ -60,6 +60,119 @@
       ]
     },
     {
+      "name": "出射光偏振态观察",
+      "fields": [
+        {
+          "key": "output_state_0",
+          "label": "波片转角 0° · 出射光偏振态",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 5,
+          "presets": [
+            {
+              "label": "自然光",
+              "value": 0
+            },
+            {
+              "label": "线偏振光",
+              "value": 1
+            },
+            {
+              "label": "圆偏振光",
+              "value": 2
+            },
+            {
+              "label": "椭圆偏振光",
+              "value": 3
+            },
+            {
+              "label": "部分偏振光",
+              "value": 4
+            },
+            {
+              "label": "无法判断",
+              "value": 5
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "output_state_30",
+          "label": "波片转角 30° · 出射光偏振态",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 5,
+          "presets": [
+            {
+              "label": "自然光",
+              "value": 0
+            },
+            {
+              "label": "线偏振光",
+              "value": 1
+            },
+            {
+              "label": "圆偏振光",
+              "value": 2
+            },
+            {
+              "label": "椭圆偏振光",
+              "value": 3
+            },
+            {
+              "label": "部分偏振光",
+              "value": 4
+            },
+            {
+              "label": "无法判断",
+              "value": 5
+            }
+          ],
+          "choicesOnly": true
+        },
+        {
+          "key": "output_state_45",
+          "label": "波片转角 45° · 出射光偏振态",
+          "type": "number",
+          "required": false,
+          "default": null,
+          "minimum": 0,
+          "maximum": 5,
+          "presets": [
+            {
+              "label": "自然光",
+              "value": 0
+            },
+            {
+              "label": "线偏振光",
+              "value": 1
+            },
+            {
+              "label": "圆偏振光",
+              "value": 2
+            },
+            {
+              "label": "椭圆偏振光",
+              "value": 3
+            },
+            {
+              "label": "部分偏振光",
+              "value": 4
+            },
+            {
+              "label": "无法判断",
+              "value": 5
+            }
+          ],
+          "choicesOnly": true
+        }
+      ]
+    },
+    {
       "name": "仪器记录（选填）",
       "fields": [
         {

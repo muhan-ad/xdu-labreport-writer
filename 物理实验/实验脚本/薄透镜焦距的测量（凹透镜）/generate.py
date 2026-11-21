@@ -122,22 +122,22 @@ def _generate_docx(data, output_path):
     doc.add_heading('一、原始记录数据', level=1)
     doc.add_data_photo('（请在此处粘贴原始数据记录照片。）')
     headers = ['次数 $n$'] + [str(i) for i in range(1, 9)]
-    doc.add_heading('表1 自准法测量凸透镜焦距', level=2)
+    doc.add_paragraph('自准法凸透镜焦距原始读数见记录照片。')
     doc.add_table(headers, [['$f$ / cm'] + [f'{v:.2f}' for v in result['f_auto']]],
-                  col_widths=[3.2]+[1.2]*8)
-    doc.add_heading('表2 自准法测量凹透镜焦距', level=2)
+                  col_widths=[3.2]+[1.2]*8, role="raw")
+    doc.add_heading('自准法凹透镜焦距计算结果', level=2)
     doc.add_table(headers, [
         ['凹透镜 $X_4$ / cm']+[f'{v:.2f}' for v in result['x6']],
         ['像屏 $X_5$ / cm']+[f'{v:.2f}' for v in result['x7']],
         [r'$f=-|X_4-X_5|$ / cm']+[f'{-v:.2f}' for v in result['ca_gap']],
-    ], col_widths=[3.2]+[1.2]*8)
-    doc.add_heading('表3 物像法测量凹透镜焦距', level=2)
+    ], col_widths=[3.2]+[1.2]*8, raw_rows=[0, 1])
+    doc.add_heading('物像法凹透镜焦距计算结果', level=2)
     doc.add_paragraph_rich(rf'凸透镜物距 $u_L={result["u1"]:.2f}\ \mathrm{{cm}}$')
     table_headers = ['次数 $n$', '像屏 $X_6$/cm', '凹透镜 $X_7$/cm', '像屏 $X_8$/cm',
                      '物距 $u$/cm', '像距 $v$/cm', '$f$/cm']
     rows = [[str(i+1)]+[f'{result[k][i]:.2f}' for k in
              ['r_x7','r_x6','r_x8','u_vals','v_vals','f_im_vals']] for i in range(3)]
-    doc.add_table(table_headers, rows, col_widths=[1.0]+[2.1]*6)
+    doc.add_table(table_headers, rows, col_widths=[1.0]+[2.1]*6, raw_columns=[1, 2, 3])
     doc.add_paragraph_rich(r'$u=X_6-X_7,\quad v=X_8-X_7,\quad f=\frac{uv}{u-v}$')
 
     doc.add_heading('二、数据处理和误差分析', level=1)

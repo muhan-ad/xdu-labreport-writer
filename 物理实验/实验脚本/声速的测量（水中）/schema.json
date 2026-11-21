@@ -23,30 +23,36 @@
       ]
     },
     {
-      "name": "共振干涉法（驻波法）— 振幅极大值位置（12 次）",
+      "name": "共振干涉法（驻波法）— 振幅极大值位置",
       "fields": [
         {
           "key": "L1",
           "label": "位置 L_i",
           "type": "array",
-          "length": 12,
+          "length": 10,
           "unit": "mm",
           "required": true,
-          "default": null
+          "default": null,
+          "variableLength": true,
+          "minLength": 4,
+          "maxLength": 24
         }
       ]
     },
     {
-      "name": "位相比较法（李萨如图形法）— 同/反相点位置（12 次）",
+      "name": "位相比较法（李萨如图形法）— 同/反相点位置",
       "fields": [
         {
           "key": "L2",
           "label": "位置 L_i",
           "type": "array",
-          "length": 12,
+          "length": 10,
           "unit": "mm",
           "required": true,
-          "default": null
+          "default": null,
+          "variableLength": true,
+          "minLength": 4,
+          "maxLength": 24
         }
       ]
     },

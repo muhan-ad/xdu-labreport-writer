@@ -564,7 +564,7 @@ def _write_deviation_section(doc, data, avg, u, u_A, u_B, s_val, sigma,
         [f"$|\\Delta {symbol}_i|$"] + [f"{abs(d):.{dprec}f}" for d in deviations],
         [f"$(\\Delta {symbol}_i)^2$"] + [f"{d**2:.{sprec}f}" for d in deviations],
     ]
-    doc.add_table(headers, rows, col_widths=[2.0] + [1.6] * 5)
+    doc.add_table(headers, rows, col_widths=[2.0] + [1.6] * 5, raw_rows=[0])
 
     # s 公式
     sum_sq_str = " + ".join([f"{d**2:.{sprec}f}" for d in deviations])

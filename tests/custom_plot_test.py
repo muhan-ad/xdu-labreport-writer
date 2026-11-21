@@ -33,7 +33,7 @@ FIGURE_CASES = {
     "电子偏转特性的测量": (3, ["图1", "图2", "图3"]),
     "电子元件伏安特性的测量": (3, []),
     "电容与高电阻的测量": (1, []),
-    "直螺线管磁场分布的测量": (1, ["图1 螺线管"]),
+    "直螺线管磁场分布的测量": (1, ["图1 左侧"]),
     "重力加速度的测量": (1, []),
     "霍尔效应实验": (2, ["图1 B–Im", "图2 B–I"]),
     "静电场的模拟": (3, []),
@@ -170,17 +170,20 @@ def main():
                 problems.append("%s：图注「%s」与图片挤在同一段" % (exp, item["caption"]))
         print("   ✔ %s：基线 %d 张 → 自定义 %d 张" % (exp, slots, image_count(out)))
 
-    # ---- 2) 无内置图的实验：追加图位 ----
+    # ---- 2) 追加图位 ----
+    # Both measured curves and the Newton-ring fit remain alongside custom plots.
+    append_to_builtin = {"衍射光强分布的测量": 1, "平凸透镜曲率半径的测量": 1}
     no_figure = [e for e in exps if e not in FIGURE_CASES]
     for exp in no_figure:
-        if image_count(run_report(exp)) != 0:
-            problems.append("%s：基线不应有图" % exp)
+        baseline = append_to_builtin.get(exp, 0)
+        if image_count(run_report(exp)) != baseline:
+            problems.append("%s：基线应有 %d 张图" % (exp, baseline))
         out = run_report(exp, custom[:1])
-        if image_count(out) != 1:
-            problems.append("%s：自定义画图后应有 1 张图，实得 %d 张" % (exp, image_count(out)))
+        if image_count(out) != baseline + 1:
+            problems.append("%s：自定义画图后应有 %d 张图，实得 %d 张" % (exp, baseline + 1, image_count(out)))
         elif custom[0]["caption"] not in "\n".join(docx_paras(out)):
             problems.append("%s：缺少自定义图注" % exp)
-    print("   ✔ %d 个无内置图实验：不注入无图、注入后各 1 张" % len(no_figure))
+    print("   ✔ %d 个追加图位实验：注入后各新增 1 张" % len(no_figure))
 
     if problems:
         print("\n验证失败：")

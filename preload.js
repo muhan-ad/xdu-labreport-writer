@@ -84,6 +84,7 @@ contextBridge.exposeInMainWorld('labAPI', {
   openDataFile: (expPath) => ipcRenderer.invoke('open-data-file', expPath),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   openCourseSelection: () => ipcRenderer.invoke('open-course-selection'),
+  uploadExperimentReport: expPath => ipcRenderer.invoke('upload-experiment-report', expPath),
   // 贡献数据上传（COS 直传）
   contributeGetCredentials: (payload) => ipcRenderer.invoke('contribute-get-credentials', payload),
   contributeUpload: (payload) => ipcRenderer.invoke('contribute-upload', payload),

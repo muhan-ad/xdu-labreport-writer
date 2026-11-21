@@ -1,7 +1,5 @@
 {
-  "L": null,
   "D": null,
-  "H": null,
   "d_0": null,
   "d_shi": [
     null,
@@ -33,7 +31,9 @@
   ],
   "instrument_g": null,
   "instrument_d_inst_err": null,
-  "instrument_delta_L": null,
-  "instrument_delta_H": null,
-  "instrument_delta_D": null
+  "instrument_delta_D": null,
+  "L_mm": null,
+  "H_mm": null,
+  "instrument_delta_L_mm": null,
+  "instrument_delta_H_mm": null
 }

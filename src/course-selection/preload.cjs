@@ -10,7 +10,8 @@ contextBridge.exposeInMainWorld('courseLogin',Object.freeze({fillSaved:options=>
 
 contextBridge.exposeInMainWorld('courseReport',Object.freeze({
  action:payload=>ipcRenderer.invoke('course-report-view',payload),
- onSelect:callback=>{if(typeof callback==='function')ipcRenderer.on('course-report-select',()=>callback());}
+ onSelect:callback=>{if(typeof callback==='function')ipcRenderer.on('course-report-select',(_e,selection)=>callback(selection));},
+ onResult:callback=>{if(typeof callback==='function')ipcRenderer.on('course-report-result',(_e,result)=>callback(result));}
 }));
 
 contextBridge.exposeInMainWorld('schoolAccounts',Object.freeze({action:payload=>ipcRenderer.invoke('course-school-accounts',payload)}));

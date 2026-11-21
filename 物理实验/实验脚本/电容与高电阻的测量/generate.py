@@ -239,7 +239,7 @@ def _generate_docx(data: dict, output_path: str):
             ["$C_x$ / μF"] + [f"{v:.4f}" for v in c_x],
         ],
         col_widths=[2.0] + [1.4] * 8,
-    )
+     raw_rows=[0, 1])
 
     doc.add_paragraph("取平均值：")
     doc.add_math(
@@ -272,7 +272,7 @@ def _generate_docx(data: dict, output_path: str):
                 ["lnQ"] + [f"{v:.3f}" for v in lnq[seg]],
             ],
             col_widths=[1.8] + [1.4] * 8,
-        )
+         raw_rows=[1])
 
     doc.add_paragraph("根据上表数据作 lnQ-t 图：")
     if not render_custom_plot(doc, 1, width_cm=14):

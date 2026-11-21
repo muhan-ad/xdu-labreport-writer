@@ -115,6 +115,30 @@ def _compute(data: dict) -> dict:
 # docx 报告生成
 # ============================================================
 
+_POLARIZATION_STATES = ('自然光', '线偏振光', '圆偏振光', '椭圆偏振光', '部分偏振光', '无法判断')
+
+def _write_observation_table(doc, data, title, first_column, entries):
+    options = (("不变化", "变化"), ("0", "1", "2"), _POLARIZATION_STATES)
+    suffixes = ("change", "extinction", "state")
+    rows = []
+    has_observation = False
+    for prefix, label in entries:
+        row = [label]
+        for suffix, labels in zip(suffixes, options):
+            value = data.get(f"{prefix}_{suffix}")
+            if value is None or value == "":
+                row.append("")
+                continue
+            if isinstance(value, bool) or value not in range(len(labels)):
+                raise ValueError(f"{label}的观察值无效")
+            has_observation = True
+            row.append(labels[int(value)])
+        rows.append(row)
+    if has_observation:
+        doc.add_paragraph(title)
+        doc.add_table([first_column, "透射光强是否变化", "消光次数", "入射光偏振态"], rows)
+
+
 def _generate_docx(data: dict, output_path: str):
     """从 data.json 读取数据，计算并输出 docx 报告。"""
     # ---------- 1. 读取数据（含空值校验） ----------
@@ -184,6 +208,15 @@ def _generate_docx(data: dict, output_path: str):
     # ---- 一、原始数据记录 ----
     doc.add_heading("一、原始数据记录", level=1)
     doc.add_data_photo("（请在此处粘贴原始数据记录照片。）")
+    _write_observation_table(doc, data, "表1 偏振光光强变化记录", "偏振片",
+                             [("polarizer_1", "放一个"), ("polarizer_2", "放两个")])
+    doc.add_paragraph("表2 验证马吕斯定律数据")
+    doc.add_table(["θ / °", "cos²θ", "P / mW"],
+                  [[str(i * 15), format(c, ".5g"), format(p, ".5g")]
+                   for i, (c, p) in enumerate(zip(cos2_values, r["p_values"]))])
+    _write_observation_table(doc, data, "表3 用 1/4 波片观察光强变化", "波片转角",
+                             [(f"plate_{angle}", f"{angle}°") for angle in range(0, 91, 15)])
+
 
     # ---- 二、数据处理 ----
     doc.add_heading("二、数据处理", level=1)

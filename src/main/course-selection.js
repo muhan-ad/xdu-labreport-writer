@@ -153,6 +153,11 @@ function createCourseSelection({electron,root,getParent,resolvePython,userData,g
       try{
         preloaded=background;entryStarted=Date.now();
         const ses=session.fromPartition('course-selection');
+        if(ses.protocol&&!await ses.protocol.isProtocolHandled('labapp'))ses.protocol.handle('labapp',request=>{
+          const u=new URL(request.url),name=u.pathname.slice(1);
+          if(request.method!=='GET'||u.hostname!=='app'||!['preview.html','preview.js','jszip.min.js','docx-preview.min.js'].includes(name))return new Response('',{status:403});
+          return electron.net.fetch(pathToFileURL(path.join(root,'src',name)).href);
+        });
         ses.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));ses.setPermissionCheckHandler(()=>false);
         const current=new BrowserWindow({width:1440,height:960,minWidth:900,minHeight:650,parent:getParent()||undefined,
           title:'一站通 · 实验搭子',frame:false,titleBarStyle:'hidden',autoHideMenuBar:true,show:false,
@@ -167,6 +172,14 @@ function createCourseSelection({electron,root,getParent,resolvePython,userData,g
   }
   return {
     open:()=>openWindow(false),
+    async uploadReport(payload){
+      const result=await openWindow(false);if(!result.ok)return result;
+      const current=win;if(!current||current.isDestroyed())return {ok:false,error:'一站通窗口已关闭'};
+      current.webContents.send?.('course-report-select',{experiment:payload.experiment});
+      const uploaded=await reportClient.uploadReport(payload,current);
+      if(!current.isDestroyed())current.webContents.send?.('course-report-result',uploaded);
+      return uploaded;
+    },
     async warm(){
       if(warming)return warming;
       if(win&&!win.isDestroyed()||!preloadAllowed())return {ok:true,skipped:true};

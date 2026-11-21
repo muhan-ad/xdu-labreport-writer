@@ -7,6 +7,7 @@
 import math
 import os
 import sys
+import tempfile
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(SCRIPT_DIR))
@@ -15,6 +16,7 @@ from common.docx_report import DocxReportWriter
 from common.data_io import load_data, bind_input_parameters
 from common.variants import compose, render_custom_quiz
 from common.custom_plot import render_custom_plot
+from common.plot_utils import plot_xy
 
 # ============================================================
 # 物理常数 / 实验参数（按教材）
@@ -56,12 +58,12 @@ def _read_data(data: dict):
     """从 data.json 数据组装 (x_list, I_list, L, lambda_nm, given_a)。
 
     原实现为 openpyxl 遍历 数据.xlsx 的 6 个横向数据块（x 行 / I 行）与
-    底部参数区（L/mm、波长、缝宽），现改为直接读取 schema 定义的 key：
-    x、I、L、lambda_nm、given_a。λ/a 必须由当前用户提供，不使用教材兜底。
+    底部参数区（L/cm、波长、缝宽），现改为直接读取 schema 定义的 key：
+    x、I、L_cm、lambda_nm、given_a。λ/a 必须由当前用户提供，不使用教材兜底。
     """
     x_all = [float(v) for v in data["x"]]
     I_all = [float(v) for v in data["I"]]
-    L_val = float(data["L"])
+    L_val = float(data["L_cm"]) * 10.0  # cm → mm，与 x 及分度值同量纲
     lambda_val = data.get("lambda_nm")
     given_a_val = data.get("given_a")
     return (x_all, I_all, L_val,
@@ -153,71 +155,35 @@ def _find_dark_fringes(x, I, i0_idx):
     return result
 
 
-def _find_secondary_maxima(x, I, dark_fringes, i0_idx):
-    """在暗纹之间找次极大。返回 [(k, x_pos, i_rel, theory), ...] 列表。"""
-    # 收集所有暗纹位置（含中心对称的边界），排序
-    dark_positions = [x[i0_idx]]  # 中央主极大
-    for k in sorted(dark_fringes.keys()):
-        xl, xr = dark_fringes[k]
-        dark_positions.append(xl)
-        dark_positions.append(xr)
-    dark_positions.sort()
-
-    # 为每个暗纹找在 x 数组中的最近索引
-    dark_indices = []
-    for dp in dark_positions:
-        # 找 x 数组中最接近 dp 的索引
-        best = min(range(len(x)), key=lambda i: abs(x[i] - dp))
-        dark_indices.append(best)
-    # 去重排序
-    dark_indices = sorted(set(dark_indices))
-
+def _find_secondary_maxima(x, relative, dark_fringes):
+    """在相邻暗纹之间找两侧的第一、第二级亮纹。"""
     results = []
-    # 在每对相邻暗纹之间找局部极大值
-    for order in range(1, 4):  # k=1,2,3 次极大
-        # 左侧次极大：在中央主极大左边的两个暗纹之间
-        # 右侧次极大：在中央主极大右边的两个暗纹之间
-        pass
-
-    # 简化方法：扫描全部数据找局部极大值（排除中央主极大），
-    # 然后按距离中心排序配对
-    maxima = []
-    for i in range(1, len(I) - 1):
-        if I[i] is None or I[i-1] is None or I[i+1] is None:
+    for order, theory in enumerate(THEORY_SECONDARY_MAX[:2], start=1):
+        if order not in dark_fringes or order + 1 not in dark_fringes:
             continue
-        if I[i] >= I[i-1] and I[i] >= I[i+1] and i != i0_idx:
-            maxima.append((i, x[i], I[i] / I[i0_idx]))
-
-    # 按距中心距离排序，左右各取最近的 3 个
-    left_max = [(i, xp, r) for i, xp, r in maxima if xp < x[i0_idx]]
-    right_max = [(i, xp, r) for i, xp, r in maxima if xp > x[i0_idx]]
-    left_max.sort(key=lambda t: x[i0_idx] - t[1])
-    right_max.sort(key=lambda t: t[1] - x[i0_idx])
-
-    result = []
-    max_count = min(3, len(left_max), len(right_max))
-    for k in range(max_count):
-        _, xl, rl = left_max[k]
-        _, xr, rr = right_max[k]
-        avg_r = (rl + rr) / 2
-        theory = THEORY_SECONDARY_MAX[k] if k < len(THEORY_SECONDARY_MAX) else 0
-        rel_err = abs(avg_r - theory) / theory * 100 if theory > 0 else 0
-        result.append({
-            "k": k + 1,
-            "left_x": xl,
-            "left_r": rl,
-            "right_x": xr,
-            "right_r": rr,
-            "avg_r": avg_r,
-            "theory": theory,
-            "rel_err": rel_err,
+        inner_left, inner_right = dark_fringes[order]
+        outer_left, outer_right = dark_fringes[order + 1]
+        left = [i for i, value in enumerate(x) if outer_left < value < inner_left]
+        right = [i for i, value in enumerate(x) if inner_right < value < outer_right]
+        if not left or not right:
+            continue
+        li = max(left, key=relative.__getitem__)
+        ri = max(right, key=relative.__getitem__)
+        if any(not 0 < i < len(x) - 1 or relative[i] < max(relative[i - 1], relative[i + 1]) for i in (li, ri)):
+            continue
+        avg = (relative[li] + relative[ri]) / 2
+        results.append({
+            "k": order, "left_x": x[li], "right_x": x[ri],
+            "left_r": relative[li], "right_r": relative[ri],
+            "avg_r": avg, "theory": theory, "rel_err": abs(avg - theory) / theory * 100,
         })
-
-    return result
+    return results
 
 
 def _compute(x, I, L_mm, lambda_nm, given_a_mm):
     """完整计算链。"""
+    if not math.isfinite(L_mm) or L_mm <= 800:
+        raise ValueError("单缝到探测器距离 L 应大于 80 cm，请核对读数和录入单位")
     lambda_mm = lambda_nm * 1e-6  # nm → mm
 
     # ---- 1. 归一化 ----
@@ -246,6 +212,8 @@ def _compute(x, I, L_mm, lambda_nm, given_a_mm):
             "a_k": a_k,
         })
 
+    if not a_results:
+        raise ValueError("未识别到成对暗纹，请检查探测器位置与光强数据")
     a_values = [r["a_k"] for r in a_results]
     a_mean_val = mean(a_values) if len(a_values) >= 3 else sum(a_values) / len(a_values)
     rel_err_a = abs(a_mean_val - given_a_mm) / given_a_mm * 100
@@ -280,7 +248,7 @@ def _compute(x, I, L_mm, lambda_nm, given_a_mm):
     delta_a = math.sqrt(delta_a_A ** 2 + delta_a_B ** 2)
 
     # ---- 6. 次极大分析 ----
-    sec_max = _find_secondary_maxima(x, I_rel, dark_fringes, i0_idx)
+    sec_max = _find_secondary_maxima(x, I_rel, dark_fringes)
 
     return {
         "x": x, "I": I, "I_rel": I_rel,
@@ -308,7 +276,7 @@ def _generate_docx(data: dict, output_path: str):
     bind_input_parameters(data, globals(), SCRIPT_DIR)
     # 校验必填数据（required 字段为 null 或 array 含 null → 缺失）
     missing = []
-    for k in ("L", "x", "I"):
+    for k in ("L_cm", "x", "I"):
         v = data.get(k)
         if v is None:
             missing.append(k)
@@ -331,7 +299,7 @@ def _generate_docx(data: dict, output_path: str):
     # ---------- 控制台摘要 ----------
     print(f"\n{'=' * 56}")
     print(f"  I0 = {r['i0_val']:.1f}  (at x = {r['x0']:.3f} mm)")
-    print(f"  L = {L_mm:.1f} mm,  lambda = {lambda_nm} nm")
+    print(f"  L = {L_mm / 10:g} cm,  lambda = {lambda_nm} nm")
     for d in r["a_results"]:
         print(f"  k={d['k']}: x_left={d['xl']:.3f}, x_right={d['xr']:.3f}, "
               f"xk_avg={d['xk']:.3f} mm, a_{d['k']}={d['a_k']:.4f} mm")
@@ -379,11 +347,10 @@ def _generate_docx(data: dict, output_path: str):
 
     # -- 2.2 光强分布曲线 --
     doc.add_heading("2. I/I₀-x 光强分布曲线", level=2)
-    doc.add_paragraph(
-        "根据计算结果，在坐标纸上以 x 为横轴、I/I₀ 为纵轴描点，"
-        "并用平滑曲线连接，得到单缝衍射光强分布曲线。"
-        "曲线关于中央主极大近似对称分布，中央主极大处光强最大，"
-        "向两侧逐渐衰减，各级次极大光强依次递减。")
+    with tempfile.TemporaryDirectory() as directory:
+        figure = os.path.join(directory, "diffraction.png")
+        plot_xy(r["x"], r["I_rel"], xlabel="x / mm", ylabel=r"$I/I_0$", save_path=figure)
+        doc.add_image(figure, width_cm=14, caption="单缝衍射相对光强分布")
 
     # -- 2.3 次极大分析 --
     doc.add_heading("3. 次极大位置与理论比较", level=2)
@@ -407,12 +374,11 @@ def _generate_docx(data: dict, output_path: str):
             headers=["级次", "$x$ / mm (左/右)", "$I/I_0$ (左/右)",
                      "平均 $I/I_0$", "理论值", "相对误差"],
             rows=table_rows,
-            col_widths=[1.2, 2.5, 2.8, 2.0, 1.5, 1.5],
-        )
+            col_widths=[1.2, 2.5, 2.8, 2.0, 1.5, 1.5])
 
-    doc.add_paragraph(
-        "由表中可见，由于实验测量精度和背景光等因素影响，"
-        "次极大的实测值可能与理论值存在一定偏差。")
+    missing_orders = [str(order) for order in (1, 2) if not any(row["k"] == order for row in r["sec_max"])]
+    if missing_orders:
+        doc.add_paragraph("实测点不足以确认第 " + "、".join(missing_orders) + " 级的双侧亮纹，请结合曲线核对。")
 
     # -- 2.4 单缝宽度计算 --
     doc.add_heading("4. 单缝宽度计算", level=2)
@@ -427,7 +393,7 @@ def _generate_docx(data: dict, output_path: str):
 
     doc.add_paragraph("")
     doc.add_run("实验测得 ")
-    doc.add_inline_math(f"L = {L_mm:.1f}\\ \\mathrm{{mm}}")
+    doc.add_inline_math(fr"L = {L_mm / 10:g}\,\mathrm{{cm}} = {L_mm:g}\,\mathrm{{mm}}")
     doc.add_run("，")
     doc.add_inline_math(f"\\lambda = {lambda_nm}\\ \\mathrm{{nm}}")
     doc.add_run("。中央主极大位于 ")
@@ -563,11 +529,13 @@ def _generate_docx(data: dict, output_path: str):
         r"a = \bar{a} \pm \Delta a = "
         + format_measure(r["a_mean"], r["delta_a"]) + r"\ \mathrm{mm}"
     )
+    ua, ub = r["delta_a_A"], r["delta_a_B"]
+    comparison = ("两项量级相近。" if math.isclose(ua, ub, rel_tol=0.01)
+                  else ("A" if ua > ub else "B") + " 类不确定度较大。")
     doc.add_paragraph(
-        "其中 A 类不确定度由 "
-        + str(r["n_a"]) + " 个缝宽结果的分散性给出，B 类不确定度由光具座与探测器鼓轮的"
-        "仪器允差传递得到；两者相比 A 类占主导，说明缝宽结果的分散主要来自"
-        "暗纹位置的读数与拟合，而不是仪器本身的允差。")
+        "A 类不确定度来自各级缝宽结果的分散，B 类不确定度来自仪器允差的传递。"
+        + comparison
+    )
 
     doc.add_paragraph(
         "本次单缝宽度由衍射极小位置计算，测量结果及其不确定度见上述数据处理。"

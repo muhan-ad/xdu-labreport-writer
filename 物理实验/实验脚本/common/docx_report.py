@@ -628,6 +628,8 @@ class DocxReportWriter:
     close() 会把临时文件原子替换到目标路径（目标被 Word 占用时报错但保留临时文件）。
     """
 
+    handles_report_pagination = True
+
     def __init__(self, output_path: str, visible: bool = False):
         # visible 参数仅为兼容旧调用签名保留：新实现不启动任何外部程序
         global _ENGINE_BANNER_PRINTED
@@ -646,6 +648,8 @@ class DocxReportWriter:
         self._closed = False
         self._body_font_size = BODY_SIZE
         self._error_section_level = None
+        self._section_headings = {}
+        self._in_quiz_section = False
         self._figure_count = 0
         self._cursor = None          # add_run / add_inline_math 的写入目标段落
         # 公式排版要反复探测宽度/试拆行，缓存转换结果避免同一条公式被反复转换
@@ -717,7 +721,10 @@ class DocxReportWriter:
         """写入文本（自动把宋体缺失的上下标字符转成原生上下标 run）。"""
         if not text:
             return
+        from .report_precision import limit_numeric_text
         text = _normalize_text(text)
+        if not getattr(self, '_preserve_numeric_text', False):
+            text = limit_numeric_text(text)
         for mode, seg in _split_sub_super(text):
             run = paragraph.add_run(seg)
             self._apply_font(run, font_name, font_size, bold)
@@ -784,6 +791,8 @@ class DocxReportWriter:
         表格单元格传 TABLE_SIZE，使公式与同格文字同号。
         available_pt/base_pt 已不再使用（公式字号统一，不按宽度缩小），保留以便回滚。
         """
+        from .report_precision import limit_numeric_text
+        latex = limit_numeric_text(latex, math_mode=True)
         xml = self._math_omml(latex, display=display, jc=jc)
         if xml is None:
             plain = latex_to_plain(latex)
@@ -845,7 +854,11 @@ class DocxReportWriter:
         sclass = os.environ.get("LAB_STUDENT_CLASS", "").strip() or "（未填写）"
         date = os.environ.get("LAB_STUDENT_DATE", "").strip() or "（未填写）"
         fields = "姓名：%s    学号：%s    班级：%s    实验日期：%s" % (name, sid, sclass, date)
-        return self._add_paragraph(fields, font_size=self._body_font_size, space_after=6)
+        self._preserve_numeric_text = True
+        try:
+            return self._add_paragraph(fields, font_size=self._body_font_size, space_after=6)
+        finally:
+            self._preserve_numeric_text = False
 
     def add_heading(self, text: str, level: int = 1):
         """章节标题。level 1=一级，level 2=二级。"""
@@ -854,11 +867,15 @@ class DocxReportWriter:
         title = re.sub(r'^[一二三四五六七八九十0-9、.（）()\s]+', '', text)
         if title in ('误差分析', '实验误差分析', '实验误差来源'):
             self._error_section_level = level
+        paragraph = self._add_paragraph(
+            text, font_name=HEADING_FONT, font_size=H1_SIZE if level == 1 else H2_SIZE,
+            bold=True, space_before=12 if level == 1 else 6, space_after=6 if level == 1 else 3,
+        )
+        paragraph.paragraph_format.keep_with_next = True
         if level == 1:
-            return self._add_paragraph(text, font_name=HEADING_FONT, font_size=H1_SIZE,
-                                       bold=True, space_before=12, space_after=6)
-        return self._add_paragraph(text, font_name=HEADING_FONT, font_size=H2_SIZE,
-                                   bold=True, space_before=6, space_after=3)
+            self._in_quiz_section = title.strip() in ('思考题', '课后思考题', '问题讨论')
+            self._section_headings[paragraph._p] = self._in_quiz_section
+        return paragraph
 
     def add_paragraph(self, text: str, bold: bool = False):
         """正文段落（首行缩进）；含分点标记（（1）/①/首先…）时每点单独成段。
@@ -874,6 +891,8 @@ class DocxReportWriter:
         for piece in pieces:
             p = self._add_paragraph(piece, font_size=self._body_font_size, bold=bold,
                                     first_line_indent=FIRST_LINE_INDENT)
+        if bold and self._in_quiz_section:
+            p.paragraph_format.keep_with_next = True
         return p
 
     def add_paragraph_rich(self, text: str):
@@ -912,7 +931,8 @@ class DocxReportWriter:
         多行的每一行**各自居中**；段前/段后空一行只加在整块的首尾（行间不留空行）。
         字号始终与正文一致（不再按宽度自动缩小）。
         """
-        formula = (latex or "").strip()
+        from .report_precision import limit_numeric_text
+        formula = limit_numeric_text((latex or "").strip(), math_mode=True)
         for delimiter in ('$$', '$'):
             if formula.startswith(delimiter) and formula.endswith(delimiter) and len(formula)>2*len(delimiter):
                 formula=formula[len(delimiter):-len(delimiter)].strip()
@@ -977,7 +997,8 @@ class DocxReportWriter:
 
     def add_inline_math(self, latex: str, bold: bool = False):
         """在当前段落内插入内联公式（不换行，随文字流动）。"""
-        formula = (latex or "").strip()
+        from .report_precision import limit_numeric_text
+        formula = limit_numeric_text((latex or "").strip(), math_mode=True)
         for delimiter in ('$$', '$'):
             if formula.startswith(delimiter) and formula.endswith(delimiter) and len(formula)>2*len(delimiter):
                 formula=formula[len(delimiter):-len(delimiter)].strip()
@@ -994,10 +1015,18 @@ class DocxReportWriter:
                                                first_line_indent=FIRST_LINE_INDENT)
         self._append_math(self._cursor, formula, display=False, bold=bold)
 
-    def add_table(self, headers: list, rows: list, col_widths: list = None, role: str = 'processed'):
-        """Processed tables stay; redundant raw-only tables yield to a real photo."""
-        if role == 'raw' and getattr(self, 'has_data_photo', False):
+    def add_table(self, headers: list, rows: list, col_widths: list = None, role: str = 'processed', raw_rows=(), raw_columns=()):
+        """原始数据由照片呈现；结果表仅保留计算量及必要的测点标识。"""
+        if role == 'raw':
             return None
+        keep = [j for j in range(len(headers)) if j not in raw_columns]
+        headers = [headers[j] for j in keep]
+        rows = [[row[j] if j < len(row) else '' for j in keep]
+                for i, row in enumerate(rows) if i not in raw_rows]
+        if not headers or not rows:
+            return None
+        if col_widths:
+            col_widths = [col_widths[j] for j in keep]
         ncols = len(headers)
         nrows = 1 + len(rows)
         table = self._doc.add_table(rows=nrows, cols=ncols)
@@ -1036,6 +1065,14 @@ class DocxReportWriter:
             borders.append(el)
         tbl_pr.append(borders)
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        for index, row in enumerate(table.rows):
+            properties = row._tr.get_or_add_trPr()
+            properties.append(OxmlElement('w:cantSplit'))
+            if index == 0:
+                properties.append(OxmlElement('w:tblHeader'))
+                for cell in row.cells:
+                    for paragraph in cell.paragraphs:
+                        paragraph.paragraph_format.keep_with_next = True
 
         # 各列可用宽度：给了 col_widths（cm）就按比例换算到版心宽，否则等分
         if col_widths:
@@ -1130,6 +1167,14 @@ class DocxReportWriter:
     def _save_tmp(self):
         """保存到临时文件（close() 时原子替换到目标路径）。"""
         from .report_style import normalize_document_paragraphs
+        in_quiz = False
+        for node in self._doc._element.body:
+            if node in self._section_headings:
+                in_quiz = self._section_headings[node]
+            if in_quiz and node.tag == qn('w:p'):
+                text = ''.join(node.xpath('.//w:t/text() | .//m:t/text()')).strip()
+                if re.match(r'^\d+\s*[.、．)）]', text) and text.endswith(('?', '？')):
+                    node.get_or_add_pPr().get_or_add_keepNext().val = True
         normalize_document_paragraphs(self._doc)
         self._doc.save(self._tmp_path)
 

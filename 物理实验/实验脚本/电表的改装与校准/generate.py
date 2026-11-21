@@ -22,7 +22,7 @@ from common.custom_plot import render_custom_plot
 # ── 实验参数（教材口径） ──
 # 电流表改装：表头量程扩大 10 倍 → 分流电阻 R_s = R_g / 9
 CURRENT_RANGE_MULT = 9
-# 电压表改装：改装为 10V 量程，串联分压电阻使总内阻 10 kΩ
+# 电压表改装：改装为 1 V 量程，串联分压电阻使总内阻 10 kΩ
 VOLT_RH_TOTAL = 10000.0        # Ω
 # R_g 测量（数字万用表）B 类不确定度简化：不编造仪表规格，仅统计 A 类 + 说明
 
@@ -163,6 +163,8 @@ def _generate_docx(data: dict, output_path: str):
 
     # 2. 电流表改装
     doc.add_heading("2. 电流表改装（量程扩大 10 倍）", level=2)
+    if data.get("rs_measured") is not None:
+        doc.add_paragraph("实测分流电阻 = " + format_number(float(data["rs_measured"])) + " Ω")
     doc.add_paragraph("")
     doc.add_run("改装为 1 mA 量程，需并联分流电阻，由 ")
     doc.add_inline_math(r"R_s = \bar{R}_g / (n-1)")
@@ -186,12 +188,14 @@ def _generate_docx(data: dict, output_path: str):
     for a, b, c in zip(r["i_x"], r["i_s"], r["i_corr"]):
         rows.append([f"{a:.1f}", f"{b:.3f}", f"{c:+.3f}"])
     doc.add_table(["$I_x$ / mA", "$I_s$ / mA", "$I_s-I_x$ / mA"], rows,
-                  col_widths=[3.0, 3.0, 3.5])
+                  col_widths=[3.0, 3.0, 3.5], raw_columns=[0, 1])
 
     # 3. 电压表改装
-    doc.add_heading("3. 电压表改装（量程 10 V）", level=2)
+    doc.add_heading("3. 电压表改装（量程 1 V）", level=2)
+    if data.get("rh_measured") is not None:
+        doc.add_paragraph("实测分压电阻 = " + format_number(float(data["rh_measured"])) + " Ω")
     doc.add_paragraph("")
-    doc.add_run("改装为 10 V 量程，需串联分压电阻使总内阻为 10 kΩ：")
+    doc.add_run("改装为 1 V 量程，需串联分压电阻使总内阻为 10 kΩ：")
     doc.add_math(
         r"R_h = 10000 - \bar{R}_g = 10000 - "
         + format_number(r["rg_mean"])
@@ -209,7 +213,7 @@ def _generate_docx(data: dict, output_path: str):
     for a, b, c in zip(r["u_x"], r["u_s"], r["u_corr"]):
         rows.append([f"{a:.1f}", f"{b:.3f}", f"{c:+.3f}"])
     doc.add_table(["$U_x$ / V", "$U_s$ / V", "$U_s-U_x$ / V"], rows,
-                  col_widths=[3.0, 3.0, 3.5])
+                  col_widths=[3.0, 3.0, 3.5], raw_columns=[0, 1])
     # 自定义画图：本实验无内置图，AI 生成的图按顺序追加在「数据处理」末尾
     render_custom_plot(doc, 1, width_cm=14)
     render_custom_plot(doc, 2, width_cm=14)

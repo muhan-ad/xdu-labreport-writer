@@ -52,9 +52,8 @@ def _compute(data: dict) -> dict:
     l1_vals = [row[0] for row in measurements]
     l2_vals = [row[1] for row in measurements]
     N = float(data["N"])
-    if N <= 0:
-        print(f"[错误] 冒出（缩进）的条纹数 N = {N:g} 必须为正数，请检查输入。")
-        return None
+    if not math.isfinite(N) or N <= 0 or not N.is_integer():
+        raise ValueError("条纹数 N 必须是正整数，教材每组记录 50 条")
 
     # d = |l1 - l2|，3σ 坏值检验（迭代剔除；判据 σ = s × t_0.683，剔除后重算）
     d_vals = [abs(a - b) for a, b in zip(l1_vals, l2_vals)]
@@ -79,6 +78,8 @@ def _compute(data: dict) -> dict:
     u_d = combine(u_A, u_B)
 
     # 波长、相对误差与波长不确定度
+    if d_bar <= 0:
+        raise ValueError("平均位移为零，请核对 8 组 l₁、l₂ 移动镜读数")
     lam_bar = 2 * d_bar / N
     eta = abs(lambda0_mm - lam_bar) / lambda0_mm * 100
     u_lam = 2 * u_d / N
@@ -265,7 +266,7 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_math(
         r"\overline{\lambda} = \frac{2\overline{d}}{N} = "
         r"\frac{2 \times " + f"{d_bar:.7f}" + r"}{" + f"{N:.0f}" + r"}"
-        r" \approx " + f"{lam_bar:.8f}" + r"\,\mathrm{mm}"
+        r"\,\mathrm{mm}\approx " + format_number(lam_bar * 1e6, sig_figs=5) + r"\,\mathrm{nm}"
     )
 
     doc.add_paragraph("与本次光源标称值 ")
@@ -283,16 +284,11 @@ def _generate_docx(data: dict, output_path: str):
     doc.add_math(
         r"\Delta \lambda = \frac{2 \Delta d}{N} = "
         r"\frac{2 \times " + f"{u_d:.7f}" + r"}{" + f"{N:.0f}" + r"}"
-        r" \approx " + f"{u_lam:.8f}" + r"\,\mathrm{mm}"
+        r"\,\mathrm{mm}\approx " + format_number(u_lam * 1e6, sig_figs=5) + r"\,\mathrm{nm}"
     )
 
     doc.add_paragraph("那么，最终的结果表示如下")
-    lam_power = math.floor(math.log10(r["lam_bar"]))
-    doc.add_math(
-        r"\lambda = (" + format_number(r["lam_bar"] / 10 ** lam_power, r["u_lam"] / 10 ** lam_power)
-        + r" \pm " + format_number(r["u_lam"] / 10 ** lam_power, r["u_lam"] / 10 ** lam_power)
-        + r") \times 10^{" + f"{lam_power}" + r"}\,\mathrm{mm}"
-    )
+    doc.add_math(r"\lambda = " + format_measure(lam_bar * 1e6, u_lam * 1e6) + r"\,\mathrm{nm}")
     # 自定义画图：本实验无内置图，AI 生成的图按顺序追加在「数据处理」末尾
     render_custom_plot(doc, 1, width_cm=14)
     render_custom_plot(doc, 2, width_cm=14)

@@ -250,14 +250,14 @@
     "status": "明确要求",
     "source": "https://wlsyzx.xidian.edu.cn/expe/expe/aammtsqpb3.pdf",
     "pages": "1–3",
-    "description": "磁场分布图：X=x/mm（−200～+200），Y=B/T或mT",
-    "note": "官网规定对称曲线。标定电流—电流计偏转不能替代磁场分布主图。先求平均偏转并按标定转换B；若负侧由对称性生成，要标清为镜像延拓，不标成负侧独立实测。原点按讲义取螺线管中心。",
+    "description": "磁场分布图：X=x/mm（−200～+200），Y=dₘ₁、dₘ₂/cm",
+    "note": "按当前记录约定：dₘ₁为左侧纵坐标，dₘ₂为右侧纵坐标，分别绘制于负、正半轴，不取均值替代两侧数据。",
     "charts": [
       {
         "id": "solenoid",
         "title": "螺线管轴向磁场分布",
         "xLabel": "x / mm",
-        "yLabel": "B / T"
+        "yLabel": "dₘ₁、dₘ₂ / cm"
       }
     ]
   },

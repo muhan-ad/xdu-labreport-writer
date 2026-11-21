@@ -1,7 +1,5 @@
 {
-  "L": 0.973,
   "D": 45.0,
-  "H": 0.939,
   "d_0": -0.015,
   "d_shi": [
     0.626,
@@ -33,7 +31,9 @@
   ],
   "instrument_g": 9.8,
   "instrument_d_inst_err": 0.005,
-  "instrument_delta_L": 0.005196152422706632,
-  "instrument_delta_H": 0.005196152422706632,
-  "instrument_delta_D": 5.196152422706632
+  "instrument_delta_D": 5.196152422706632,
+  "L_mm": 973.0,
+  "H_mm": 939.0,
+  "instrument_delta_L_mm": 5.196152422706632,
+  "instrument_delta_H_mm": 5.196152422706632
 }

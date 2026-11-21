@@ -148,6 +148,15 @@ const courseSelection = require('./src/main/course-selection').createCourseSelec
   getSavedLogin: () => schoolPortal.courseLogin(), schoolPortal, reportClient, log,
 });
 handle('open-course-selection', () => courseSelection.open());
+handle('upload-experiment-report',async(_event,expPath)=>{
+  try{
+    if(generationBusy)return {ok:false,error:'报告正在生成，请等待生成完成后上传'};
+    const id=path.basename(experimentPath(expPath));
+    const registered=registeredReport(id);if(!registered)return {ok:false,error:'请先生成并保存当前实验的报告'};
+    const file=reportPath(registered);
+    return await courseSelection.uploadReport({experiment:id,file});
+  }catch(error){return {ok:false,error:error.message||'上传报告未能启动'};}
+});
 app.on('will-quit', () => {courseSelection.shutdown();reportClient.close();});
 // 关闭前未保存提示状态
 let isDataDirty = false;
@@ -403,9 +412,9 @@ function syncInstalledResources() {
 // - userData 无该实验：整目录镜像（含 data.json/variants.json 出厂值）
 // - 已有副本：按热更新合并语义刷新（data.json 与用户改过的 variants.json 永不覆盖、报告 docx 不动）
 // - 安装资源指纹变化时迁移公共库和现有实验，保持用户数据与自建内容
-function ensureUserCopy(expPath) {
+function ensureUserCopy(expPath, { syncResources = true } = {}) {
     if (resourceUpdating) throw new Error('实验资源更新中，请稍后重试');
-    syncInstalledResources();
+    if (syncResources) syncInstalledResources();
     const p = experimentPath(expPath);
     const builtinRoot = path.resolve(EXPERIMENTS_DIR);
     const { udRoot } = getDataRoots();
@@ -827,7 +836,10 @@ handle('read-data', (_, expPath) => {
     const p = security.inside(path.join(expPath, 'data.json'), expPath);
     for(const file of [p,p+'.bak'])if(fs.existsSync(file)&&fs.statSync(file).size>1024*1024)throw Error('数据文件过大，请清除数据后重新填写');
     if (!fs.existsSync(p)) return { ok: true, data: null };
-    return { ok: true, data: atomic.readJson(p) };
+    const data = atomic.readJson(p);
+    const {schema} = editableSchema(expPath);
+    return { ok: true, data: dataValidation.migrateUnits(schema, data) };
+
   } catch (err) {
     return { ok: false, error: err.message };
   }
@@ -846,7 +858,9 @@ handle('reset-experiment-data',(_,expPath)=>{
 });
 handle('write-data', (_, expPath, data) => {
   try {
-    const p = ensureUserCopy(expPath);
+    // The form was opened against the active schema. Saving it must not depend on
+    // replacing the entire resource directory or refresh that schema mid-edit.
+    const p = ensureUserCopy(expPath, { syncResources: false });
     if (Buffer.byteLength(JSON.stringify(data)) > 1024 * 1024) throw Error('测量数据过大');
     const {schema} = editableSchema(p);
     const errors = dataValidation.validate(schema, data, false);
@@ -1953,8 +1967,7 @@ function compareVersions(a, b) {
   return 0;
 }
 
-// 拒绝 localhost / 环回 / 私有 / 链路本地 / 组播 / 保留地址，只允许公网主机
-const isBlockedHost = network.blocked;
+// HTTP(S) 地址校验和系统 DNS 解析，支持本地服务及代理 Fake-IP。
 const assertPublicUrl = network.publicUrl;
 function checkPublicDns(hostname) {
   return new Promise(resolve => network.lookup(hostname, { all: true }, err => resolve(!err)));
@@ -3021,8 +3034,8 @@ handle('ai-chat', async (event, params) => {
     const apiKey = keyStore.get(baseUrl);
     // 流式请求：增量通过 ai-chat-chunk 推给渲染层（实时显示生成过程），
     // invoke 仍返回完整文本（渲染层 await 后照常使用）
-    // 走统一安全网络层（历史缺陷 R15）：仅公网 HTTPS、DNS 解析后固定连接地址、
-    // 非 GET 不允许重定向、响应总量有上限。空闲超时交给上面的看门狗（不自动中止），
+    // 走统一网络层，支持 HTTP(S)、本地部署和系统 DNS。
+    // 空闲超时交给上面的看门狗（不自动中止），
     // 因此这里显式传 0 关掉 socket 空闲超时。
     const response = await network.response(baseUrl + '/chat/completions', {
       method: 'POST', signal: controller.signal, idleTimeoutMs: 0,

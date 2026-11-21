@@ -19,6 +19,15 @@
       "name": "电流表校正（改装为 1 mA 量程，10 点）",
       "fields": [
         {
+          "key": "rs_measured",
+          "label": "实测分流电阻 Rs",
+          "type": "number",
+          "unit": "Ω",
+          "required": false,
+          "default": null,
+          "exclusiveMinimum": 0
+        },
+        {
           "key": "i_x",
           "label": "改装表读数 I_x",
           "type": "array",
@@ -39,8 +48,17 @@
       ]
     },
     {
-      "name": "电压表校正（改装为 10 V 量程，10 点）",
+      "name": "电压表校正（改装为 1 V 量程，10 点）",
       "fields": [
+        {
+          "key": "rh_measured",
+          "label": "实测分压电阻 RH",
+          "type": "number",
+          "unit": "Ω",
+          "required": false,
+          "default": null,
+          "exclusiveMinimum": 0
+        },
         {
           "key": "u_x",
           "label": "改装表读数 U_x",

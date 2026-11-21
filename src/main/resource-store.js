@@ -4,6 +4,21 @@ const crypto = require('crypto');
 const atomic = require('./atomic-store');
 
 const STATE_FILE = '.resource-state.json';
+const LEGACY_NEWTON_RINGS = {
+  [path.join('平凸透镜曲率半径的测量', 'generate.py')]: [
+    '90475480d6867828760e6c48a3249b144127c6f88710b25797726a3f38894709',
+    '4701337344d2fdd7e84342e37fdeca012be220d00cf61def44a5165c3b12778f',
+    '2b477a5ab0b8844c687eff8d94666b657263c3e4596fefe515740a0e27ffb07d',
+  ],
+  [path.join('平凸透镜曲率半径的测量', 'schema.json')]: [
+    '62c488629c977541d2c80018f17537fea6bd43b849a9efa7081dc492062a93dd',
+    '5876deca603aef7ade360c9cf034f1ce4dca8b000d4847d60c9991d8b62f414b',
+  ],
+  [path.join('平凸透镜曲率半径的测量', 'variants.json')]: [
+    '785ce6ad10615008f06ac710b7872cf9b9722c135eb64c1d776c9eab633c71fa',
+    '618ce0b33df3aa6db5920edf19c4a0d59d90aceab0eeda5920b38b86a53f70ec',
+  ],
+};
 
 function recoverTree(target) {
   if (fs.existsSync(target)) return false;
@@ -174,10 +189,12 @@ function syncBuiltin(builtin, target, fingerprint, appVersion, { force = false }
         const userModified = origin && currentHash !== origin.hash && !unchangedBuiltin;
         const keepNewerPackage = unchangedPackage && !newerBuiltin;
         const keepNewerBuiltin = origin?.source === 'builtin' && currentHash === origin.hash && revision < (origin.revision || 0);
-        if (!force && (unknownLegacyPackage || userModified || keepNewerPackage || keepNewerBuiltin)) {
+        const knownOldRingsResource = LEGACY_NEWTON_RINGS[file]?.includes(currentHash);
+        if (!force && !knownOldRingsResource && (unknownLegacyPackage || userModified || keepNewerPackage || keepNewerBuiltin)) {
           if (unknownLegacyPackage || userModified) syncWarnings.push(file);
           continue;
         }
+        if (knownOldRingsResource && isVariants) variantBases[file] = fs.readFileSync(source, 'utf8');
       }
       if (isVariants) {
         const text = fs.readFileSync(source, 'utf8');
@@ -185,7 +202,7 @@ function syncBuiltin(builtin, target, fingerprint, appVersion, { force = false }
         if (fs.existsSync(dest)) {
           const userText = fs.readFileSync(dest, 'utf8');
           // Legacy files with unknown ownership are preserved conservatively.
-          if (userText !== (previous ?? text)) continue;
+          if (userText !== (previous ?? text) && !LEGACY_NEWTON_RINGS[file]?.includes(hashFile(dest))) continue;
         }
       }
       fs.mkdirSync(path.dirname(dest), { recursive: true });

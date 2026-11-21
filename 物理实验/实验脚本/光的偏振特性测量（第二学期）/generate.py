@@ -44,7 +44,20 @@ def _generate_docx(data, output_path):
     if not photo_inserted:
         for start, end in [(0, 12), (12, 25)]:
             doc.add_table(['θ / °', 'α=0° P / mW', 'α=30° P / mW', 'α=45° P / mW'],
-                          [[str(i*15), *[f'{v:.6g}' for v in data['power_mw'][i]]] for i in range(start, end)])
+                          [[str(i*15), *[f'{v:.6g}' for v in data['power_mw'][i]]] for i in range(start, end)], role="raw")
+
+    states = ('自然光', '线偏振光', '圆偏振光', '椭圆偏振光', '部分偏振光', '无法判断')
+    observations = []
+    for angle in (0, 30, 45):
+        value = data.get(f"output_state_{angle}")
+        if value is None or value == "":
+            continue
+        if isinstance(value, bool) or value not in range(len(states)):
+            raise ValueError(f"波片转角 {angle}° 的偏振态无效")
+        observations.append([f"{angle}°", states[int(value)]])
+    if observations:
+        doc.add_paragraph("出射光偏振态观察")
+        doc.add_table(["波片转角", "出射光偏振态"], observations)
     doc.add_heading('二、数据处理')
     doc.add_paragraph('将检偏器角度θ作为极角、光功率P作为极径，三组读数绘于同一极坐标图。'
                       '0°和360°分别保留；平均值、极值及拟合使用0°～345°的24个独立方向，避免重复计入同一方向。')

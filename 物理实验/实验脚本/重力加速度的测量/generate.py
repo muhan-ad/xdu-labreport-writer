@@ -293,7 +293,7 @@ def _generate_docx(data: dict, output_path: str):
     # 支点位置行
     rows.append(["支点位置/cm"] + [f"{v:.1f}" for v in pivot_positions])
     # 8行10周期
-    for trial in range(0 if getattr(doc, 'has_data_photo', False) else N_TRIALS):
+    for trial in range(0):
         row_label = "10周期/s"
         row_data = [f"{trials_10T[hole][trial]:.2f}" for hole in range(N_HOLES)]
         rows.append([row_label] + row_data)
@@ -304,7 +304,7 @@ def _generate_docx(data: dict, output_path: str):
 
     # 列宽：标签列3.0cm + 9×数据列1.1cm ≈ 12.9cm
     col_widths = [3.0] + [1.1] * N_HOLES
-    doc.add_table(headers, rows, col_widths=col_widths)
+    doc.add_table(headers, rows, col_widths=col_widths, raw_rows=[0])
 
     # 质心位置注释
     cm_text = f"质心位置：{cm_position:.1f} cm" if cm_position is not None else "质心位置：______ cm"

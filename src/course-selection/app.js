@@ -361,6 +361,7 @@ async function openCourseLogin(automatic=false){
 $('accountButton').addEventListener('click',()=>{if(overview){run('正在清除本地登录会话…',async()=>{await api('logout');sessionStorage.setItem('skipCourseAutoLogin','1');weeksCache.clear();overview=null;weekData=null;ticket=null;resetAcademic();location.reload();});}else { void openCourseLogin(); }});$('closeLogin').addEventListener('click',()=>{$('password').value='';$('loginDialog').close();});$('loginDialog').addEventListener('cancel',e=>{if(busy)e.preventDefault();else $('password').value='';});$('loginForm').addEventListener('submit',e=>{e.preventDefault();if(!autoLoggingIn)void submitCourseLogin(false);});
 let reportRevision=0,reportOpening=false,pendingDismiss=null,dismissNextReport=false;const dismissedReports=new Set();
 let reportState=null,reportTimer=null,reportReading=false,reportActing=false,reportTitle='提交实验报告',reportOperationError='',reportRowsSignature='',reportActionsSignature='';
+let uploadConfirmId=null,uploadPreviewFrame=null,uploadPreviewListener=null;
 (async()=>{render();setBusy(true,'正在连接本地服务…');let autoLogin=false;try{
  const response=await fetch('/api/session');if(!response.ok)throw Error('本地会话读取失败');const session=await response.json();csrf=session.csrf;
  const entry=await window.schoolAccounts?.action({action:'entry-status'});if(entry?.acknowledged!==true){firstEntryPending=true;finishEntry();$('loginSettingsDialog').showModal();void loadSchoolAccountSettings();return;}
@@ -372,7 +373,7 @@ let reportState=null,reportTimer=null,reportReading=false,reportActing=false,rep
 
 
 function syncReportSurface(){
- if(view!=='report'){clearTimeout(reportTimer);reportTimer=null;if($('reportDialog').open)$('reportDialog').close();return;}
+ if(view!=='report'){renderUploadConfirmation();clearTimeout(reportTimer);reportTimer=null;if($('reportDialog').open)$('reportDialog').close();return;}
  if(!reportTimer&&!reportReading)void loadReports();
 }
 async function loadReports(){
@@ -405,27 +406,76 @@ function updateReportRows(html){
 function renderReports(){
  const s=reportState||{},rows=s.rows||[],labels={manual_login:'自动填充已关闭，请在登录设置中点击立即登录',idle:'准备连接报告系统',connecting:'正在连接报告系统…',loading:'正在加载报告列表…',needs_credentials:'请在登录设置中保存报告系统账号',needs_login:'正在自动登录报告系统…',logging_in:'正在自动登录报告系统…',login_failed:'自动登录失败，请检查账号密码',reading:'正在读取报告列表…',ready:'报告列表已同步',error:s.message||'报告系统连接失败'};
  $('reportLoginStatus').textContent=labels[s.phase]||s.message||'报告系统尚未连接';
- $('reportSummary').textContent=s.phase==='ready'?`${rows.length} 项实验 · 选择对应实验提交 Word 报告`:labels[s.phase]||s.message||'正在读取报告列表…';
+ $('reportSummary').textContent=s.autoUpload?.message||(s.phase==='ready'?`${rows.length} 项实验 · 选择对应实验提交 Word 报告`:labels[s.phase]||s.message||'正在读取报告列表…');
  $('reportError').textContent=reportOperationError||(s.ok===false?s.message||'报告数据读取失败':'');
- const reportRowsHTML=rows.map(row=>`<article class="report-card" data-report-row-key="${esc(row.key)}"><div class="report-week"><strong>${esc(row.week)}</strong><span>教学周</span></div><div class="report-info"><h3>${esc(row.name)}</h3><p>${esc(row.time)}</p></div><div class="report-grade"><span>成绩 / 提交状态</span>${reportGradeMarkup(row)}</div><div class="report-actions"><button class="btn" data-report-key="${esc(row.key)}" data-report-action="preview" ${reportActing||s.uploadPending||row.canPreview===false?'disabled':''}>查看报告</button><button class="btn primary ${row.graded?'cannot-upload':''}" data-report-key="${esc(row.key)}" data-report-action="upload" ${reportActing||s.uploadPending||row.canUpload===false||row.gradeChecking?'disabled':''}>${row.graded?'无法上传':row.gradeChecking?'正在核对':'上传报告'}</button></div></article>`).join('')||(s.phase==='ready'?'<div class="schedule-empty">本页暂无实验报告</div>':`<div class="report-loading"><span class="spinner"></span><p>${esc(labels[s.phase]||s.message||'正在加载…')}</p>${['needs_credentials','login_failed'].includes(s.phase)?'<button class="btn" id="configureReportLogin">设置账号</button>':''}</div>`);
+ const reportRowsHTML=rows.map(row=>`<article class="report-card" data-report-row-key="${esc(row.key)}"><div class="report-week"><strong>${esc(row.week)}</strong><span>教学周</span></div><div class="report-info"><h3>${esc(row.name)}</h3><p>${esc(row.time)}</p></div><div class="report-grade"><span>成绩 / 提交状态</span>${reportGradeMarkup(row)}</div><div class="report-actions"><button class="btn" data-report-key="${esc(row.key)}" data-report-action="preview" ${reportActing||s.uploadPending||s.autoUpload||row.canPreview===false?'disabled':''}>查看报告</button><button class="btn primary ${row.graded?'cannot-upload':''}" data-report-key="${esc(row.key)}" data-report-action="upload" ${reportActing||s.uploadPending||s.autoUpload||row.canUpload===false||row.gradeChecking?'disabled':''}>${row.graded?'无法上传':row.gradeChecking?'正在核对':'上传报告'}</button></div></article>`).join('')||(s.phase==='ready'?'<div class="schedule-empty">本页暂无实验报告</div>':`<div class="report-loading"><span class="spinner"></span><p>${esc(labels[s.phase]||s.message||'正在加载…')}</p>${['needs_credentials','login_failed'].includes(s.phase)?'<button class="btn" id="configureReportLogin">设置账号</button>':''}</div>`);
  const sameRows=rows.length===($('reportRows').querySelectorAll('.report-card').length)&&rows.every((row,index)=>$('reportRows').children[index]?.dataset.reportRowKey===row.key);
  const displayHTML=s.imagesPending&&rows.length?(sameRows?null:'<div class="report-loading"><span class="spinner"></span><p>正在整理成绩与提交状态…</p></div>'):reportRowsHTML;
  if(displayHTML!==null&&reportRowsSignature!==displayHTML){reportRowsSignature=displayHTML;updateReportRows(displayHTML);}
  $('reportPagination').hidden=!(s.pages>1);$('reportPage').textContent=`第 ${s.page||1} / ${s.pages||1} 页`;$('reportPrevious').disabled=(s.page||1)<=1;$('reportNext').disabled=(s.page||1)>=(s.pages||1);
  renderReportDialog();
 }
+
+function resetUploadPreview(){
+ if(uploadPreviewListener)window.removeEventListener('message',uploadPreviewListener);
+ uploadPreviewListener=null;uploadPreviewFrame=null;$('uploadConfirmPreview').replaceChildren();$('uploadConfirmPreview').hidden=true;
+}
+function renderUploadConfirmation(){
+ const c=reportState?.confirmation,node=$('uploadConfirmDialog');
+ if(!c||view!=='report'){if(node.open)node.close();uploadConfirmId=null;resetUploadPreview();return false;}
+ if(uploadConfirmId!==c.id){uploadConfirmId=c.id;resetUploadPreview();$('uploadConfirmError').textContent='';}
+ $('uploadConfirmFile').textContent='即将上传：'+c.fileName;
+ for(const id of ['continueUploadConfirm','cancelUploadConfirm','closeUploadConfirm','previewUploadConfirm'])$(id).disabled=reportActing||!!reportState.autoUpload;
+ if($('reportDialog').open)$('reportDialog').close();
+ if(!node.open&&!document.querySelector('dialog[open]'))node.showModal();
+ return true;
+}
+async function uploadConfirmationAction(action){
+ if(reportActing||!uploadConfirmId)return;
+ const confirmationId=uploadConfirmId;
+ if(action!=='preview-upload'){
+  try{await reportOperation(action,{confirmationId});}catch{$('uploadConfirmError').textContent='操作未完成，请重试';}
+  if(uploadConfirmId===confirmationId)$('uploadConfirmError').textContent=reportOperationError;
+  return;
+ }
+ $('uploadConfirmPreview').hidden=false;$('uploadConfirmPreview').textContent='正在加载报告预览…';
+ try{
+  const result=await window.courseReport.action({action,confirmationId});
+  if(uploadConfirmId!==confirmationId)return;
+  if(!result.ok)throw Error(result.error||'预览未能加载');
+  resetUploadPreview();$('uploadConfirmPreview').hidden=false;
+  const frame=document.createElement('iframe');uploadPreviewFrame=frame;frame.sandbox='allow-scripts';frame.title='待上传实验报告预览';frame.src='labapp://app/preview.html';
+  frame.onload=()=>{if(uploadConfirmId===confirmationId&&uploadPreviewFrame===frame)frame.contentWindow.postMessage({type:'preview',buffer:result.buffer},'*');};
+  uploadPreviewListener=async event=>{
+   if(event.source!==frame.contentWindow||event.data?.type!=='preview-result')return;
+   window.removeEventListener('message',uploadPreviewListener);uploadPreviewListener=null;
+   if(uploadConfirmId!==confirmationId||uploadPreviewFrame!==frame)return;
+   if(!event.data.ok){
+    const fallback=await window.courseReport.action({action:'preview-upload-html',confirmationId});
+    if(uploadConfirmId!==confirmationId||uploadPreviewFrame!==frame)return;
+    frame.onload=null;frame.removeAttribute('src');frame.sandbox='';frame.srcdoc='<meta http-equiv="Content-Security-Policy" content="default-src &#39;none&#39;; img-src data:; style-src &#39;unsafe-inline&#39;">'+(fallback.ok?fallback.html:'<p>无法预览，请取消并在 Word 中检查报告。</p>');
+   }
+  };
+  window.addEventListener('message',uploadPreviewListener);$('uploadConfirmPreview').replaceChildren(frame);
+ }catch(error){if(uploadConfirmId===confirmationId){$('uploadConfirmPreview').textContent=error.message;$('uploadConfirmError').textContent=error.message;}}
+}
+$('continueUploadConfirm').addEventListener('click',()=>void uploadConfirmationAction('confirm-upload'));
+$('previewUploadConfirm').addEventListener('click',()=>void uploadConfirmationAction('preview-upload'));
+for(const id of ['cancelUploadConfirm','closeUploadConfirm'])$(id).addEventListener('click',()=>void uploadConfirmationAction('cancel-upload'));
+$('uploadConfirmDialog').addEventListener('cancel',event=>{event.preventDefault();void uploadConfirmationAction('cancel-upload');});
 function renderReportDialog(){
+ if(renderUploadConfirmation())return;
  const d=reportOpening?{type:'opening',id:'opening',message:'正在打开学校操作窗口…'}:reportState?.dialog,node=$('reportDialog');if(!d||dismissedReports.has(d.id)||view!=='report'){if(node.open)node.close();return;}
  $('reportDialogTitle').textContent=['upload','opening'].includes(d.type)?reportTitle:'学校系统提示';$('reportDialogMessage').textContent=reportState.uploadPending?'正在上传，等待学校系统返回结果…':d.message||'';$('reportFileArea').hidden=d.type!=='upload';$('reportChosenFile').textContent=reportState.selectedFile||'尚未选择文件';
  const mapping={OK:['ok','确定'],'确定':['ok','确定'],Yes:['yes','是'],'是':['yes','是'],No:['no','否'],'否':['no','否'],Cancel:['cancel','取消'],'取消':['cancel','取消']};
  const buttons=d.type==='opening'?[]:d.type==='upload'?[['cancel','取消'],['submit','上传报告']]:(d.buttons||[]).map(b=>mapping[b]).filter(Boolean);
- $('chooseReportFile').disabled=reportActing||!!reportState.uploadPending;
- const reportButtonsHTML=buttons.map(([key,label])=>`<button class="btn ${['submit','ok','yes'].includes(key)?'primary':''}" data-report-button="${key}" ${reportActing||reportState.uploadPending||key==='submit'&&!reportState.selectedFile?'disabled':''}>${label}</button>`).join('');
+ $('chooseReportFile').disabled=reportActing||!!reportState.uploadPending||!!reportState.autoUpload;
+ const reportButtonsHTML=buttons.map(([key,label])=>`<button class="btn ${['submit','ok','yes'].includes(key)?'primary':''}" data-report-button="${key}" ${reportActing||reportState.uploadPending||reportState.autoUpload||key==='submit'&&!reportState.selectedFile?'disabled':''}>${label}</button>`).join('');
  if(reportActionsSignature!==reportButtonsHTML){reportActionsSignature=reportButtonsHTML;$('reportDialogActions').innerHTML=reportButtonsHTML;}
  if(!node.open&&!document.querySelector('dialog[open]'))node.showModal();
 }
 async function reportOperation(action,payload={}){
- if(reportActing)return;reportRevision++;reportActing=true;reportOperationError='';
+ if(reportActing)return;reportRevision++;reportActing=true;reportOperationError='';renderUploadConfirmation();
  if(action==='row'&&payload.rowAction==='upload'){dismissNextReport=false;reportOpening=true;reportState={...reportState,dialog:null};renderReportDialog();}$('reportDialogError').textContent='';
  try{const r=await window.courseReport.action({...payload,action});if(!r.ok){reportOperationError=r.error||r.message||'报告操作未完成';$('reportError').textContent=r.error||r.message||'报告操作未完成';$('reportDialogError').textContent=r.error||r.message||'报告操作未完成';}}
  finally{reportActing=false;reportOpening=false;if(pendingDismiss){let id=pendingDismiss;pendingDismiss=null;if(id==='opening'){const latest=await window.courseReport.action({action:'state'});id=latest.dialog?.id;}if(id){dismissNextReport=false;dismissedReports.add(id);await window.courseReport.action({action:'dismiss',dialogId:id});}}await loadReports();}
@@ -435,6 +485,7 @@ $('reportRows').addEventListener('click',event=>{const b=event.target.closest('[
 $('chooseReportFile').addEventListener('click',()=>void reportOperation('choose-file'));
 $('reportDialogActions').addEventListener('click',event=>{const b=event.target.closest('[data-report-button]');if(b)void reportOperation('button',{key:b.dataset.reportButton,dialogId:reportState?.dialog?.id});});
 function closeReportDialog(){
+ if(reportState?.autoUpload){$('reportDialogError').textContent='正在自动上传，请等待当前操作结束；关闭一站通窗口可停止尚未提交的任务。';return;}
  const id=reportState?.dialog?.id;reportRevision++;reportOpening=false;
  if(id)dismissedReports.add(id);$('reportDialog').close();
  if(reportActing){pendingDismiss=id||'opening';if(!id)dismissNextReport=true;return;}
@@ -442,7 +493,8 @@ function closeReportDialog(){
 }
 $('closeReportDialog').addEventListener('click',closeReportDialog);$('reportDialog').addEventListener('cancel',event=>{event.preventDefault();closeReportDialog();});
 $('reportPrevious').addEventListener('click',()=>void reportOperation('page',{direction:-1}));$('reportNext').addEventListener('click',()=>void reportOperation('page',{direction:1}));
-window.courseReport?.onSelect(()=>{view='report';render();});
+window.courseReport?.onSelect(selection=>{view='report';reportTitle=selection?.experiment||'提交实验报告';dismissNextReport=false;reportOperationError='';finishEntry();render();});
+window.courseReport?.onResult(result=>{reportOperationError=result?.ok?'':result?.error||'自动上传未完成，请检查官网提示';void loadReports();});
 
 
 

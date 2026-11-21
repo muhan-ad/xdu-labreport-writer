@@ -60,14 +60,14 @@ class ConcaveReportTests(unittest.TestCase):
             with patch.dict('os.environ',{'LAB_POLISH':'','LAB_CUSTOM_QUIZ':'','LAB_JOB_INPUT':'','LAB_DATA_PHOTO':'','LAB_VARIANT_SELECTION':''}):
                 gen._generate_docx(self.data,str(out))
             doc=Document(out)
-            self.assertEqual([(len(t.rows),len(t.columns)) for t in doc.tables],[(2,9),(4,9),(4,7)])
+            self.assertEqual([(len(t.rows),len(t.columns)) for t in doc.tables],[(2,9),(4,4)])
             xml=''.join(doc.element.itertext())
-            for phrase in ['表1 自准法测量凸透镜焦距','表2 自准法测量凹透镜焦距','表3 物像法测量凹透镜焦距','15.01','独立','只计算三次焦距的平均值']:
+            for phrase in ['自准法凸透镜焦距原始读数见记录照片','自准法凹透镜焦距计算结果','物像法凹透镜焦距计算结果','15.01','独立','只计算三次焦距的平均值']:
                 self.assertIn(phrase,xml)
             for phrase in ['处于本实验的不确定度水平之内','说明测量自洽','%%DATA:']:
                 self.assertNotIn(phrase,xml)
             cells=[''.join(c._tc.itertext()) for row in doc.tables[1].rows for c in row.cells]
-            self.assertIn('9.02',''.join(cells));self.assertIn('24.03',''.join(cells))
+            self.assertNotIn('像屏',''.join(cells));self.assertIn('6.02',''.join(cells));self.assertIn('10.03',''.join(cells))
             self.assertTrue(doc.element.xpath('.//m:oMath'))
 
 if __name__=='__main__':unittest.main()

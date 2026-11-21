@@ -34,13 +34,17 @@
       "name": "表1 磁感应强度的测量（I = 10 mA，9 组）",
       "fields": [
         {
-          "key": "t1_im",
-          "label": "励磁电流 I_m",
+          "key": "t1_im_a",
+          "label": "表1 励磁电流 Iₘ",
           "type": "array",
           "length": 9,
-          "unit": "mA",
+          "unit": "A",
           "required": true,
-          "default": null
+          "default": null,
+          "legacyKey": "t1_im",
+          "legacyScale": 0.001,
+          "minimum": 0,
+          "maximum": 1
         },
         {
           "key": "t1_u1",

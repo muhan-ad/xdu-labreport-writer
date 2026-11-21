@@ -5,16 +5,19 @@
       "name": "实验参数",
       "fields": [
         {
-          "key": "L",
+          "key": "L_cm",
           "label": "单缝到探测器距离 L",
           "type": "number",
-          "unit": "mm",
+          "unit": "cm",
           "required": true,
-          "default": null
+          "default": null,
+          "legacyKey": "L",
+          "legacyScale": 0.1,
+          "exclusiveMinimum": 80
         },
         {
           "key": "lambda_nm",
-          "label": "激光标称波长 λ",
+          "label": "激光标称波长 λ（实验书参考值 650 nm）",
           "type": "number",
           "unit": "nm",
           "default": null,

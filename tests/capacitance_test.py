@@ -113,6 +113,6 @@ class CapacitanceTests(unittest.TestCase):
                 self.assertNotIn('%%DATA:',content)
                 for bad in ['10.48','4.8%','15.98 s','0.990']:self.assertNotIn(bad,content)
             doc=Document(output)
-            self.assertEqual(doc.tables[0].rows[3].cells[1].text,'0.0995')
+            self.assertEqual(doc.tables[0].rows[1].cells[1].text,'0.0995')
 
 if __name__=='__main__':unittest.main()

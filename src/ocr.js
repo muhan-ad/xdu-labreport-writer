@@ -139,8 +139,8 @@ async function saveOcrSettings(settings) {
     settings.visionApiUrl = $('inputVisionApiUrl').value.trim();
   }
   settings.embedDataPhoto = $('chkEmbedDataPhoto').checked;
-  if (settings.visionProvider === 'custom' && !/^https:\/\//i.test(settings.visionApiUrl)) {
-    showToast('error', '识图地址无效', '自定义识图服务必须使用 HTTPS');
+  if (settings.visionProvider === 'custom' && !/^https?:\/\//i.test(settings.visionApiUrl)) {
+    showToast('error', '识图地址无效', '自定义识图服务地址须使用 HTTP 或 HTTPS');
     return false;
   }
   const key = $('inputVisionApiKey').value.trim();

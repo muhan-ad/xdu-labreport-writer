@@ -372,7 +372,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
         self.send_header('X-Frame-Options', 'DENY')
-        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
+        self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-src labapp:; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'none'")
         if hasattr(self, 'sid'):
             self.send_header('Set-Cookie', f'course_sid_{self.server.server_port}={self.sid}; HttpOnly; SameSite=Strict; Path=/')
         self.end_headers()
