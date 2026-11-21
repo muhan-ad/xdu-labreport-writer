@@ -11,12 +11,12 @@ export class AppUpdatesView{
  constructor(port:AppUpdatePort={...appUpdates,confirm:async()=>false}){this.port=port;}
  get isSaving(){return this.busy;}
  leave(){this.generation++;this.controller?.abort();this.controller=null;this.life?.abort();this.host=null;this.busy=false;}
- mount(host:HTMLElement){
+ mount(host:HTMLElement,checkOnOpen=false){
   this.leave();this.host=host;this.life=new AbortController();const generation=this.generation;this.busy=true;this.ready=false;
   host.innerHTML='<section class="panel"><h2>应用更新</h2><p data-app-version></p><div class="ai-inline"><button class="button" data-app-update="check">检查应用更新</button><button class="button secondary" data-app-update="clear" hidden>清理下载缓存</button><button class="button secondary" data-app-update="stop" hidden>停止</button></div><div data-app-summary></div><pre class="app-update-notes" data-app-notes></pre><div class="ai-inline"><button class="button" data-app-update="download" hidden>下载安装包</button><button class="button" data-app-update="install" hidden>安装更新</button><button class="button secondary" data-app-update="settings" hidden>打开系统安装授权</button></div><p data-app-status role="status"></p></section>';
   host.addEventListener('click',e=>{const action=(e.target as Element).closest<HTMLButtonElement>('[data-app-update]')?.dataset.appUpdate;if(action==='stop'){this.controller?.abort();return;}if(action)void this.action(action);},{signal:this.life.signal});
   this.controls();if(!this.port.available()){this.busy=false;this.message('当前平台暂不支持应用内更新');this.controls();return;}
-  void this.port.info().then(info=>{if(generation!==this.generation)return;this.cached=info.hasCache;if(!info.hasCache)this.candidate=null;host.querySelector('[data-app-version]')!.textContent='当前版本：'+info.version;this.ready=true;this.summary();}).catch(()=>{if(generation===this.generation)this.message('当前应用信息读取失败，请重新打开重试');}).finally(()=>{if(generation===this.generation){this.busy=false;this.controls();}});
+  void this.port.info().then(info=>{if(generation!==this.generation)return;this.cached=info.hasCache;if(!info.hasCache)this.candidate=null;host.querySelector('[data-app-version]')!.textContent='当前版本：'+info.version;this.ready=true;this.summary();}).catch(()=>{if(generation===this.generation)this.message('当前应用信息读取失败，请重新打开重试');}).finally(()=>{if(generation===this.generation){this.busy=false;this.controls();if(checkOnOpen&&this.ready)void this.action('check');}});
  }
  private message(text:string){if(this.host)this.host.querySelector('[data-app-status]')!.textContent=text;}
  private summary(){if(!this.host)return;this.host.querySelector('[data-app-summary]')!.textContent=this.manifest?'版本 '+this.manifest.version+' · '+(this.manifest.size/1024/1024).toFixed(1)+' MB':'';this.host.querySelector('[data-app-notes]')!.textContent=this.manifest?.notes??'';}

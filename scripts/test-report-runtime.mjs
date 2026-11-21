@@ -43,7 +43,12 @@ async function main() {
     ).experiments;
   const option=name=>{const i=process.argv.indexOf(name);if(i<0)return null;if(!process.argv[i+1]||process.argv[i+1].startsWith('--'))throw Error('Missing '+name+' value');return process.argv[i+1];};
   const experimentId=option('--experiment');
-  const selected = experimentId?catalog.filter(e=>e.id===experimentId):process.argv.includes("--all")
+  const observationCases = process.argv.includes("--observations") ? {
+    "光的偏振特性测量": {data:{polarizer_1_change:0, polarizer_1_extinction:1, polarizer_1_state:1, plate_45_state:3}, expected:["表1 偏振光光强变化记录","表3 用 1/4 波片观察光强变化","椭圆偏振光"]},
+    "光的偏振特性测量（第二学期）": {data:{output_state_0:1,output_state_30:3,output_state_45:2}, expected:["出射光偏振态观察","圆偏振光"]},
+    "电表的改装与校准": {data:{rs_measured:51,rh_measured:9600}, expected:["实测分流电阻","实测分压电阻","量程 1 V"]},
+  } : null;
+  const selected = observationCases ? catalog.filter(e=>Object.hasOwn(observationCases,e.sourceId)) : experimentId?catalog.filter(e=>e.id===experimentId):process.argv.includes("--all")
     ? catalog
     : catalog.filter((e) => /直螺线管|凹透镜|电路的稳态/.test(e.sourceId));
   const disableMode=process.argv.includes("--sections");
@@ -66,7 +71,7 @@ async function main() {
         "mobile_job",
         JSON.stringify({
           experimentId: exp.id,
-          data: samples[exp.id],
+          data: {...samples[exp.id], ...observationCases?.[exp.sourceId]?.data},
           profile: {
             name: "移动端验证",
             studentId: "001234",
@@ -85,6 +90,7 @@ async function main() {
       assert.equal(report.copyMath.total,report.formulaCount);assert.equal(report.copyMath.unmapped,0,'unmapped formulas: '+exp.name);for(const value of Object.values(report.copySections)){assert.ok(value.length<=20000);assert.ok(!value.includes('移动端验证'));}assert.ok(report.copySections.analysis||report.copyIssues.analysis);assert.ok(report.copySections.quiz||report.copyIssues.quiz);
       if(disableMode){const disabled=Object.keys(variantCatalog[exp.id]);for(const paragraph of report.paragraphs){const title=paragraph.replace(/^[一二三四五六七八九十0-9、.（）()\s]+/,'').replace(/^课后思考题$/,'思考题');assert.ok(!disabled.includes(title),'Disabled heading survives: '+exp.name+' '+title);}}
       assert.ok(report.text.includes("移动端验证"));
+      for (const term of observationCases?.[exp.sourceId]?.expected ?? []) assert.ok(report.text.includes(term), exp.name + ": " + term);
       py.globals.set('pagination_path',report.path);
       const pagination=JSON.parse(await py.runPythonAsync(`
 import xml.etree.ElementTree as pagination_xml

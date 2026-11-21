@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';
 import {ReportEngine} from '../src/engine/client.ts';import {ReportQueue} from '../src/domain/report-queue.ts';
 const job={experimentId:'abcdef123456',data:{},profile:{name:'one',studentId:'001',className:''},date:'2026-10-27',options:{}};
 const tick=()=>new Promise(r=>setImmediate(r));
-async function fake(run){const old=globalThis.Worker,location=globalThis.location,workers=[];globalThis.location={href:'https://localhost/'};globalThis.Worker=class{dead=false;defer=false;fail=false;constructor(){workers.push(this)}terminate(){assert.equal(this.dead,false,'Worker must be disposed once');this.dead=true}postMessage({job}){if(this.fail)throw Error('clone failed');if(this.defer)return;queueMicrotask(()=>this.onmessage?.({data:job.mode==='context'?{type:'context-result',context:{experimentId:job.experimentId}}:job.mode==='diagnostic'?{type:'diagnostic-result',diagnostic:{complete:true}}:{type:'result',metadata:{name:job.profile.name}}}))}};try{await run(workers)}finally{globalThis.Worker=old;if(location===undefined)delete globalThis.location;else globalThis.location=location}}
+async function fake(run){const old=globalThis.Worker,location=globalThis.location,workers=[];globalThis.location={href:'https://localhost/'};globalThis.Worker=class{dead=false;defer=false;fail=false;constructor(){workers.push(this)}terminate(){assert.equal(this.dead,false,'Worker must be disposed once');this.dead=true}postMessage({job}){if(this.fail)throw Error('clone failed');if(this.defer)return;queueMicrotask(()=>this.onmessage?.({data:job.mode==='context'?{type:'context-result',context:{experimentId:job.experimentId}}:job.mode==='diagnostic'?{type:'diagnostic-result',diagnostic:{complete:true}}:job.mode==='warmup'?{type:'warmup-ready'}:{type:'result',metadata:{name:job.profile.name}}}))}};try{await run(workers)}finally{globalThis.Worker=old;if(location===undefined)delete globalThis.location;else globalThis.location=location}}
 test('only explicit queue reuse keeps one successful Worker across context and different report jobs; release is idempotent',()=>fake(async workers=>{
  const engine=new ReportEngine(async()=>null,true,true);await engine.calculate(job,()=>{});assert.equal(workers.length,1);assert.equal(workers[0].dead,false);assert.equal((await engine.generate({...job,profile:{...job.profile,name:'two'}},()=>{})).metadata.name,'two');assert.equal(workers.length,1);engine.releaseIdle();engine.releaseIdle();assert.equal(workers[0].dead,true);
  for(const engine of [new ReportEngine(async()=>null),new ReportEngine(async()=>null,false,true),new ReportEngine(async()=>null,true)]){const n=workers.length;await engine.generate(job,()=>{});await engine.generate(job,()=>{});assert.equal(workers.length,n+2);assert.ok(workers.slice(n).every(w=>w.dead))}
@@ -24,4 +24,15 @@ test('queue pause releases between tasks, never during current work, and complet
 });
 test('an idle Worker error discards the cached runtime before the next job',()=>fake(async workers=>{
  const engine=new ReportEngine(async()=>null,true,true);await engine.generate(job,()=>{});workers[0].onerror({preventDefault(){}});assert.equal(workers[0].dead,true);await engine.generate(job,()=>{});assert.equal(workers.length,2);workers[1].onmessage({data:{type:'error',message:'idle failure'}});assert.equal(workers[1].dead,true);await engine.generate(job,()=>{});assert.equal(workers.length,3);engine.cancel();
+}));
+
+test('interactive generation waits for prewarming and uses the same Worker again',()=>fake(async workers=>{
+ const engine=new ReportEngine(async()=>null,false,'interactive');
+ try{
+  engine.prewarm();
+  await engine.generate(job,()=>{});
+  await engine.generate(job,()=>{});
+  assert.equal(workers.length,1);
+  assert.equal(workers[0].dead,false);
+ }finally{engine.cancel()}
 }));

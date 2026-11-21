@@ -1,5 +1,5 @@
 import {execFileSync} from 'node:child_process';
-export const android=(...a)=>execFileSync('E:/tools/app-maker/android-sdk/platform-tools/adb.exe',['-s','emulator-5560',...a],{windowsHide:true,maxBuffer:32*1024*1024});
+export const android=(...a)=>execFileSync('E:/tools/app-maker/android-sdk/platform-tools/adb.exe',['-s',process.env.LABMAKER_TEST_ANDROID_SERIAL||'emulator-5560',...a],{windowsHide:true,maxBuffer:32*1024*1024});
 export const pause=ms=>new Promise(r=>setTimeout(r,ms));
 export async function connectAndroid(port=9241,userId=Number(android('shell','am','get-current-user').toString().trim()),packageName='com.labmaker.app'){
  if(!/^com\.labmaker\.app(?:\.acceptance)?$/.test(packageName))throw Error('Unsupported acceptance package');

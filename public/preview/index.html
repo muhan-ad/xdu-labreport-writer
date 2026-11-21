@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data: blob:; font-src data: blob:; connect-src data: blob:; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <title>报告预览</title>
     <style>
@@ -16,7 +16,15 @@
         color: #111;
       }
       #report {
-        padding: 12px 0;
+        position: relative;
+        overflow: hidden;
+      }
+      #paper {
+        position: absolute;
+        top: 12px;
+        left: 0;
+        width: 210mm;
+        transform-origin: top left;
       }
       .docx-wrapper {
         padding: 0 !important;
@@ -24,9 +32,7 @@
       }
       .docx-wrapper > section.docx {
         box-shadow: none !important;
-        padding: 24px !important;
         margin: 0 0 12px !important;
-        width: 100% !important;
         min-height: 0 !important;
         box-sizing: border-box;
         overflow-wrap: anywhere;
@@ -47,12 +53,49 @@
       a {
         pointer-events: none;
       }
+      .pdf-staging {
+        position: absolute;
+        left: -10000px;
+        top: 0;
+      }
+      #pdf-source {
+        position: absolute;
+        width: 642px;
+        left: 0;
+        top: 0;
+        pointer-events: none;
+      }
+      #pdf-source .docx-wrapper > section.docx {
+        width: 100% !important;
+        min-height: 0 !important;
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+      .pdf-capture-sheet {
+        position: absolute;
+        width: 794px;
+        height: 1123px;
+        box-sizing: border-box;
+        padding: 76px;
+        background: white;
+      }
+      .pdf-capture-clip {
+        position: relative;
+        overflow: hidden;
+      }
+      .pdf-preview-page {
+        display: block;
+        width: 100%;
+        margin: 0 0 12px;
+        background: #fff;
+      }
     </style>
   </head>
   <body>
-    <main id="report"></main>
+    <main id="report"><div id="paper"></div></main>
     <script src="jszip.min.js"></script>
     <script src="docx-preview.min.js"></script>
+    <script src="pdf-pages.bundle.js"></script>
     <script src="preview.js"></script>
   </body>
 </html>

@@ -1,4 +1,4 @@
-import {importMeasurements,validRecord} from './model.ts';
+import {importMeasurements,restoreDraft,validRecord} from './model.ts';
 import type {Experiment,RecordData} from './types.ts';
 import {isSoundExperiment} from './sound-phase.ts';
 export interface DebugBackup{version:1;createdAt:string;records:RecordData[];}
@@ -30,7 +30,10 @@ export async function restoreDebugData(experiments:Experiment[],backup:DebugBack
  experiments=experiments.filter(exp=>backup.records.some(r=>r.experimentId===exp.id));
  const originals:RecordData[]=[];
  for(const exp of experiments){const record=await port.read(exp);if(!validRecord(exp,record))throw Error(exp.name+'：当前记录未能核实，未执行恢复');originals.push(structuredClone(record));}
- await replaceDebugRecords(experiments,experiments.map(e=>backup.records.find(r=>r.experimentId===e.id)!),originals,port,progress,'restore');
+ await replaceDebugRecords(experiments,experiments.map(exp=>{
+  const record=backup.records.find(r=>r.experimentId===exp.id)!;
+  return {...record,draft:restoreDraft(exp.schema,record.draft) as RecordData['draft']};
+ }),originals,port,progress,'restore');
 }
 async function replaceDebugRecords(experiments:Experiment[],next:RecordData[],originals:RecordData[],port:DebugDataPort,progress:(text:string)=>void,phase:'fill'|'restore'){
  const interrupted=await port.interrupted();await port.pending(phase);

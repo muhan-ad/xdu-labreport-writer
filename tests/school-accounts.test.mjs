@@ -4,6 +4,7 @@ test('account summaries accept explicit school systems and locked rows but never
  const account={id:crypto.randomUUID(),system:'course',account:'12345678',label:'选课测试',locked:false};
  assert.deepEqual(parseSchoolAccounts({accounts:[account]}),[account]);
  const locked={...account,id:crypto.randomUUID(),system:'report',account:'',label:'无法解密的账号',locked:true};assert.deepEqual(parseSchoolAccounts({accounts:[account,locked]}),[account,locked]);
- for(const row of [{...account,password:'must not reach UI'},{...account,system:'simulation'},{...account,id:'../escape'},{...account,account:''},{...locked,account:'12345678'},{...account,locked:'false'}])assert.throws(()=>parseSchoolAccounts({accounts:[row]}));
+ const report={...account,system:'report',passwordLength:8};assert.deepEqual(parseSchoolAccounts({accounts:[report]}),[report]);
+ for(const row of [{...account,password:'must not reach UI'},{...account,system:'simulation'},{...account,id:'../escape'},{...account,account:''},{...locked,account:'12345678'},{...account,locked:'false'},{...account,passwordLength:8},{...locked,passwordLength:8},{...report,passwordLength:0},{...report,passwordLength:201},{...report,passwordLength:'8'}])assert.throws(()=>parseSchoolAccounts({accounts:[row]}));
  assert.throws(()=>parseSchoolAccounts({accounts:[account,account]}));assert.throws(()=>parseSchoolAccounts({accounts:Array(51).fill(account)}));assert.equal(schoolSystem('academic'),true);assert.equal(schoolSystem('quiz'),false);
 });

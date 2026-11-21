@@ -16,7 +16,7 @@ import {
   defaultReportSettings,
 } from "./reports.ts";
 import type { Experiment, RecordData, Photo, Profile } from "./types.ts";
-import { recordBlank, validRecord, cleanProfile } from "./model.ts";
+import { recordBlank, validRecord, cleanProfile, restoreDraft } from "./model.ts";
 export interface Store {
   read(key: string): Promise<string | null>;
   write(key: string, value: string): Promise<void>;
@@ -202,7 +202,9 @@ export class Repository {
       const r = await this.read(key, (raw): raw is RecordData =>
         validRecord(exp, raw),
       );
-      return { record: r.value ?? recordBlank(exp), warning: [recovered ? '上次清除未完成，已恢复原测量数据，请核对。' : '', r.warning].filter(Boolean).join(' ') };
+      const record = r.value ?? recordBlank(exp);
+      record.draft = restoreDraft(exp.schema, record.draft) as RecordData['draft'];
+      return { record, warning: [recovered ? '上次清除未完成，已恢复原测量数据，请核对。' : '', r.warning].filter(Boolean).join(' ') };
     });
   }
   private resetJournalValid(exp:Experiment, value:unknown):value is {state:'pending';record:RecordData}|{state:'committed'} {
@@ -249,6 +251,7 @@ export class Repository {
     const key = `record-${exp.id}`,
       epoch = this.epochs.get(key) ?? 0,
       payload = structuredClone(record);
+    payload.draft = restoreDraft(exp.schema, payload.draft) as RecordData["draft"];
     if (!validRecord(exp, payload))
       return Promise.reject(Error("表单结构异常，未写入数据"));
     return this.queue(key, async () => {

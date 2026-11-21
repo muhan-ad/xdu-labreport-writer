@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {defaultSchoolPreload,validSchoolPreload,preloadCourseAccount,preloadReportAccount} from '../src/domain/school-preload.ts';import {Repository} from '../src/domain/repository.ts';
+import {defaultSchoolPreload,validSchoolPreload,preloadCourseAccount,preloadReportAccount,startupSchoolAccount} from '../src/domain/school-preload.ts';import {Repository} from '../src/domain/repository.ts';
 const a='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',b='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',rows=[{id:a,system:'course',account:'12345678',label:'A',locked:false},{id:b,system:'report',account:'87654321',label:'B',locked:false}];
 const fixture=()=>{const files=new Map(),store={read:async k=>files.get(k)??null,write:async(k,v)=>files.set(k,v),remove:async k=>files.delete(k)};return {files,store,repo:new Repository(store)}};
 test('old installs do not enable automatic login or write a migration record',async()=>{const {repo,files}=fixture();assert.deepEqual(await repo.loadSchoolPreload(),defaultSchoolPreload());assert.equal(preloadCourseAccount(defaultSchoolPreload(),rows),null);assert.equal(files.size,0);});
@@ -9,3 +9,15 @@ test('damaged copies never silently select another account; explicit reset safel
 test('partial reset cannot revive an older enabled account',async()=>{const {repo,store,files}=fixture();await repo.saveSchoolPreload({version:1,course:a});files.set('school-preload-a','damaged');const original=store.write;store.write=async(k,v)=>{if(k==='school-preload-b')throw Error('disk');return original(k,v)};await assert.rejects(repo.resetSchoolPreload());assert.equal((await repo.loadSchoolPreload()).course,null);});
 
 test('report and course choices are independent and legacy preferences do not auto-enable reports',async()=>{const {repo,store}=fixture();await repo.saveSchoolPreload({version:1,course:a});const old=await new Repository(store).loadSchoolPreload();assert.equal(preloadReportAccount(old,rows),null);const both={...old,report:b};await repo.saveSchoolPreload(both);assert.deepEqual(await new Repository(store).loadSchoolPreload(),both);assert.equal(preloadCourseAccount(both,rows)?.id,a);assert.equal(preloadReportAccount(both,rows)?.id,b);assert.equal(preloadReportAccount({...both,report:a},rows),null);assert.equal(preloadReportAccount(both,[{...rows[1],locked:true}]),null);assert.equal(validSchoolPreload({...both,report:'bad'}),false);});
+
+test('startup restores a unique saved account and requires a selection when several exist',()=>{
+ const pref=defaultSchoolPreload();
+ const second={...rows[0],id:'33333333-3333-4333-8333-333333333333'};
+ const academic={...second,system:'academic'};
+ assert.equal(startupSchoolAccount(pref,[...rows,academic],'academic'),academic);
+ assert.equal(startupSchoolAccount(pref,rows,'course'),rows[0]);
+ assert.equal(startupSchoolAccount(pref,[...rows,second],'course'),null);
+ assert.equal(startupSchoolAccount({...pref,course:second.id},[...rows,second],'course'),second);
+ assert.equal(startupSchoolAccount({...pref,course:second.id},rows,'course'),null);
+ assert.equal(startupSchoolAccount(pref,[{...rows[0],locked:true}],'course'),null);
+});

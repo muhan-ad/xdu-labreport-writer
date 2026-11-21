@@ -56,14 +56,14 @@ export class DataUpdateStore {
   return {payload,ref,floor,pointer};
  }
  inspect(envelope:DataEnvelope){const copy={manifest:structuredClone(envelope.manifest),body:envelope.body};return this.serial(async()=>{const checked=await this.inspectNow(copy);return {version:checked.payload.dataVersion,bytes:copy.manifest.size,notes:copy.manifest.notes};});}
- install(envelope:DataEnvelope,preflight:(payload:DataPayload)=>Promise<{complete:boolean;problems?:unknown[]}>,signal:AbortSignal,onCommit:()=>void=()=>{}){
+ install(envelope:DataEnvelope,preflight:((payload:DataPayload)=>Promise<{complete:boolean;problems?:unknown[]}>)|null,signal:AbortSignal,onCommit:()=>void=()=>{}){
   const copy={manifest:structuredClone(envelope.manifest),body:envelope.body},epoch=this.epoch;
   return this.serial(async()=>{
    const guard=()=>{if(signal.aborted||epoch!==this.epoch)throw Error('更新操作已停止');};guard();
    const checked=await this.inspectNow(copy);guard();
    const alreadyReferenced=[checked.floor.value?.ref,checked.pointer.value?.active,checked.pointer.value?.previous].some(r=>r?.sha===checked.ref.sha);let commitStarted=false;
    try{const encoded=JSON.stringify(copy);await this.writeSlot('data-bundle-'+checked.ref.sha+'-a',encoded);await this.writeSlot('data-bundle-'+checked.ref.sha+'-b',encoded);guard();
-   const probe=await preflight(checked.payload);guard();if(!probe.complete||probe.problems?.length)throw Error('新资源运行检查未通过，原资源继续使用');
+   if(preflight){const probe=await preflight(checked.payload);guard();if(!probe.complete||probe.problems?.length)throw Error('新资源运行检查未通过，原资源继续使用');}
    const prior=await this.loadNow();guard();onCommit();commitStarted=true;
    // High-water mark is durable in both slots before publishing a new active pointer.
    await this.both('data-floor',{seq:(checked.floor.value?.seq??0)+1,ref:checked.ref});

@@ -31,8 +31,8 @@
       "sha256": "74fef16f229c3280f386ace367f36ac5ad8597ebabef45c6cf8bc2fa8aa3be70"
     },
     "LabMakerSansSC.ttf": {
-      "bytes": 456812,
-      "sha256": "9367fd90aecb77f500f1b662fd48b1dcabe3ce60ece58350984d3422e7670b29"
+      "bytes": 457044,
+      "sha256": "729baf2e8339752751a582362ea08edcc6415d17420c37c38473748525987674"
     },
     "latex2mathml-3.81.0-py3-none-any.whl": {
       "bytes": 79185,
@@ -111,8 +111,8 @@
       "sha256": "5a9c9286f6c03a4d16ee4ced15d511097568e1e41329d3499b597ecd7f1d317e"
     },
     "report-sources.json": {
-      "bytes": 1756009,
-      "sha256": "b6cf9c77832d8b8da0ace35aa79c7d4b328ac5341b30a6a5a4aee51d6907b413"
+      "bytes": 1785900,
+      "sha256": "bac477f5112e4feef2df8fb36491573e15fa1fcdb60a875537db2fd768d38322"
     },
     "six-1.17.0-py2.py3-none-any.whl": {
       "bytes": 11050,
@@ -123,12 +123,12 @@
       "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
     },
     "runner.py": {
-      "bytes": 44201,
-      "sha256": "243c91b77e4e7bb8990159b3d1fe41382ead01921273e8d6a53dff67f6133842"
+      "bytes": 43977,
+      "sha256": "142131bb52e96ff7be7351d63c2d4c4e0656fa36364cf97672639eb1a4fe7a32"
     },
     "catalog.json": {
-      "bytes": 42804,
-      "sha256": "dc903d7a5631b7ad97344921ea972c93a629028fcf463e8b9684e37f4fd6401d"
+      "bytes": 52594,
+      "sha256": "e71aab047889677842471dd9f00159ebc6be5dd1d6a4dbea6b73891d76946291"
     },
     "package.json": {
       "bytes": 19,

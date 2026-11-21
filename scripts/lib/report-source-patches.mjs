@@ -79,7 +79,7 @@ export function patchMobileSources(input){
    if(text.includes(note+call))text=text.replace(note+call,call);
    replace(call,'    doc.add_paragraph("相邻位相记录点：" + ("同相与反相交替（半波长）" if r2["phase_step"] == 0.5 else "相同相位（一个波长）"))\n'+call);
   }
-  if(!text.includes('phase_step = data.get("phase_step")')||!(text.includes('divisor = 3 if r["phase_step"] == 0.5 else 6')||text.includes('# MOBILE_SOUND_WATER_LENGTH_V1')))throw Error(experiment+'位相法适配不完整');
+  if(!text.includes('phase_step = data.get("phase_step"')||!(text.includes('divisor = 3 if r["phase_step"] == 0.5 else 6')||text.includes('# MOBILE_SOUND_WATER_LENGTH_V1')))throw Error(experiment+'位相法适配不完整');
   sources[key]=text;
  }
  for(const experiment of ['声速的测量（空气）','声速的测量（水中）']){
@@ -103,7 +103,7 @@ export function patchMobileSources(input){
    const f=group.fields.find(x=>x.key==='L1'||x.key==='L2');
    if(!f)continue;
    if(f.type!=='array'||![10,12].includes(f.length))throw Error('水中声速数据结构已变化，请重新核对');
-   Object.assign(f,{length:10,variableLength:true,minLength:10,maxLength:12,allowedLengths:[10,12]});
+   if(!f.variableLength || f.maxLength <= 12) Object.assign(f,{length:10,variableLength:true,minLength:10,maxLength:12,allowedLengths:[10,12]});
    group.name=group.name.replace('（12 次）','（10 或 12 次）');
   }
   sources[waterSchema]=JSON.stringify(schema,null,2)+'\n';

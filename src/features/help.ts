@@ -1,6 +1,4 @@
 import schoolFaq from '../data/school-faq.json';
-import {TypingSound} from '../platform/typing-sound.ts';
-import {HelpDisclosure} from './help-disclosure.ts';
 export const helpEntries=[
  {group:'guide',title:'生成实验报告',text:'选择实验并填写实际测量数据，保存后打开报告，选择章节组合并生成。支持离线生成；导出后用 Word 或 WPS 检查排版与结果。'},
  {group:'guide',title:'一站通',text:'先连接并认证校园网，再登录学校物理实验系统读取课表。教务、实验报告系统使用各自的登录入口。选退课和报告上传需要最后确认。'},
@@ -26,39 +24,45 @@ export const helpEntries=[
  {group:'notice',title:'图片标注',text:'某些实验要求图片标注学生信息，有此要求时请在 Word 或 WPS 中编辑图片添加。'},
 ] as const;
 const esc=(v:string)=>v.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
+const tabs = [['guide','使用说明'],['faq','应用报错'],['school','选课与实验'],['notice','必读公告']] as const;
+type HelpGroup = typeof tabs[number][0];
+const helpSections = Object.fromEntries(tabs.map(([group])=>[
+ group,
+ group==='school' ? schoolFaq : [{
+  title:'',
+  items:helpEntries.filter(entry=>entry.group===group).map(entry=>({question:entry.title,answer:entry.text})),
+ }],
+])) as Record<HelpGroup, {title:string;items:{question:string;answer:string}[]}[]>;
+const isHelpGroup=(value:string):value is HelpGroup=>tabs.some(([group])=>group===value);
 export class HelpView {
- private host:HTMLElement|null=null;private life:AbortController|null=null;private group='guide';private query='';
- private sound:TypingSound;private disclosure:HelpDisclosure;
- constructor(sound?:TypingSound){
-  let enabled=true;try{enabled=localStorage.getItem('guide-typing-sound')!=='off';}catch{}
-  this.sound=sound??new TypingSound({enabled,changed:()=>this.soundControl()});this.disclosure=new HelpDisclosure(this.sound);
- }
- leave(){this.life?.abort();this.disclosure.reset();this.host=null;this.sound.dispose();}
+ private host:HTMLElement|null=null;
+ private life:AbortController|null=null;
+ private group:HelpGroup='guide';
+ constructor(private showAnswer:(question:string,answer:string)=>void){}
+ leave(){this.life?.abort();this.host=null;}
  mount(host:HTMLElement,group='guide'){
-  this.leave();this.host=host;this.group=['guide','faq','notice','school'].includes(group)?group:'guide';this.query='';this.life=new AbortController();
-  host.innerHTML='<section class="panel"><div class="ai-inline" data-help-tabs></div><div class="help-tools"><input type="search" data-help-search aria-label="搜索当前帮助内容" placeholder="搜索帮助"><button class="button secondary compact" data-help-sound hidden></button></div><p class="help-sound-status" data-help-sound-status role="status"></p><div data-help-content></div></section>';
-  host.addEventListener('input',e=>{if((e.target as HTMLElement).hasAttribute('data-help-search')){this.query=(e.target as HTMLInputElement).value;this.render();}},{signal:this.life.signal});
-  host.addEventListener('click',e=>{
-   const element=(e.target as HTMLElement),group=element.closest<HTMLElement>('[data-help-group]')?.dataset.helpGroup;
-   if(group){this.group=group;this.query='';host.querySelector<HTMLInputElement>('[data-help-search]')!.value='';this.render();return;}
-   if(element.closest('[data-help-sound]')){
-    this.sound.setEnabled(this.sound.state==='failed'||!this.sound.enabled);try{localStorage.setItem('guide-typing-sound',this.sound.enabled?'on':'off');}catch{}
-    if(this.sound.enabled)void this.sound.prepare().then(ready=>{if(ready&&this.host===host)this.sound.play();});this.soundControl();return;
-   }
-   if(element.closest('[data-help-complete]')){this.disclosure.stop();return;}
-   const summary=element.closest('summary'),details=summary?.parentElement as HTMLDetailsElement|null;
-   if(details?.querySelector('[data-help-answer]')){e.preventDefault();if(!details.open)void this.sound.prepare();this.disclosure.toggle(details);}
+  this.leave();
+  this.host=host;
+  this.group=isHelpGroup(group)?group:'guide';
+  this.life=new AbortController();
+  host.innerHTML='<section class="panel"><div class="ai-inline" data-help-tabs></div><div data-help-content></div></section>';
+  host.addEventListener('click',event=>{
+   const element=event.target;
+   if(!(element instanceof Element))return;
+   const group=element.closest<HTMLElement>('[data-help-group]')?.dataset.helpGroup;
+   if(group&&isHelpGroup(group)){this.group=group;this.render();return;}
+   const question=element.closest<HTMLButtonElement>('[data-help-question]')?.dataset.helpQuestion;
+   if(question===undefined)return;
+   const [groupIndex,itemIndex]=question.split(':').map(Number);
+   const item=helpSections[this.group][groupIndex]?.items[itemIndex];
+   if(item)this.showAnswer(item.question,item.answer);
   },{signal:this.life.signal});
-  host.addEventListener('toggle',e=>{const details=e.target;if(details instanceof HTMLDetailsElement&&details.querySelector('[data-help-answer]')){if(details.open)this.disclosure.open(details);else this.disclosure.stop();}},{capture:true,signal:this.life.signal});
-  document.addEventListener('visibilitychange',()=>{if(document.hidden){this.disclosure.reset();this.sound.pause();}},{signal:this.life.signal});
   this.render();
  }
- private soundControl(){if(!this.host)return;const button=this.host.querySelector<HTMLButtonElement>('[data-help-sound]')!;button.hidden=this.group!=='school';button.dataset.soundState=this.sound.state;button.textContent=this.sound.enabled?(this.sound.state==='failed'?'音效：重试':'音效：开'):'音效：关';button.setAttribute('aria-pressed',String(this.sound.enabled));this.host.querySelector('[data-help-sound-status]')!.textContent=this.group==='school'&&this.sound.state==='failed'?'音效暂不可用，可重试；文字正常显示。':'';}
- private render(){if(!this.host)return;this.host.querySelector('[data-help-tabs]')!.innerHTML=[['guide','使用说明'],['faq','应用报错'],['school','选课与实验'],['notice','必读公告']].map(([group,label])=>`<button class="button ${this.group===group?'':'secondary'} compact" data-help-group="${group}" aria-pressed="${this.group===group}">${label}</button>`).join('');const query=this.query.trim().toLocaleLowerCase();
-  this.disclosure.reset();if(this.group!=='school')this.sound.dispose();this.soundControl();const content=this.host.querySelector('[data-help-content]')!;
-  if(this.group==='school'){
-   const groups=schoolFaq.map(group=>({...group,items:group.items.filter(item=>!query||(group.title+' '+item.question+' '+item.answer).toLocaleLowerCase().includes(query))})).filter(group=>group.items.length);
-   content.innerHTML='<p>以下为原版经验问答，具体安排以学校及任课教师通知为准。</p>'+groups.map(group=>`<h3>${esc(group.title)}</h3>${group.items.map(item=>`<details class="report-options"><summary>${esc(item.question)}</summary><p data-help-answer="${esc(item.answer)}">${esc(item.answer)}</p><button class="button secondary compact" data-help-complete hidden>显示全文</button></details>`).join('')}`).join('')+(!groups.length?'<p role="status">没有找到相关内容</p>':'');return;
-  }
-  const rows=helpEntries.filter(e=>e.group===this.group&&(!query||(e.title+' '+e.text).toLocaleLowerCase().includes(query)));content.innerHTML=rows.map(e=>`<details class="report-options" ${this.group==='notice'?'open':''}><summary>${esc(e.title)}</summary><p>${esc(e.text)}</p></details>`).join('')||'<p role="status">没有找到相关内容</p>';}
+ private render(){
+  if(!this.host)return;
+  this.host.querySelector('[data-help-tabs]')!.innerHTML=tabs.map(([group,label])=>`<button class="button ${this.group===group?'':'secondary'} compact" data-help-group="${group}" aria-pressed="${this.group===group}">${label}</button>`).join('');
+  const content=this.host.querySelector('[data-help-content]')!;
+  content.innerHTML=helpSections[this.group].map((section,groupIndex)=>`<section class="help-card-group">${section.title?`<h3>${esc(section.title)}</h3>`:''}${section.items.map((item,itemIndex)=>`<button type="button" class="help-question" data-help-question="${groupIndex}:${itemIndex}" aria-haspopup="dialog"><span>${esc(item.question)}</span><span aria-hidden="true">›</span></button>`).join('')}</section>`).join('');
+ }
 }

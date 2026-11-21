@@ -9,6 +9,7 @@ interface NativeSchoolAccounts {
 const native=registerPlugin<NativeSchoolAccounts>('LabSchoolAccounts');
 function supported(){if(Capacitor.getPlatform()!=='android')throw Error('此平台的本机账号加密存储尚未接入');}
 export const schoolAccounts={
+  available:()=>Capacitor.getPlatform()==='android',
   async list(){supported();return parseSchoolAccounts(await native.list());},
   async save(value:Parameters<NativeSchoolAccounts['save']>[0]){supported();if(!value.confirmed)throw Error('请先确认在本机保存账号');return native.save(value);},
   async remove(id:string,confirmed:boolean){supported();if(!confirmed)throw Error('请确认删除账号');return native.remove({id,confirmed});},

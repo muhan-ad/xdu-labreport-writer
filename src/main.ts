@@ -1,3 +1,6 @@
+import {sequenceSetting, sequenceControls, sequenceValues} from './domain/measurement-sequence.js';
+import {resourceVersionNumber} from './domain/resource-version.ts';
+import './platform/report-fonts.ts';
 import {measurementLabel as math} from './domain/measurement-label.ts';
 import {queueBlocksRoute} from './domain/report-runtime.ts';
 import {editNumericToken} from './domain/entry-tools.ts';
@@ -109,6 +112,7 @@ const esc = (v: unknown) =>
 const icons = {
   back: '<path d="m14 6-6 6 6 6"/>',
   search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>',
+  portal: '<rect x="3" y="3" width="7" height="7" rx="1.2"/><rect x="14" y="3" width="7" height="7" rx="1.2"/><rect x="3" y="14" width="7" height="7" rx="1.2"/><rect x="14" y="14" width="7" height="7" rx="1.2"/>',
   book: '<path d="M4 4h6l2 2 2-2h6v15h-6l-2 2-2-2H4zM12 6v15"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 22v-3a8 8 0 0 1 16 0v3"/>',
   settings:
@@ -189,11 +193,11 @@ const aiFeatures = new AIFeatures({
 });
 const skillsView = new SkillsView(notice, (title,body)=>dialog(title,body,"删除技能",true));
 const schoolAccountsView=new SchoolAccountsView(schoolAccounts,(title,text)=>dialog(title,`<p>${esc(text)}</p>`,"确认",true),notice,{load:()=>repo.loadSchoolPreload(),save:value=>repo.saveSchoolPreload(value),reset:()=>repo.resetSchoolPreload()});
-const helpView=new HelpView();
+const helpView=new HelpView((question,answer)=>{void dialog(question,`<p class="help-answer">${esc(answer)}</p>`,"");});
 const creditsView=new CreditsView(reportCredits);
 const contributionsView=new ContributionsView(experiments,{version:packageInfo.version,list:id=>repo.listVariantLibrary(id),read:(id,key)=>repo.readVariantArchive(id,key),photo:contributionPhoto,upload:contributions.submit,cancel:contributions.cancel,localWord:async id=>{const exp=byId.get(id);if(!exp)throw Error('实验不存在');const loaded=await repo.loadReport(exp),report=loaded.value;if(!report)throw Error('请先生成并保存本机报告');return {name:exp.name+'.docx',bytes:await reportBytes(report)};},confirm:body=>dialog('确认贡献所选内容？',body,'确认上传')});
 const dataUpdatesView=new DataUpdatesView({...dataUpdates,confirm:(title,body)=>dialog(title,`<p>${esc(body)}</p>`,'确认')});
-const resourceCheck = new ResourceCheck(notice,undefined,()=>dialog('刷新报告运行缓存？','<p>核对安装资源后刷新临时缓存，再检查离线报告环境。测量数据、照片、报告、账号和配置保留。</p>','刷新缓存'));
+const resourceCheck = new ResourceCheck(notice,undefined,()=>dialog('刷新报告运行缓存？','<p>核对安装资源后刷新临时缓存。测量数据、照片、报告、账号和配置保留。</p>','刷新缓存'));
 const feedbackView=new FeedbackView(experiments, {...feedback,confirm:(text,experiment)=>dialog('确认提交反馈？',`<p>${esc(experiment)}</p><pre class="ai-history-original">${esc(text)}</pre><p>另附应用版本 ${esc(packageInfo.version)} 和 Android 平台标识。</p>`,'提交反馈')});
 const reportDirectoryView=new ReportDirectoryView(reportDirectory,()=>dialog('清除默认保存目录？','<p>仅清除目录设置，已经保存的文件保留。</p>','清除',true));
 const variantLibraryView=new VariantLibraryView(experiments,{list:id=>repo.listVariantLibrary(id),read:(id,key)=>repo.readVariantArchive(id,key),remove:(id,key)=>repo.removeVariantArchive(id,key),clear:id=>repo.clearVariantLibrary(id,()=>clearVariantLibraryFiles(id)),compatible:entry=>{try{variantArchiveCandidate(entry,(variantTemplates as Record<string,Record<string,unknown>>)[entry.experimentId]);return true;}catch{return false;}},use:async entry=>{const base=(variantTemplates as Record<string,Record<string,unknown>>)[entry.experimentId],value=variantArchiveCandidate(entry,base),current=await repo.loadReportSettings(entry.experimentId);await repo.saveReportSettings(entry.experimentId,appendCustomVariant(current,base,entry.section,value));},import:async entries=>{let imported=0;for(const entry of entries)try{await repo.archiveVariant(entry);imported++;}catch(e){return {imported,total:entries.length,error:(e as Error).message};}return {imported,total:entries.length};},exportDesktop:async entries=>{const file=desktopVariantExport(entries,{experiments,templates:variantTemplates});await exportJson(file.name,file.data,'导出电脑版自建变体');},export:entries=>exportJson('自建变体库',{type:'lab-maker-variant-library',version:1,entries},'导出自建变体库'),confirm:(title,body)=>dialog(title,`<p>${esc(body)}</p>`,'确认',true)},{experiments,templates:variantTemplates});
@@ -209,33 +213,50 @@ const schoolAutoTried=new Set<string>();let schoolAutoBarrier:Promise<unknown>=P
 async function autoLoadSchoolCourse(){
  const epoch=schoolAutoEpoch;if(schoolAutoRunning===epoch)return;schoolAutoRunning=epoch;
  try{
-  const preference=await repo.loadSchoolPreload();if(!preference.course||schoolAutoTried.has(preference.course))return;const [{preloadCourseAccount},accounts,module]=await Promise.all([import('./domain/school-preload.ts'),schoolAccounts.list(),portalModule()]);await schoolAutoBarrier;
-  if(epoch!==schoolAutoEpoch||view!=='home'||document.hidden)return;const account=preloadCourseAccount(preference,accounts);if(!account||schoolAutoTried.has(account.id))return;
+  const preference=await repo.loadSchoolPreload();const [{startupSchoolAccount},accounts,module]=await Promise.all([import('./domain/school-preload.ts'),schoolAccounts.list(),portalModule()]);await schoolAutoBarrier;
+  if(epoch!==schoolAutoEpoch||document.hidden)return;const account=startupSchoolAccount(preference,accounts,'course');if(!account||schoolAutoTried.has(account.id))return;
   portalView??=new module.PortalView(notice);schoolAutoTried.add(account.id);await portalView.warm(account);
- }catch{}finally{if(schoolAutoRunning===epoch)schoolAutoRunning=null;if(epoch!==schoolAutoEpoch&&view==='home'&&!document.hidden)scheduleSchoolWarmup();}
+ }catch{}finally{if(schoolAutoRunning===epoch)schoolAutoRunning=null;if(epoch!==schoolAutoEpoch&&!document.hidden)scheduleSchoolWarmup();}
 }
-window.addEventListener('school-preload-changed',()=>{schoolAutoEpoch++;schoolAutoTried.clear();schoolAutoBarrier=schoolAutoBarrier.catch(()=>{}).then(()=>portalView?.cancelWarm());if(view==='home'&&!document.hidden)scheduleSchoolWarmup();});
+window.addEventListener('school-preload-changed',()=>{schoolAutoEpoch++;schoolAutoTried.clear();schoolAutoBarrier=schoolAutoBarrier.catch(()=>{}).then(()=>portalView?.cancelWarm());if(!document.hidden)scheduleSchoolWarmup();});
 let reportAutoEpoch=0,reportAutoRunning:number|null=null,reportAutoBarrier:Promise<unknown>=Promise.resolve();
 const reportAutoTried=new Set<string>();
 async function autoLoadSchoolReport(){
  const epoch=reportAutoEpoch;if(reportAutoRunning===epoch)return;reportAutoRunning=epoch;
- try{const preference=await repo.loadSchoolPreload();if(!preference.report||reportAutoTried.has(preference.report))return;
-  const [{preloadReportAccount},accounts,module]=await Promise.all([import('./domain/school-preload.ts'),schoolAccounts.list(),schoolReportModule()]);await reportAutoBarrier;
-  if(epoch!==reportAutoEpoch||view!=='home'||document.hidden)return;const account=preloadReportAccount(preference,accounts);if(!account||reportAutoTried.has(account.id))return;
+ try{const preference=await repo.loadSchoolPreload();
+  const [{startupSchoolAccount},accounts,module]=await Promise.all([import('./domain/school-preload.ts'),schoolAccounts.list(),schoolReportModule()]);await reportAutoBarrier;
+  if(epoch!==reportAutoEpoch||document.hidden)return;const account=startupSchoolAccount(preference,accounts,'report');if(!account||reportAutoTried.has(account.id))return;
   schoolReportView??=new module.SchoolReportView(notice,repo,experiments);reportAutoTried.add(account.id);await schoolReportView.warm(account);
- }catch{}finally{if(reportAutoRunning===epoch)reportAutoRunning=null;if(epoch!==reportAutoEpoch&&view==='home'&&!document.hidden)scheduleSchoolWarmup();}
+ }catch{}finally{if(reportAutoRunning===epoch)reportAutoRunning=null;if(epoch!==reportAutoEpoch&&!document.hidden)scheduleSchoolWarmup();}
 }
-window.addEventListener('school-report-preload-changed',()=>{reportAutoEpoch++;reportAutoTried.clear();reportAutoBarrier=reportAutoBarrier.catch(()=>{}).then(()=>schoolReportView?.cancelWarm());if(view==='home'&&!document.hidden)scheduleSchoolWarmup();});
+window.addEventListener('school-report-preload-changed',()=>{reportAutoEpoch++;reportAutoTried.clear();reportAutoBarrier=reportAutoBarrier.catch(()=>{}).then(()=>schoolReportView?.cancelWarm());if(!document.hidden)scheduleSchoolWarmup();});
+let academicWarmTask:Promise<void>|null=null;
+let academicWarmTried=false;
+function warmAcademic(){
+ if(academicWarmTask||academicWarmTried||!schoolAccounts.available())return;
+ academicWarmTask=(async()=>{
+  try{
+   const [{startupSchoolAccount},preference,accounts]=await Promise.all([import('./domain/school-preload.ts'),repo.loadSchoolPreload(),schoolAccounts.list()]);
+   if(document.hidden)return;
+   const account=startupSchoolAccount(preference,accounts,'academic');
+   academicWarmTried=true;
+   if(!account)return;
+   await academic.warm?.(account.account);
+   academicView.refreshAfterWarmup(account.account);
+  }catch{}finally{academicWarmTask=null;}
+ })();
+}
+window.addEventListener('school-academic-preload-changed',()=>{academicWarmTried=false;scheduleSchoolWarmup();});
 function cancelSchoolWarmup(){if(schoolWarmHandle!==null){if(schoolWarmIdle)window.cancelIdleCallback(schoolWarmHandle);else clearTimeout(schoolWarmHandle);}schoolWarmHandle=null;}
 function scheduleSchoolWarmup(){
  if(schoolWarmHandle!==null||document.hidden)return;
- const run=()=>{schoolWarmHandle=null;if(view!=='home'||document.hidden)return;if(!schoolWarmComplete)void Promise.allSettled([portalModule(),schoolReportModule()]).then(results=>{schoolWarmComplete=results.every(r=>r.status==='fulfilled');});void autoLoadSchoolCourse();void autoLoadSchoolReport();};
+ const run=()=>{schoolWarmHandle=null;if(document.hidden)return;if(!schoolWarmComplete)void Promise.allSettled([portalModule(),schoolReportModule()]).then(results=>{schoolWarmComplete=results.every(r=>r.status==='fulfilled');});void autoLoadSchoolCourse();void autoLoadSchoolReport();void warmAcademic();};
  schoolWarmIdle=typeof window.requestIdleCallback==='function';schoolWarmHandle=schoolWarmIdle?window.requestIdleCallback(run,{timeout:1500}):window.setTimeout(run,800);
 }
-document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelSchoolWarmup();else if(view==='home')scheduleSchoolWarmup();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelSchoolWarmup();else scheduleSchoolWarmup();});
 async function mountSchoolPage(kind:'course'|'report',host:HTMLElement,serial:number,experimentId?:string){
  try{
-  if(kind==='course'){const module=await portalModule();if(serial!==routeSerial||!root.contains(host))return;portalView??=new module.PortalView(notice);portalView.mount(host);}
+  if(kind==='course'){const module=await portalModule();if(serial!==routeSerial||!root.contains(host))return;portalView??=new module.PortalView(notice);portalView.mount(host, location.hash.split("/")[2] ?? "");}
   else{const module=await schoolReportModule();if(serial!==routeSerial||!root.contains(host))return;schoolReportView??=new module.SchoolReportView(notice,repo,experiments);schoolReportView.mount(host,experimentId);}
  }catch{if(serial!==routeSerial||!root.contains(host))return;host.innerHTML='<section class="error-card"><p>页面资源未能读取，请检查资源后重新加载。</p><a class="button secondary" href="#/resource-check">检查资源</a><button class="button secondary" data-school-reload>重新加载</button></section>';host.querySelector('[data-school-reload]')!.addEventListener('click',()=>{if(reportQueueView.queue.running){notice('请先停止报告队列后再重新加载');return;}location.reload();});}
 }
@@ -286,7 +307,7 @@ function dialog(
   danger = false,
 ): Promise<boolean> {
   if (closeModal) closeModal(false);
-  modal.innerHTML = `<div class="modal-heading"><h2 id="modal-title">${esc(title)}</h2><button class="icon-button" data-dialog-close aria-label="关闭">×</button></div><div class="modal-body">${body}</div><div class="modal-actions"><button class="button secondary" data-dialog-close>取消</button>${confirm ? `<button class="button ${danger ? "danger" : ""}" data-dialog-confirm>${esc(confirm)}</button>` : ""}</div>`;
+  modal.innerHTML = `<div class="modal-heading"><h2 id="modal-title">${esc(title)}</h2><button class="icon-button" data-dialog-close aria-label="关闭">×</button></div><div class="modal-body">${body}</div><div class="modal-actions"><button class="button secondary" data-dialog-close>${confirm ? "取消" : "关闭"}</button>${confirm ? `<button class="button ${danger ? "danger" : ""}" data-dialog-confirm>${esc(confirm)}</button>` : ""}</div>`;
   return new Promise((resolve) => {
     closeModal = (value) => {
       modal.close();
@@ -309,7 +330,7 @@ modal.addEventListener("cancel", (event) => {
 const nav = () =>
   `<nav class="bottom-nav" aria-label="主导航">${[
     ["home", "book", "实验"],
-    ["portal", "book", "一站通"],
+    ["portal", "portal", "一站通"],
     ["profile", "user", "学生信息"],
     ["settings", "settings", "设置"],
   ]
@@ -318,42 +339,74 @@ const nav = () =>
         `<button data-nav="${key}" class="${view === key ? "active" : ""}" ${view === key ? 'aria-current="page"' : ""}>${icon(name as keyof typeof icons)}<span>${text}</span></button>`,
     )
     .join("")}</nav>`;
-function heading(title: string, subtitle: string, back = false) {
-  return `<header class="app-header">${back ? `<button class="icon-button" data-nav="home" aria-label="返回实验目录">${icon("back")}</button>` : '<span class="logo">物</span>'}<div><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>${back ? `<button class="icon-button" data-action="more" aria-label="更多实验操作">${icon("more")}</button>` : `<span class="version">初版</span>`}</header>${queueEntryHTML()}`;
+let schoolAccountsReturnPage = 'settings';
+type NavigationSnapshot = { y:number; details:boolean[]; folder:string|null; searches:string[]; selections:string[] };
+const navigationSnapshots = new Map<number,NavigationSnapshot>();
+let navigationIndex = 0;
+let navigationRestoring = false;
+let leavingFolder:string|null=null;
+let navigationRestoreStop: (()=>void)|null = null;
+history.scrollRestoration = 'manual';
+history.replaceState({ ...history.state, labNavigation:0 }, '', location.href);
+function captureNavigation() {
+  if(navigationRestoring)return;
+  navigationSnapshots.set(navigationIndex,{ y:window.scrollY, details:[...root.querySelectorAll('details')].map(n=>n.open), searches:[...root.querySelectorAll<HTMLInputElement>('input[type=search]')].map(n=>n.value), selections:[...root.querySelectorAll<HTMLSelectElement>('select')].map(n=>n.value), folder:root.querySelector('.settings-folder-dialog[open]')?.getAttribute('aria-label') ?? leavingFolder });
 }
+function acceptNavigation(_hash:string) {
+  navigationRestoreStop?.();
+  leavingFolder=null;
+  const index=history.state?.labNavigation;
+  if(typeof index==='number') navigationIndex=index;
+  else { navigationIndex++; history.replaceState({...history.state,labNavigation:navigationIndex},'',location.href); navigationSnapshots.delete(navigationIndex); }
+}
+function navigateBack() {
+  captureNavigation();
+  if(navigationIndex>0)history.back();
+  else go(parentPage()??'home');
+}
+function restoreNavigation(serial:number) {
+  const snapshot=navigationSnapshots.get(navigationIndex);if(!snapshot)return;
+  navigationRestoring=true;
+  const apply=()=>{if(serial!==routeSerial)return;root.querySelectorAll<HTMLInputElement>('input[type=search]').forEach((n,i)=>{if(snapshot.searches[i]!==undefined&&n.value!==snapshot.searches[i]){n.value=snapshot.searches[i];n.dispatchEvent(new Event('input',{bubbles:true}));}});root.querySelectorAll<HTMLSelectElement>('select').forEach((n,i)=>{if(snapshot.selections[i]!==undefined&&n.value!==snapshot.selections[i]&&[...n.options].some(o=>o.value===snapshot.selections[i])){n.value=snapshot.selections[i];n.dispatchEvent(new Event('change',{bubbles:true}));}});root.querySelectorAll('details').forEach((n,i)=>{if(snapshot.details[i]!==undefined)n.open=snapshot.details[i];});if(snapshot.folder){const sheet=[...root.querySelectorAll<HTMLDialogElement>('.settings-folder-dialog')].find(n=>n.getAttribute('aria-label')===snapshot.folder);if(sheet&&!sheet.open)sheet.showModal();}window.scrollTo(0,snapshot.y);};
+  let timer:ReturnType<typeof setTimeout>;
+  const observer=new MutationObserver(()=>{clearTimeout(timer);timer=setTimeout(apply,80);});
+  let deadline:ReturnType<typeof setTimeout>;
+  const stop=()=>{observer.disconnect();clearTimeout(timer);clearTimeout(deadline);navigationRestoring=false;window.removeEventListener('pointerdown',stop);window.removeEventListener('wheel',stop);window.removeEventListener('keydown',stop);};
+  navigationRestoreStop=stop;observer.observe(root,{childList:true,subtree:true});apply();deadline=setTimeout(stop,30000);window.addEventListener('pointerdown',stop,{once:true});window.addEventListener('wheel',stop,{once:true});window.addEventListener('keydown',stop,{once:true});
+}
+window.addEventListener('scroll',()=>{if(location.hash===currentHash)captureNavigation();},{passive:true});
+root.addEventListener('toggle',()=>{if(location.hash===currentHash)captureNavigation();},true);
+
+function parentPage() {
+  const page = currentHash.replace(/^#\//, '').split('/')[0];
+  if (currentHash.startsWith('#/portal/')) return currentHash === '#/portal/account' ? 'portal/config' : 'portal';
+  if (['home', 'portal', 'profile', 'settings', ''].includes(page)) return null;
+  if (page === 'experiment') return 'home';
+  if (page === 'school-accounts') return schoolAccountsReturnPage;
+  if (['academic', 'school-reports'].includes(page)) return 'portal';
+  return 'settings';
+}
+function heading(_title: string, _subtitle: string, back = false) {
+  const parent = parentPage();
+  return `${parent || back ? `<div class="page-actions"><button class="icon-button" data-back aria-label="返回上一级">${icon("back")}</button>${back ? `<button class="icon-button" data-action="more" aria-label="更多实验操作">${icon("more")}</button>` : ''}</div>` : ""}${queueEntryHTML()}`;
+}
+
 function queueEntryHTML(){const queue=reportQueueView.queue;if(!queue.items.length||currentHash==='#/report-queue')return '';const done=queue.items.filter(r=>r.status==='done').length;const status=reportQueueView.needsConfirmation?'待确认':queue.stopping?'正在停止':queue.paused?'已暂停':queue.running?'生成中':'已结束';return `<button class="queue-shortcut" data-nav="report-queue" data-queue-shortcut>报告队列 · ${done}/${queue.items.length} 完成 · ${status} →</button>`;}
-function refreshQueueEntry(){const previous=root.querySelector('[data-queue-shortcut]'),html=queueEntryHTML();if(!html){previous?.remove();return;}const box=document.createElement('div');box.innerHTML=html;const next=box.firstElementChild!;if(previous){previous.textContent=next.textContent;}else root.querySelector('.app-header')?.after(next);}
-function stateFor(exp: Experiment) {
-  const s = summaries.get(exp.id);
-  if (s?.error)
-    return { label: "读取异常", kind: "error", detail: "进入后可重试或清除" };
-  if (s?.doc && hasValues(s.doc.draft)) {
-    const p = recordProgress(exp,s.doc);
-    return {
-      label: p.done === p.total ? "填写完整" : "已存草稿",
-      kind: "saved",
-      detail: `必填项 ${p.done} / ${p.total}`,
-    };
-  }
-  return { label: "未录入", kind: "empty", detail: "点击开始录入" };
-}
+function refreshQueueEntry(){const previous=root.querySelector('[data-queue-shortcut]'),html=queueEntryHTML();if(!html){previous?.remove();return;}const box=document.createElement('div');box.innerHTML=html;const next=box.firstElementChild!;if(previous){previous.textContent=next.textContent;}else {const header=root.querySelector('.app-header');if(header)header.after(next);else root.prepend(next);}}
 function home() {
   view = "home";
   document.body.classList.remove("editing");
-  const recorded = [...summaries.values()].filter(
-    (x) => x.doc && hasValues(x.doc.draft),
-  ).length;
-  root.innerHTML = `${heading("实验搭子", "本机实验记录")}${debugWarning?`<section class="error-card"><p>${esc(debugWarning)}</p><a class="button secondary" href="#/developer">查看并恢复</a></section>`:""}<section class="home-intro"><div><p class="eyebrow">实验目录</p><h2>这次，做哪个实验？</h2></div><span><b>${experiments.length}</b> 个实验 · ${recorded} 份记录</span></section><label class="search-box">${icon("search")}<input id="search" type="search" placeholder="搜索实验名称" aria-label="搜索实验名称" value="${esc(query)}"></label><div id="categories" class="categories" role="group" aria-label="实验分类"></div><div class="list-caption"><span id="result-count"></span><span>离线录入 · 自动保存</span></div><section id="experiment-list" class="experiment-list" aria-label="实验目录"></section>${nav()}`;
+  root.innerHTML = `${queueEntryHTML()}${debugWarning?`<section class="error-card"><p>${esc(debugWarning)}</p><a class="button secondary" href="#/developer">查看并恢复</a></section>`:""}<label class="search-box">${icon("search")}<input id="search" type="search" placeholder="搜索实验名称" aria-label="搜索实验名称" value="${esc(query)}"></label><div id="categories" class="categories" role="group" aria-label="实验分类"></div><section id="experiment-list" class="experiment-list" aria-label="实验目录"></section>${nav()}`;
   filterList();
   scheduleSchoolWarmup();
 }
 function filterList() {
   const categories = document.querySelector("#categories");
   if (!categories) return;
-  categories.innerHTML = [["all", "全部"], ...Object.entries(categoryNames)]
+  categories.innerHTML = [["all", "全部"], ["mechanics", "力"], ["optics", "光"], ["electromagnetism", "电/磁"], ["other", "其他"]]
     .map(
       ([id, name]) =>
-        `<button data-category="${id}" class="${category === id ? "active" : ""}" aria-pressed="${category === id}">${name}<small>${id === "all" ? 28 : experiments.filter((e) => e.category === id).length}</small></button>`,
+        `<button data-category="${id}" class="${category === id ? "active" : ""}" aria-pressed="${category === id}">${name}</button>`,
     )
     .join("");
   const found = experiments
@@ -368,13 +421,10 @@ function filterList() {
           Object.keys(categoryNames).indexOf(b.category) ||
         a.name.localeCompare(b.name, "zh"),
     );
-  document.querySelector("#result-count")!.textContent =
-    `${found.length} 个实验`;
   document.querySelector("#experiment-list")!.innerHTML = found.length
     ? found
         .map((e) => {
-          const s = stateFor(e);
-          return `<button class="experiment-card ${e.category}" data-open="${e.id}"><span class="card-top"><span class="category-dot"></span><span>${categoryNames[e.category]}</span><span class="status ${s.kind}">${s.label}</span></span><strong>${esc(e.name)}</strong><span class="card-bottom">${esc(s.detail)}<span aria-hidden="true">→</span></span></button>`;
+          return `<button class="experiment-card ${e.category}" data-open="${e.id}"><span class="card-top"><span class="category-dot"></span><span>${categoryNames[e.category]}</span></span><strong>${esc(e.name)}</strong></button>`;
         })
         .join("")
     : '<div class="empty-state"><h3>没有找到这个实验</h3><p>试试更短的关键词，或切换到全部实验。</p></div>';
@@ -382,10 +432,15 @@ function filterList() {
 function numericInput(f: Field, value: string, extra = "", label = f.label) {
   return `<input class="measurement" type="text" inputmode="decimal" enterkeyhint="next" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100" data-key="${esc(f.key)}" ${extra} value="${esc(value)}" aria-label="${esc(label)}${f.unit ? "，" + esc(f.unit) : ""}">`;
 }
-function fieldHTML(f: Field, draft: Draft) {
+function fieldHTML(f: Field, draft: Draft, sourceId: string) {
   const value = draft[f.key],
     unit = f.unit ? `<span class="unit">${esc(f.unit)}</span>` : "",
-    head = `<div class="field-heading"><span>${math(f.label)}${f.required ? "" : "<small>可选</small>"}</span>${unit}</div>`;
+    help = f.label.includes("限差")
+      ? '<button type="button" class="text-button instrument-limit-help" data-action="instrument-limit-help" aria-haspopup="dialog">什么是仪器限差</button>'
+      : "",
+    head = `<div class="field-heading"><span>${math(f.label)}${help}${f.required ? "" : "<small>可选</small>"}</span>${unit}</div>`;
+  if (f.type === "number" && f.choicesOnly && f.presets)
+    return `<div class="field" id="field-${esc(f.key)}">${head}<select data-observation="${esc(f.key)}" aria-label="${esc(f.label)}"><option value="">请选择</option>${f.presets.map(p => `<option value="${p.value}" ${String(value) === String(p.value) ? "selected" : ""}>${esc(p.label)}</option>`).join("")}</select></div>`;
   if (f.type === "number")
     return `<div class="field scalar" id="field-${esc(f.key)}">${head}${numericInput(f, value as string)}${f.presets ? `<select data-preset="${esc(f.key)}" aria-label="${esc(f.label)}常用值"><option value="">选择常用值</option>${f.presets.map((p) => `<option value="${p.value}">${esc(p.label)}</option>`).join("")}</select>` : ""}</div>`;
   if (f.type === "science") {
@@ -394,7 +449,9 @@ function fieldHTML(f: Field, draft: Draft) {
   }
   if (f.type === "array") {
     const values = value as string[];
-    return `<div class="field" id="field-${esc(f.key)}">${head}<div class="array-grid">${values.map((v, i) => `<label><span>${i + 1}</span>${numericInput(f, v, `data-index="${i}"`, `${f.label} 第${i + 1}项`)}</label>`).join("")}</div>${f.variableLength ? `<div class="point-controls"><span>${values.length} 个测量点</span><button class="button compact secondary" data-resize="${f.key}" data-delta="-1" ${values.length <= (f.minLength ?? 3) ? "disabled" : ""}>${f.allowedLengths?'减少至 10 点':'删除末点'}</button><button class="button compact secondary" data-resize="${f.key}" data-delta="1" ${values.length >= (f.maxLength ?? 100) ? "disabled" : ""}>${f.allowedLengths?'增加至 12 点':'增加测点'}</button></div>` : ""}</div>`;
+    const config = sequenceSetting(sourceId, f.key);
+    const controls = config ? sequenceControls(config, values.length, "button secondary compact") : "";
+    return `<div class="field" id="field-${esc(f.key)}">${head}${controls}<div class="array-grid">${values.map((v, i) => `<label><span>${i + 1}</span>${numericInput(f, v, `data-index="${i}"`, `${f.label} 第${i + 1}项`)}</label>`).join("")}</div>${f.variableLength ? `<div class="point-controls"><span>${values.length} 个测量点</span><button class="button compact secondary" data-resize="${f.key}" data-delta="-1" ${values.length - (f.pairedMatrix ? 2 : 1) < (f.minLength ?? 3) ? "disabled" : ""}>${f.allowedLengths?'减少至 10 点':f.pairedMatrix?'删除两端测量点':'删除末点'}</button><button class="button compact secondary" data-resize="${f.key}" data-delta="1" ${values.length + (f.pairedMatrix ? 2 : 1) > (f.maxLength ?? 100) ? "disabled" : ""}>${f.allowedLengths?'增加至 12 点':f.pairedMatrix?'增加两端测量点':'增加测点'}</button></div>` : ""}</div>`;
   }
   const matrix = value as string[][],
     rows = f.displayTranspose ? (matrix[0]?.length ?? 0) : matrix.length,
@@ -419,27 +476,64 @@ function fieldHTML(f: Field, draft: Draft) {
   ).join("");
   return `<div class="field matrix-field" id="field-${esc(f.key)}">${head}<div class="table-scroll" tabindex="0" aria-label="${esc(f.label)}，可左右滑动"><table><thead><tr><th></th>${header}</tr></thead><tbody>${body}</tbody></table></div>${f.variableRows ? `<p class="field-note">至少填写 ${f.minFilledRows ?? 1} 行；未使用的行留空。</p>` : ""}</div>`;
 }
+const polarizationTheory = new Map<string, Record<string, string>>([
+  ["80846705f12f", {
+    // The one-polarizer case assumes the partially polarized source in the reference record.
+    polarizer_1_change: "1", polarizer_1_extinction: "0", polarizer_1_state: "4",
+    polarizer_2_change: "1", polarizer_2_extinction: "2", polarizer_2_state: "1",
+    plate_0_change: "1", plate_0_extinction: "2", plate_0_state: "1",
+    plate_15_change: "1", plate_15_extinction: "0", plate_15_state: "3",
+    plate_30_change: "1", plate_30_extinction: "0", plate_30_state: "3",
+    plate_45_change: "0", plate_45_extinction: "0", plate_45_state: "2",
+    plate_60_change: "1", plate_60_extinction: "0", plate_60_state: "3",
+    plate_75_change: "1", plate_75_extinction: "0", plate_75_state: "3",
+    plate_90_change: "1", plate_90_extinction: "2", plate_90_state: "1",
+  }],
+  ["990c5b502ea7", {output_state_0:"1",output_state_30:"3",output_state_45:"2"}],
+]);
+function polarizationPresetButton(experimentId: string, groupFields: Field[]) {
+  const preset = polarizationTheory.get(experimentId);
+  if (!preset || !groupFields.some(field => Object.hasOwn(preset, field.key))) return "";
+  return '<div class="ai-inline"><button type="button" class="button secondary compact" data-action="polarization-theory">填入理论预设</button></div>';
+}
 function editor() {
   if (!session) return;
   view = "editor";
   document.body.classList.add("editing");
   const { exp, doc, blocked } = session;
-  root.innerHTML = `${heading(exp.name, categoryNames[exp.category], true)}<div class="editor-summary"><div><span class="status saved" id="save-state">${blocked ? "读取异常" : "已载入本机数据"}</span><span id="completion"></span></div><label>实验日期<input type="date" id="experiment-date" value="${esc(doc.date)}" aria-label="实验日期"></label></div>${blocked ? '<section class="error-card"><b>本机数据未能读取，原文件未覆盖。</b><p>可重新读取，或清除该实验后重新填写。</p><button class="button secondary" data-action="retry">重新读取</button><button class="button danger" data-action="clear">清除本实验数据</button></section>' : ""}<div class="experiment-actions"><button class="button secondary" data-action="ocr">识别图片</button><button class="button secondary" data-action="prepare">实验预习 ↗</button><button class="button" id="open-report" data-action="report" ${blocked ? "disabled" : ""}>生成 / 查看报告</button></div><form id="measurement-form"><fieldset ${blocked || work ? "disabled" : ""}>${exp.schema.groups.map((g, i) => `<details class="group" ${i === 0 ? "open" : ""}><summary><span class="group-number">${String(i + 1).padStart(2, "0")}</span><h2>${math(measurementGroupTitle(exp.sourceId,g.name))}</h2><span class="chevron">⌄</span></summary><div class="group-fields">${isSoundExperiment(exp)&&g.fields.some(f=>f.key==="L2")?`<label class="ai-field" id="field-soundPhase">相邻位相记录点<select data-sound-phase><option value="">请选择</option><option value="alternating" ${doc.soundPhase==="alternating"?"selected":""}>同相与反相交替（半波长）</option><option value="same" ${doc.soundPhase==="same"?"selected":""}>相同相位（一个波长）</option></select></label>`:""}${g.fields.map((f) => fieldHTML(f, doc.draft)).join("")}</div></details>`).join("")}</fieldset></form><section class="photo-panel"><div><h2>原始数据照片</h2><button class="button secondary compact" data-action="photo" ${blocked ? "disabled" : ""}>${session.photo ? "更换照片" : "添加照片"}</button></div><div id="photo-preview">${session.photoError ? `<p class="ocr-warning">原始照片读取失败，请重新读取或添加照片。</p><button class="button secondary compact" data-action="retry">重新读取</button>` : session.imageUrl ? `<img src="${esc(session.imageUrl)}" alt="当前实验的原始数据照片"><button class="text-button" data-action="remove-photo">移除照片</button>` : "<p>尚未添加</p>"}</div><input id="photo-picker" type="file" accept="image/jpeg,image/png,image/webp" hidden></section><div class="editor-bottom"><div class="entry-tools"><button class="button secondary compact" data-action="sign" aria-label="切换当前数值正负号">±</button><button class="button secondary compact" data-action="exponent-token" aria-label="在当前数值中输入科学计数符号">e</button><button class="button secondary compact" data-action="next">下一项</button><button class="button secondary compact" data-action="save">保存</button></div><button class="button" data-action="validate" ${blocked ? "disabled" : ""}>检查数据</button></div><input id="data-picker" type="file" accept="application/json,.json" hidden>`;
+  root.innerHTML = `${heading(exp.name, categoryNames[exp.category], true)}<div class="editor-summary experiment-overview"><div><h1>${esc(exp.name)}</h1><div class="experiment-overview-status"><span class="experiment-category">${categoryNames[exp.category]}</span><span id="overview-data-status"></span><span id="overview-report-status">正在核对报告…</span></div><span class="status" id="save-state" hidden role="status"></span></div><div class="overview-date-row"><button class="button secondary compact" data-action="prepare">实验预习 ↗</button><label>实验日期<input type="date" id="experiment-date" value="${esc(doc.date)}" aria-label="实验日期"></label></div></div>${blocked ? '<section class="error-card"><b>本机数据未能读取，原文件未覆盖。</b><p>可重新读取，或清除该实验后重新填写。</p><button class="button secondary" data-action="retry">重新读取</button><button class="button danger" data-action="clear">清除本实验数据</button></section>' : ""}<div class="experiment-actions"><button class="button secondary" data-action="ocr">识别图片</button><button class="button secondary" data-action="report-quiz" ${blocked ? "disabled" : ""}>自定义思考题</button><button class="button" id="open-report" data-action="report" ${blocked ? "disabled" : ""}>报告</button></div><form id="measurement-form"><fieldset ${blocked || work ? "disabled" : ""}>${exp.schema.groups.map((g, i) => `<details class="group"><summary><span class="group-number">${String(i + 1).padStart(2, "0")}</span><h2>${math(measurementGroupTitle(exp.sourceId,g.name))}</h2><span class="chevron">⌄</span></summary><div class="group-fields">${polarizationPresetButton(exp.id, g.fields)}${isSoundExperiment(exp)&&g.fields.some(f=>f.key==="L2")?`<label class="ai-field" id="field-soundPhase">相邻位相记录点<select data-sound-phase><option value="">请选择</option><option value="alternating" ${doc.soundPhase==="alternating"?"selected":""}>同相与反相交替（半波长）</option><option value="same" ${doc.soundPhase==="same"?"selected":""}>相同相位（一个波长）</option></select></label>`:""}${g.fields.map((f) => fieldHTML(f, doc.draft, exp.sourceId)).join("")}</div></details>`).join("")}</fieldset></form><section class="photo-panel"><div><h2>原始数据照片</h2><button class="button secondary compact" data-action="photo" ${blocked ? "disabled" : ""}>${session.photo ? "更换照片" : "添加照片"}</button></div><div id="photo-preview">${session.photoError ? `<p class="ocr-warning">原始照片读取失败，请重新读取或添加照片。</p><button class="button secondary compact" data-action="retry">重新读取</button>` : session.imageUrl ? `<img src="${esc(session.imageUrl)}" alt="当前实验的原始数据照片"><button class="text-button" data-action="remove-photo">移除照片</button>` : "<p>尚未添加</p>"}</div><input id="photo-picker" type="file" accept="image/jpeg,image/png,image/webp" hidden></section><div class="editor-bottom"><div class="entry-tools"><button class="button secondary compact" data-action="next">下一项</button><button class="button secondary compact" data-action="save">保存</button></div><div class="editor-submit-actions"><button class="button" data-action="upload-report" ${blocked ? "disabled" : ""}>上传报告</button><button class="button" data-action="validate" ${blocked ? "disabled" : ""}>检查数据</button></div></div><input id="data-picker" type="file" accept="application/json,.json" hidden>`;
   root.querySelectorAll<HTMLInputElement>('input.measurement').forEach((input,index,inputs)=>{input.enterKeyHint=index===inputs.length-1?'done':'next';});
   updateProgress();
+  const current=session;
+  const progress=recordProgress(exp,doc);
+  if(!blocked&&progress.done===progress.total){
+    const prewarm=()=>{if(session===current&&view==='editor'&&!document.hidden&&!reportQueueView.queue.running)reports.prewarmEngine();};
+    if(typeof window.requestIdleCallback==='function')window.requestIdleCallback(prewarm,{timeout:1200});
+    else window.setTimeout(prewarm,300);
+  }
+  void refreshOverviewReport();
 }
+async function refreshOverviewReport(){
+  const current=session,node=root.querySelector<HTMLElement>("#overview-report-status");if(!current||!node)return;
+  try{const result=await repo.loadReport(current.exp);if(session!==current||!root.contains(node))return;node.textContent=result.value?"报告已生成":"报告未生成";node.classList.toggle("ready",!!result.value);}
+  catch{if(session===current&&root.contains(node))node.textContent="报告待核实";}
+}
+document.addEventListener("close",()=>{if(session&&root.querySelector("#overview-report-status"))void refreshOverviewReport();},true);
 function updateProgress() {
   if (!session) return;
   const p = recordProgress(session.exp,session.doc);
+  const dataStatus=document.querySelector<HTMLElement>('#overview-data-status');
+  if(dataStatus){const ready=!session.blocked&&p.done===p.total;dataStatus.textContent=session.blocked?'数据待核实':ready?'数据已就绪':'数据未完整';dataStatus.classList.toggle('ready',ready);}
   const el = document.querySelector("#completion");
   if(el) el.textContent = `必填项 ${p.done} / ${p.total}`;
 }
 function saveState(text: string, error = false) {
   const el =
-    document.querySelector("#save-state") ??
-    document.querySelector("#profile-save-state");
+    document.querySelector<HTMLElement>("#save-state") ??
+    document.querySelector<HTMLElement>("#profile-save-state");
   if (el) {
     el.textContent = text;
+    if (el.id === "profile-save-state" || el.id === "save-state") el.hidden = !error;
     el.classList.toggle("error", error);
   }
 }
@@ -484,7 +578,7 @@ function profilePage() {
   view = "profile";
   document.body.classList.remove("editing");
   if(profileBlocked){root.innerHTML=`${heading("学生信息", "保存在当前设备")}<section class="error-card"><b>学生信息未能读取，原文件未覆盖。</b><p>请检查本机存储后重试。</p><button class="button secondary" data-action="retry-profile">重新读取</button></section>${nav()}`;return;}
-  root.innerHTML = `${heading("学生信息", "保存在当前设备")}<section class="panel"><h2>基本信息</h2><p class="muted">用于生成当前设备的实验报告。</p>${[
+  root.innerHTML = `${heading("学生信息", "保存在当前设备")}<section class="panel"><h2>基本信息</h2>${[
     ["name", "姓名", "60"],
     ["studentId", "学号", "40"],
     ["className", "班级", "80"],
@@ -495,21 +589,77 @@ function profilePage() {
     )
     .join(
       "",
-    )}<div class="profile-actions"><span id="profile-save-state">自动保存到本机</span><button class="button" data-action="save-profile">保存</button></div></section>${nav()}`;
+    )}<div class="profile-actions"><span id="profile-save-state" hidden role="status"></span><button class="button" data-action="save-profile">保存</button></div></section>${nav()}`;
 }
 function settingsPage() {
   view = "settings";
   document.body.classList.remove("editing");
-  root.innerHTML = `${heading("设置", "实验搭子手机版")}<section class="panel"><h2>当前版本</h2><a class="button secondary" href="#/app-updates">检查应用更新</a><div class="setting-row"><span>应用版本</span><strong>${esc(packageInfo.version)} · 开发版</strong></div><div class="setting-row"><span>内置实验</span><strong>28 个</strong></div><div class="setting-row"><span>运行平台</span><strong>${esc(Capacitor.getPlatform())}</strong></div></section><section class="panel"><h2>AI 服务</h2><p>分别配置报告问答与图片识别模型，密钥仅在本机加密保存。</p><div class="tutorial-actions"><button class="button" data-action="ai-config">配置 API</button><button class="button secondary" data-action="ai-tutorial">配置教程</button><button class="button secondary" data-action="ai-skills">技能管理</button></div></section><section class="panel"><h2>报告管理</h2><div class="ai-inline"><button class="button secondary" data-action="report-manager">管理已生成报告</button><a class="button secondary" href="#/report-queue">批量生成报告</a><a class="button secondary" href="#/report-directory">默认保存目录</a><a class="button secondary" href="#/variant-library">自建变体库</a><a class="button secondary" href="#/ai-history">AI 历史管理</a><a class="button secondary" href="#/report-sections">报告章节</a></div></section><section class="panel"><h2>实验资源</h2><button class="button secondary" data-action="resource-check">实验资源维护</button><a class="button secondary" href="#/data-updates">实验数据更新</a></section><section class="panel"><h2>开发者调试</h2><a class="button secondary" href="#/developer">打开调试工具</a></section><section class="panel"><h2>贡献数据</h2><a class="button secondary" href="#/contributions">贡献数据</a></section><section class="panel"><h2>帮助与反馈</h2><div class="ai-inline"><a class="button secondary" href="#/help/guide">使用说明</a><a class="button secondary" href="#/help/notice">必读公告</a><a class="button secondary" href="#/help/school">选课与实验问答</a><a class="button secondary" href="#/credits">感谢声明</a><a class="button secondary" href="#/feedback">意见反馈</a><a class="button secondary" href="#/easter-egg">请勿点击</a></div></section><section class="panel"><h2>本机数据</h2><p>测量数据、学生信息和原始照片保存在当前设备。请在实验页的“更多”中导出数据备份；导出文件不包含原始照片。</p><p class="muted">卸载应用可能删除本机记录，请先备份。</p></section>${nav()}`;
+  root.innerHTML = `${heading("设置", "实验搭子手机版")}<section class="panel"><h2>当前版本</h2><div class="setting-row"><span>应用版本</span><div class="version-actions"><strong>${esc(packageInfo.version)}</strong><a class="button secondary compact" href="#/app-updates" aria-label="检查应用更新">检查更新</a></div></div><div class="setting-row"><span>实验版本</span><div class="version-actions"><strong data-settings-data-version>正在读取…</strong><a class="button secondary compact" href="#/data-updates" aria-label="检查实验数据更新">检查更新</a></div></div></section><section class="panel"><h2>AI 服务</h2><div class="tutorial-actions"><button class="button" data-action="ai-config">配置 API</button><button class="button secondary" data-action="ai-tutorial">配置教程</button><button class="button secondary" data-action="ai-skills">技能管理</button></div></section><section class="panel"><h2>报告管理</h2><div class="ai-inline"><button class="button secondary" data-action="report-manager">管理已生成报告</button><a class="button secondary" href="#/report-directory">默认保存目录</a></div></section><section class="panel"><h2>实验资源</h2><div class="ai-inline"><button class="button secondary" data-action="resource-check">实验资源维护</button></div></section><section class="panel"><h2>开发者调试</h2><a class="button secondary" href="#/developer">打开调试工具</a></section>${nav()}`;
   const accountsPanel=document.createElement('section');accountsPanel.className='panel';accountsPanel.innerHTML='<h2>一站通账号</h2><a class="button secondary" href="#/school-accounts">管理本机账号</a>';root.querySelector('[data-action="report-manager"]')!.closest('section')!.before(accountsPanel);
-  root.querySelector('.setting-row strong')!.textContent=packageInfo.version+' · 开发版';
+  root.querySelector('.setting-row strong')!.textContent=packageInfo.version;
+  const dataVersionNode = root.querySelector<HTMLElement>('[data-settings-data-version]')!;
+  void dataSnapshot().then(snapshot => {
+    if (!root.contains(dataVersionNode)) return;
+    dataVersionNode.textContent = resourceVersionNumber(snapshot.version);
+    if (snapshot.warning) dataVersionNode.textContent += '（待核实）';
+  }).catch(() => { if (root.contains(dataVersionNode)) dataVersionNode.textContent = '待核实'; });
+  root.querySelectorAll('.panel').forEach(panel => panel.classList.add('settings-entry-panel'));
+  root.querySelectorAll<HTMLElement>('.settings-entry-panel').forEach((panel, index) => {
+    if (index === 0) return;
+    const title = panel.querySelector('h2')!.textContent!;
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'settings-folder';
+    trigger.setAttribute('aria-haspopup', 'dialog');
+    trigger.innerHTML = `<span>${esc(title)}</span><span aria-hidden="true">›</span>`;
+    const sheet = document.createElement('dialog');
+    sheet.className = 'modal settings-folder-dialog settings-entry-panel';
+    sheet.setAttribute('aria-label', title);
+    sheet.classList.add('settings-list-demo');
+    sheet.innerHTML = `<div class="modal-heading"><h2>${esc(title)}</h2><button class="icon-button" aria-label="关闭">×</button></div><div class="settings-folder-content"></div>`;
+    const content = sheet.querySelector('.settings-folder-content')!;
+    [...panel.children].filter(child => child.tagName !== 'H2').forEach(child => content.append(child));
+    const entries = [...content.querySelectorAll<HTMLElement>('button, a')];
+    content.replaceChildren();
+    entries.forEach(entry => {
+      const row = document.createElement('div');
+      row.className = 'settings-option';
+      {
+        entry.classList.add('settings-list-entry');
+        const label = document.createElement('span');
+        label.className = 'settings-list-label';
+        label.textContent = entry.textContent;
+        const arrow = document.createElement('span');
+        arrow.className = 'settings-list-arrow';
+        arrow.setAttribute('aria-hidden', 'true');
+        arrow.textContent = '›';
+        entry.replaceChildren(label, arrow);
+        row.append(entry);
+      }
+      content.append(row);
+    });
+    panel.replaceWith(trigger);
+    root.append(sheet);
+    trigger.addEventListener('click', () => { leavingFolder=null; sheet.showModal(); captureNavigation(); });
+    sheet.addEventListener('close',()=>{if(!leavingFolder)captureNavigation();});
+    sheet.querySelector('.modal-heading button')!.addEventListener('click', () => sheet.close());
+    sheet.addEventListener('click', event => {
+      if (event.target === sheet) {
+        const rect = sheet.getBoundingClientRect();
+        const click = event as MouseEvent;
+        if (click.clientX < rect.left || click.clientX > rect.right || click.clientY < rect.top || click.clientY > rect.bottom) sheet.close();
+        return;
+      }
+      if ((event.target as Element).closest('.settings-folder-content button,.settings-folder-content a')) { leavingFolder=sheet.getAttribute('aria-label'); captureNavigation(); sheet.close(); }
+    });
+  });
 }
 let bootstrapReady = false;
 async function route() {
   if (!bootstrapReady) return;
-  cancelSchoolWarmup();
+  scheduleSchoolWarmup();
   const hash = location.hash || "#/home";
-  if(queueBlocksRoute(hash,reportQueueView.queue.running)){history.replaceState(null,'',currentHash||'#/home');const label:Record<string,string>={'developer':'使用开发者调试','resource-check':'维护运行环境','data-updates':'更新实验资源','app-updates':'更新应用','easter-egg':'运行动效'};notice('请先停止报告队列后再'+(label[hash.replace(/^#\//,'').split('/')[0]]??'进行此操作'));return;}
+  if(queueBlocksRoute(hash,reportQueueView.queue.running)){history.replaceState({labNavigation:navigationIndex},'',currentHash||'#/home');const label:Record<string,string>={'developer':'使用开发者调试','resource-check':'维护运行环境','data-updates':'更新实验资源','app-updates':'更新应用','easter-egg':'运行动效'};notice('请先停止报告队列后再'+(label[hash.replace(/^#\//,'').split('/')[0]]??'进行此操作'));return;}
   if (
     work || reportQueueView.isConfirming ||
     appUpdatesView.isSaving || developerView.isSaving || dataUpdatesView.isSaving || resourceCheck.isSaving || reports.isSaving ||
@@ -518,7 +668,7 @@ async function route() {
     schoolReportView?.isSaving ||
     reportSectionsView?.isSaving || aiHistoryManager?.isSaving || reportManager.isSaving || skillsView.isSaving||schoolAccountsView.isSaving||reportDirectoryView.isSaving||variantLibraryView.isSaving||feedbackView.isSaving||contributionsView.isSaving
   ) {
-    history.replaceState(null, "", currentHash || "#/home");
+    history.replaceState({labNavigation:navigationIndex}, "", currentHash || "#/home");
     notice(
       contributionsView.isSaving ? "贡献正在处理，请等待或取消发送" : feedbackView.isSaving ? "反馈正在处理，请等待或取消发送" : portalView?.isSaving || schoolReportView?.isSaving
         ? "正在提交并核对官网课表，请稍候"
@@ -529,14 +679,16 @@ async function route() {
   try {
     await flush();
   } catch {
-    history.replaceState(null, "", currentHash || "#/home");
+    history.replaceState({labNavigation:navigationIndex}, "", currentHash || "#/home");
     notice("保存失败，请重试保存后再离开");
     return;
   }
   if(!await aiFeatures.close()){
-    history.replaceState(null, "", currentHash || "#/home");
+    history.replaceState({labNavigation:navigationIndex}, "", currentHash || "#/home");
     return;
   }
+  captureNavigation();
+  acceptNavigation(hash);
   portalView?.leave();
   schoolReportView?.leave();
   reports.onLeave();
@@ -564,6 +716,9 @@ async function route() {
     URL.revokeObjectURL(session.imageUrl);
   session = null;
   lastInput = null;
+  if (hash.startsWith('#/school-accounts') && !currentHash.startsWith('#/school-accounts')) {
+    schoolAccountsReturnPage = currentHash.startsWith('#/portal') || currentHash.startsWith('#/school-reports') || currentHash.startsWith('#/academic') ? currentHash.slice(2) : 'settings';
+  }
   currentHash = hash;
   document.activeElement instanceof HTMLElement &&
     document.activeElement.blur();
@@ -628,9 +783,11 @@ async function route() {
   } else if(parts[0]==='report-directory'){
     view='settings';document.body.classList.remove('editing');root.innerHTML=`${heading('报告保存目录','设置')}<div id="report-directory-host"></div>${nav()}`;reportDirectoryView.mount(root.querySelector<HTMLElement>('#report-directory-host')!);
   } else if(parts[0]==='academic'){
-    view='portal';document.body.classList.remove('editing');root.innerHTML=`${heading('教务课表','一站通')}<div id="academic-host"></div>${nav()}`;academicView.mount(root.querySelector<HTMLElement>('#academic-host')!,portalView?.currentAccount??'');
+    view='portal';document.body.classList.remove('editing');root.innerHTML=`${heading('教务课表','一站通')}<div id="academic-host"></div>${nav()}`;const host=root.querySelector<HTMLElement>('#academic-host')!;
+    const selectAccount=async()=>{try{const [{startupSchoolAccount},preference,accounts]=await Promise.all([import('./domain/school-preload.ts'),repo.loadSchoolPreload(),schoolAccounts.list()]);return startupSchoolAccount(preference,accounts,'academic')?.account??'';}catch{return '';}};
+    void selectAccount().then(account=>{if(root.contains(host))academicView.mount(host,account);});
   } else if(parts[0]==='school-accounts'){
-    view='settings';document.body.classList.remove('editing');root.innerHTML=`${heading('本机账号','一站通')}<div id="school-accounts-host"></div>${nav()}`;schoolAccountsView.mount(root.querySelector<HTMLElement>('#school-accounts-host')!,schoolSystem(parts[1])?parts[1]:'course');
+    view='settings';document.body.classList.remove('editing');root.innerHTML=`${heading('本机账号','一站通')}<div id="school-accounts-host"></div>${nav()}`;schoolAccountsView.mount(root.querySelector<HTMLElement>('#school-accounts-host')!,schoolSystem(parts[1])?parts[1]:undefined);
   } else if(parts[0]==='contributions'){
     view='settings';document.body.classList.remove('editing');root.innerHTML=`${heading('贡献数据','设置')}<div id="contributions-host"></div>${nav()}`;contributionsView.mount(root.querySelector<HTMLElement>('#contributions-host')!);
   } else if(parts[0]==='credits'){
@@ -640,11 +797,11 @@ async function route() {
   } else if(parts[0]==='feedback'){
     view='settings';document.body.classList.remove('editing');root.innerHTML=`${heading('意见反馈','设置')}<div id="feedback-host"></div>${nav()}`;feedbackView.mount(root.querySelector<HTMLElement>('#feedback-host')!);
   } else if(parts[0]==='app-updates'){
-    view='settings';document.body.classList.remove('editing');root.innerHTML=`${heading('应用更新','设置')}<div id="app-update-host"></div>${nav()}`;appUpdatesView.mount(root.querySelector<HTMLElement>('#app-update-host')!);
+    view='settings';document.body.classList.remove('editing');root.innerHTML=`${heading('应用更新','设置')}<div id="app-update-host"></div>${nav()}`;appUpdatesView.mount(root.querySelector<HTMLElement>('#app-update-host')!,true);
   } else if(parts[0]==='developer'){
     view='settings';document.body.classList.remove('editing');root.innerHTML=`${heading('开发者调试','设置')}<div id="developer-host"></div>${nav()}`;developerView.mount(root.querySelector<HTMLElement>('#developer-host')!);
   } else if(parts[0]==="data-updates"){
-    view="settings";root.innerHTML=`${heading("实验数据更新","实验资源")}<div id="data-update-host"></div>${nav()}`;dataUpdatesView.mount(root.querySelector<HTMLElement>("#data-update-host")!);
+    view="settings";root.innerHTML=`${heading("实验数据更新","实验资源")}<div id="data-update-host"></div>${nav()}`;dataUpdatesView.mount(root.querySelector<HTMLElement>("#data-update-host")!,true);
   } else if (parts[0] === "resource-check") {
     view="settings"; document.body.classList.remove("editing");
     root.innerHTML=`${heading("实验资源维护", "安装资源与离线报告")}<div id="resource-check-host"></div>${nav()}`;
@@ -663,15 +820,23 @@ async function route() {
       root.querySelector<HTMLElement>("#school-report-host")!,
       serial,parts[1],
     );
+  } else if (parts[0] === "portal" && parts[1] === "faq") {
+    view='portal';document.body.classList.remove('editing');
+    root.innerHTML=`${heading('常见问题','一站通')}<div id="portal-faq-host"></div>${nav()}`;
+    helpView.mount(root.querySelector<HTMLElement>('#portal-faq-host')!,'school');
   } else if (parts[0] === "portal") {
     view = "portal";
     document.body.classList.remove("editing");
-    root.innerHTML = `${heading("一站通", "学校实验系统")}<div class="ai-inline"><a class="button secondary" href="#/academic">教务课表</a></div><div id="portal-host"><p class="loading">正在准备一站通…</p></div>${nav()}`;
+    root.innerHTML = `${heading("一站通", "学校实验系统")}<div id="portal-host"><p class="loading">正在准备一站通…</p></div>${nav()}`;
     await mountSchoolPage('course',root.querySelector<HTMLElement>("#portal-host")!,serial);
   } else if (parts[0] === "profile") profilePage();
   else if (parts[0] === "settings") settingsPage();
   else home();
+  if (parentPage() && !root.querySelector('.page-actions')) {
+    root.insertAdjacentHTML('afterbegin', heading('', ''));
+  }
   refreshQueueEntry();
+  restoreNavigation(serial);
 }
 function go(target: string) {
   location.hash = `/${target}`;
@@ -692,19 +857,20 @@ function editInput(input: HTMLInputElement) {
     (s.doc.draft[key] as string[][])[+input.dataset.row][+input.dataset.col!] =
       value;
   else s.doc.draft[key] = value;
-  document
+  updatePositionHeaders(key, s.doc.draft[key] as string[]);
+  changed();
+}
+function updatePositionHeaders(key: string, values: string[]) {
+  root
     .querySelectorAll<HTMLElement>(
       `[data-position-source="${CSS.escape(key)}"]`,
     )
     .forEach((th) => {
-      const v = (s.doc.draft[key] as string[])[
-        Number(th.dataset.positionIndex)
-      ];
+      const v = values[Number(th.dataset.positionIndex)];
       th.textContent = v
         ? `D=${v} mm`
         : `第${Number(th.dataset.positionIndex) + 1}点`;
     });
-  changed();
 }
 root.addEventListener("focusin", (event) => {
   if (event.target instanceof HTMLInputElement && event.target.dataset.key)
@@ -738,6 +904,13 @@ root.addEventListener("change", (event) => {
   const select = event.target;
   if (select instanceof HTMLSelectElement) {
     if(select.hasAttribute('data-sound-phase')){if(!session||!isSoundExperiment(session.exp))return;if(select.value==='')delete session.doc.soundPhase;else if(validSoundPhase(select.value))session.doc.soundPhase=select.value;else return;changed();return;}
+    const observation = select.dataset.observation;
+    if (observation) {
+      if (!session || session.blocked) return;
+      session.doc.draft[observation] = select.value;
+      changed();
+      return;
+    }
     const key = select.dataset.preset ?? select.dataset.exponent;
     if (!key || !select.value) return;
     const selector = select.dataset.exponent
@@ -775,6 +948,7 @@ root.addEventListener("pointerdown", (event) => {
 root.addEventListener("click", (event) => {
   const button = (event.target as Element).closest<HTMLElement>("button");
   if (!button) return;
+  if (button.hasAttribute("data-back")) { navigateBack(); return; }
   if (button.dataset.nav) {
     go(button.dataset.nav);
     return;
@@ -796,7 +970,7 @@ root.addEventListener("click", (event) => {
     return;
   }
   if (button.dataset.action)
-    void action(button.dataset.action).catch((e) =>
+    void action(button.dataset.action, button).catch((e) =>
       notice((e as Error).message || "操作未完成，请重试"),
     );
 });
@@ -808,12 +982,16 @@ async function resize(key: string, delta: 1 | -1) {
     const v = s.doc.draft[key] as string[],
       m = f.pairedMatrix ? (s.doc.draft[f.pairedMatrix] as string[][]) : [];
     const nextLength = f.allowedLengths ? ([...f.allowedLengths].reverse().find(n=>n<v.length) ?? v.length) : v.length-1;
-    if (v.slice(nextLength).some(Boolean) || m.some((row) => row.slice(nextLength).some(Boolean)))
+    const paired = !!f.pairedMatrix;
+    const hasRemovedData = paired
+      ? [v, ...m].some(row => row[0] || row.at(-1))
+      : v.slice(nextLength).some(Boolean);
+    if (hasRemovedData)
       if (
         !(await dialog(
-          "删除末尾测量点？",
-          `<p>将删除末尾 ${v.length-nextLength} 个测量点及对应数据。</p>`,
-          "删除末点",
+          paired ? "删除两端测量点？" : "删除末尾测量点？",
+          paired ? "<p>将删除最左端和最右端的测量点及对应数据。</p>" : `<p>将删除末尾 ${v.length-nextLength} 个测量点及对应数据。</p>`,
+          paired ? "删除两端" : "删除末点",
           true,
         ))
       )
@@ -899,7 +1077,65 @@ async function attachPhoto(file?: File) {
     if (form) form.disabled = !!session?.blocked;
   }
 }
-async function action(name: string) {
+async function fillMeasurementSequence(trigger?: HTMLElement) {
+  const current = session;
+  const row = trigger?.closest<HTMLElement>('.field');
+  if (!current || current.blocked || work || !row?.isConnected) return;
+  const inputs = [...row.querySelectorAll<HTMLInputElement>('input.measurement[data-index]')];
+  const field = fields(current.exp.schema).find(f => f.key === inputs[0]?.dataset.key);
+  const config = field && sequenceSetting(current.exp.sourceId, field.key);
+  if (!field || !config) return;
+  const before = inputs.map(input => input.value);
+  const values = sequenceValues(config, field, inputs.length, trigger?.dataset.sequenceMode ?? '',
+    row.querySelector<HTMLInputElement>('[data-sequence-start]')?.value ?? '',
+    row.querySelector<HTMLInputElement>('[data-sequence-step]')?.value ?? '');
+  if (before.some((value, i) => value.trim() && Number(value) !== values[i]) &&
+      !(await dialog('替换测点？', '<p>将替换本行已填写的测点。对应测量读数仍按原列保留。</p>', '替换'))) return;
+  if (session !== current || current.blocked || work || !row.isConnected ||
+      inputs.some((input, i) => input.value !== before[i])) return;
+  const draft = values.map(String);
+  current.doc.draft[field.key] = draft;
+  inputs.forEach((input, i) => { input.value = draft[i]; });
+  updatePositionHeaders(field.key, draft);
+  changed();
+  notice('已填入 ' + values.length + ' 项');
+}
+
+async function action(name: string, trigger?: HTMLElement) {
+  if (name === 'measurement-sequence') {
+    await fillMeasurementSequence(trigger);
+    return;
+  }
+  if (name === "polarization-theory") {
+    const current = session;
+    if (!current || current.blocked || work) return;
+    const preset = polarizationTheory.get(current.exp.id);
+    const group = trigger?.closest(".group-fields");
+    if (!preset || !group || !root.contains(group)) return;
+    const selects = [...group.querySelectorAll<HTMLSelectElement>('select[data-observation]')].filter(select => Object.hasOwn(preset, select.dataset.observation!) && Array.from(select.options).some(option => option.value === preset[select.dataset.observation!]));
+    if (!selects.length) return;
+    if (selects.some(select => select.value && select.value !== preset[select.dataset.observation!])) {
+      if (!(await dialog("替换本表已填写的选项？", "<p>将用理论预设替换本表中不同的选项。</p>", "填入理论预设"))) return;
+      if (session !== current || selects.some(select => !select.isConnected)) return;
+    }
+    for (const select of selects) {
+      const key = select.dataset.observation!;
+      select.value = preset[key];
+      current.doc.draft[key] = select.value;
+    }
+    changed();
+    notice("已填入本表理论预设");
+    return;
+  }
+  if (name === "instrument-limit-help") {
+    await dialog(
+      "什么是仪器限差",
+      "<p>对于连续测量需要估读的仪器（如刻度尺、千分尺），限差为最小分度值的一半。</p>" +
+        "<p>对于不连续测量不需要估读或者电子示数的仪器（如游标卡尺和数字秒表），仪器限差为最小分度值。</p>",
+      "知道了",
+    );
+    return;
+  }
   if(name === 'retry-profile'){
     const button=root.querySelector<HTMLButtonElement>('[data-action=retry-profile]');if(button)button.disabled=true;
     try{const loaded=await repo.loadProfile();profile=loaded;profileBlocked=false;profileDirty=false;if(view==='profile')profilePage();notice('学生信息已重新读取');}
@@ -939,9 +1175,18 @@ async function action(name: string) {
     await openPreparation(s.exp.name);
     return;
   }
-  if (name === "report") {
+  if (name === "upload-report") {
+    await flush();
+    if(session!==s)return;
+    const loaded=await repo.loadReport(s.exp);
+    if(session!==s)return;
+    if(!loaded.value){notice('请先生成实验报告');return;}
+    go('school-reports/'+s.exp.id);
+    return;
+  }
+  if (name === "report" || name === "report-quiz") {
     if (profileBlocked) return notice("学生信息未能读取，请在学生信息页重试");
-    await reports.open();
+    await reports.open(name === "report-quiz" ? "quiz" : "generate");
     return;
   }
   if (name === "sign" || name === "exponent-token") {
@@ -1091,7 +1336,7 @@ async function action(name: string) {
   if (name === "more") {
     void dialog(
       "实验操作",
-      `<div class="menu-actions"><button data-menu="import">导入 JSON 数据</button><button data-menu="export">导出 JSON 数据</button><button data-menu="fill-test">填入测试数据</button><button data-menu="clear" class="danger-text">清除本实验数据</button></div>`,
+      `<div class="menu-actions"><button data-menu="fill-test">填入测试数据</button><button data-menu="clear" class="danger-text">清除本实验数据</button></div>`,
       "",
     );
     return;
@@ -1139,6 +1384,8 @@ document.addEventListener("visibilitychange", () => {
 });
 if (Capacitor.isNativePlatform()) {
   void App.addListener("backButton", () => {
+    const settingsSheet = root.querySelector<HTMLDialogElement>('.settings-folder-dialog[open]');
+    if(settingsSheet){settingsSheet.close();return;}
     if(closeModal){closeModal(false);return;}
     if(easterEggView?.back())return;
     if(reportQueueView.isConfirming){notice('请先处理队列确认');return;}
@@ -1172,10 +1419,10 @@ if (Capacitor.isNativePlatform()) {
     }
     if (reports.isOpen) {
       if(reports.closeTopPreview())return;
-      reports.close();
+      reports.back();
       return;
     }
-    if (view !== "home") go("home");
+    if (navigationIndex > 0 || view !== "home") navigateBack();
     else
       void flush()
         .then(() => App.minimizeApp())

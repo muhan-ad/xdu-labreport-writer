@@ -9,8 +9,8 @@ test('inspect and runtime failure never publish or touch personal records, and u
  const {repo,data,reads}=memory(),candidate=await envelope();assert.equal((await repo.load()).version,'0.0.0');await repo.inspect(candidate);assert.equal(data.size,3);
  await assert.rejects(repo.install(candidate,async()=>({complete:false,problems:['syntax']}),signal()),/运行检查/);assert.equal((await repo.load()).version,'0.0.0');assert.equal(data.size,3);assert.ok(reads.every(k=>k.startsWith('data-')));assert.equal(data.get('accounts'),'secret not read');
 });
-test('verified dual-copy publication survives reopening and source data is kept separate',async()=>{
- const m=memory(),candidate=await envelope(),result=await m.repo.install(candidate,okay,signal());assert.equal(result.committed,true);assert.equal(result.degraded,false);
+test('verified dual-copy publication without a runtime probe survives reopening and keeps personal data separate',async()=>{
+ const m=memory(),candidate=await envelope(),result=await m.repo.install(candidate,null,signal());assert.equal(result.committed,true);assert.equal(result.degraded,false);
  const restored=await new DataUpdateStore(m.store,context).load();assert.equal(restored.version,'1.0.1');assert.equal(restored.payload.catalog.experiments.length,28);assert.equal(m.data.get('profile-a'),'personal');assert.equal((await m.repo.status()).highestVersion,'1.0.1');
 });
 test('a damaged active bundle falls back to previous verified bundle; both broken falls back to builtin explicitly',async()=>{

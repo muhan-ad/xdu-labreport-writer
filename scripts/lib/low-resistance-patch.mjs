@@ -1,6 +1,6 @@
 export function patchLowResistance(sources) {
  const key='低电阻的测量/generate.py', variantKey='低电阻的测量/variants.json';
- if(sources[key]===undefined)return sources;
+ if(sources[key]===undefined||sources[key].includes("# XDU_LOW_RESISTANCE_T_V2"))return sources;
  let text=sources[key];
  const marker='# MOBILE_LOW_RESISTANCE_V1';
  if(!text.includes(marker)){

@@ -25,6 +25,7 @@ export class AIPlotView {
   private lifetime:AbortController|null=null;
   private controller:AbortController|null=null;
   private token=0;
+  private progressive=false;
   private saving=false;
   private initial:PlotContext|null=null;
   private sourceHash:string|undefined;
@@ -41,9 +42,9 @@ export class AIPlotView {
   closeZoom(){if(!this.zoomDialog)return false;this.zoomDialog.close();this.zoomDialog.remove();this.zoomDialog=null;return true;}
   stop(){const controller=this.controller;this.controller=null;controller?.abort();if(controller){this.message('已停止绘图');this.controls();}}
   leave(){this.closeZoom();this.token++;this.controller?.abort();this.controller=null;this.lifetime?.abort();this.lifetime=null;this.host=null;this.preview=null;this.failed=null;this.saving=false;if(this.url)URL.revokeObjectURL(this.url);this.url='';}
-  mount(host:HTMLElement){
+  mount(host:HTMLElement, progressive=false){
     const context=this.hooks.context(),preserve=this.initial?.experimentId===context?.experimentId&&this.initial?.source===context?.source;
-    this.leave();this.host=host;this.initial=context;const selected=this.hooks.selection(),token=this.token;
+    this.leave();this.host=host;this.initial=context;this.progressive=progressive;const selected=this.hooks.selection(),token=this.token;
     if(!preserve){this.sourceHash=selected?.sourceHash;
       this.draft={widthCm:chartWidth(selected?.widthCm),requirement:selected?.requirement??'',code:selected?.code??'',caption:selected?.caption??'',section:selected?.section??this.initial?.sections[0]??'数据处理',embed:selected?.embed??true};}
     this.lifetime=new AbortController();
@@ -55,8 +56,7 @@ export class AIPlotView {
       this.controls();
     },{signal:this.lifetime.signal});
     this.render();
-    if(this.hooks.history){const box=document.createElement('details');box.className='report-options';box.innerHTML='<summary>代码历史</summary><div class="ai-plot-history"></div>';host.append(box);box.addEventListener('toggle',()=>{if(box.open)void this.historyAction('history-list').catch(e=>this.message((e as Error).message,true));},{signal:this.lifetime.signal});}
-    if(selected&&this.initial&&selected.experimentId===this.initial.experimentId){
+    if(!progressive&&selected&&this.initial&&selected.experimentId===this.initial.experimentId){
       this.message('正在读取已采用图表…');
       void Promise.all(plotFigures(selected).map(async f=>({...f,bytes:await this.hooks.read(selected.experimentId,f.image)}))).then(async figures=>{
         if(token!==this.token||!this.initial)return;
@@ -69,7 +69,7 @@ export class AIPlotView {
   }
   private render(){
     if(!this.host)return;const sections=[...new Set([...(this.initial?.sections??[]),this.draft.section])];
-    this.host.innerHTML=`<section class="report-options ai-plot-panel"><h3>AI 绘图</h3><label class="ai-field">绘图需求<textarea data-ai-plot-field="requirement" rows="3" maxlength="2000" placeholder="描述要画的图、坐标轴和样式">${esc(this.draft.requirement)}</textarea></label><details ${this.draft.code?'open':''}><summary>查看与编辑代码</summary><textarea class="ai-plot-code" data-ai-plot-field="code" rows="10" maxlength="30000" spellcheck="false">${esc(this.draft.code)}</textarea></details><div class="ai-inline"><button class="button" data-ai-plot="automatic" title="生成并运行，报错时最多尝试三次">生成并预览</button><button class="button secondary" data-ai-plot="generate">生成代码</button><button class="button secondary" data-ai-plot="preview">运行预览</button><button class="button secondary" data-ai-plot="repair" hidden>修复代码</button><button class="button secondary" data-ai-plot="stop" hidden>停止</button></div><p class="ai-plot-state" role="status"></p><div class="ai-plot-preview"></div><label class="ai-field">图注<input data-ai-plot-field="caption" maxlength="200" value="${esc(this.draft.caption)}"></label><div class="chart-source-grid"><label class="ai-field">插入位置<select data-ai-plot-field="section">${sections.map(section=>`<option ${section===this.draft.section?'selected':''}>${esc(section)}</option>`).join('')}</select></label><label class="ai-plot-embed"><input type="checkbox" data-ai-plot-field="embed" ${this.draft.embed?'checked':''}>插入报告</label></div><label class="ai-field">图组插图宽度（cm）<input type="number" data-ai-plot-field="widthCm" min="4" max="20" step="0.5" value="${Number.isFinite(this.draft.widthCm)?this.draft.widthCm:''}"></label><div class="ai-inline"><button class="button" data-ai-plot="adopt">采用图组</button><button class="button secondary" data-ai-plot="remove" ${this.hooks.selection()?'':'hidden'}>移除已采用图组</button></div></section>`;
+    this.host.innerHTML=`<section class="report-options ai-plot-panel"><div data-plot-requirement>${this.progressive?"":"<h3>AI 绘图</h3>"}<label class="ai-field">绘图需求<textarea data-ai-plot-field="requirement" rows="3" maxlength="2000" placeholder="描述要画的图、坐标轴和样式">${esc(this.draft.requirement)}</textarea></label><details hidden ${this.draft.code?'open':''}><textarea class="ai-plot-code" data-ai-plot-field="code" rows="10" maxlength="30000" spellcheck="false">${esc(this.draft.code)}</textarea></details><div class="ai-inline"><button class="button" data-ai-plot="automatic" title="生成并运行，报错时最多尝试三次">生成并预览</button><button class="button secondary" data-ai-plot="preview" ${this.progressive?"hidden":""}>运行预览</button><button class="button secondary" data-ai-plot="repair" hidden>修复代码</button><button class="button secondary" data-ai-plot="stop" hidden>停止</button></div></div><p class="ai-plot-state" role="status"></p><div class="ai-plot-preview"></div><label class="ai-field" hidden><input data-ai-plot-field="caption" maxlength="200" value="${esc(this.draft.caption)}"></label></section><section class="report-options ai-plot-insertion" ${this.progressive?"hidden":""}><h3>插入位置</h3><div class="chart-source-grid"><label class="ai-field">报告章节<select data-ai-plot-field="section">${sections.map(section=>`<option ${section===this.draft.section?'selected':''}>${esc(section)}</option>`).join('')}</select></label><label class="ai-plot-embed"><input type="checkbox" data-ai-plot-field="embed" ${this.draft.embed?'checked':''}>插入报告</label></div><label class="ai-field">图组插图宽度（cm）<input type="number" data-ai-plot-field="widthCm" min="4" max="20" step="0.5" value="${Number.isFinite(this.draft.widthCm)?this.draft.widthCm:''}"></label><div class="ai-inline">${this.progressive?'<button class="button secondary" data-ai-plot="revise">修改绘图需求</button>':""}<button class="button" data-ai-plot="adopt">采用图组</button><button class="button secondary" data-ai-plot="remove" ${this.hooks.selection()?'':'hidden'}>移除已采用图组</button></div></section>`;
     this.controls();
   }
   private controls(){
@@ -80,6 +80,10 @@ export class AIPlotView {
     button('repair').hidden=!this.hooks.repair||!this.failed;button('repair').disabled=this.isBusy||!this.failed||this.failed.code!==this.draft.code;
     button('preview').disabled=this.isBusy||!this.draft.code.trim();
     button('adopt').disabled=this.isBusy||!this.preview||this.preview.code!==this.draft.code;
+    if (this.progressive) {
+      this.host.querySelector<HTMLElement>("[data-plot-requirement]")!.hidden = !!this.preview;
+      this.host.querySelector<HTMLElement>(".ai-plot-insertion")!.hidden = !this.preview;
+    }
     this.hooks.changed();
   }
   private message(text:string,error=false){const box=this.host?.querySelector('.ai-plot-state');if(box){box.textContent=text;box.classList.toggle('ocr-warning',error);}}
@@ -124,6 +128,14 @@ export class AIPlotView {
     if(action==='stop'){this.stop();return;}if(this.isBusy)return;if(action.startsWith('figure-')){const index=Number(action.slice(7)),figure=this.preview?.figures?.[index];if(!figure||!Number.isInteger(index))return;this.figureIndex=index;this.preview!.bytes=figure.bytes;this.preview!.image=figure.image;this.draft.caption=figure.caption;this.draft.section=figure.section;this.draft.embed=figure.embed;for(const key of ['caption','section'] as const)this.host!.querySelector<HTMLInputElement|HTMLSelectElement>(`[data-ai-plot-field="${key}"]`)!.value=this.draft[key];this.host!.querySelector<HTMLInputElement>('[data-ai-plot-field="embed"]')!.checked=figure.embed;this.showImage();return;}if(action==='zoom'){this.zoom();return;}
     if(action.startsWith('history-'))return this.historyAction(action);
     const context=this.current(),token=this.token;
+    if (action === "revise") {
+      if (this.isBusy) return;
+      this.preview = null;
+      this.clearImage();
+      this.message("");
+      this.controls();
+      return;
+    }
     if(['automatic','generate','preview','repair','adopt'].includes(action))chartWidth(this.draft.widthCm);
     if(action==='automatic')return this.automatic(context,token);
     if(action==='generate'||action==='preview'||action==='repair'){
